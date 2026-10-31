@@ -38,6 +38,10 @@ def lodge(monkeypatch, tmp_path):
     monkeypatch.setattr(notify, "SPACE_PLATFORM_DIR", tmp_path)
     monkeypatch.setattr(notify, "OUTBOX_DIR", state.box)
     monkeypatch.setattr(notify, "dotenv_env", lambda key: env.get(key, ""))
+    # Telegram sends through its connector: here it is connected while the
+    # lodge has a bot token, so the old "no token" cases are "not connected".
+    monkeypatch.setattr(notify, "_connector_up",
+                        lambda name: name != "telegram" or bool(env.get("TELEGRAM_BOT_TOKEN")))
     monkeypatch.setattr(notify, "read_session_registry", lambda name: state.routing)
     monkeypatch.setattr(notify, "append_chat_history", state.history)
     monkeypatch.setattr(notify, "SessionRegistry", lambda root: Mock())
@@ -194,7 +198,7 @@ async def test_a_missing_token_is_reported_before_the_file(lodge, monkeypatch):
     lodge.env["TELEGRAM_BOT_TOKEN"] = ""
     entry = _stage(lodge)
 
-    with pytest.raises(RuntimeError, match="TELEGRAM_BOT_TOKEN not set"):
+    with pytest.raises(RuntimeError, match="telegram is not connected to the lodge"):
         await notify.send_notification(
             "test-session", "hi\n", {"adapter": "telegram", "chat_id": "404"},
             [{"id": entry, "name": "a.html"}],

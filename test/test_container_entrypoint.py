@@ -9,6 +9,7 @@ Usage: uv run pytest test/test_container_entrypoint.py -v
 """
 
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -81,24 +82,12 @@ class TestEnvironmentAssembly:
         assert not boot.is_truthy("") and not boot.is_truthy(None)
         assert not boot.is_truthy("false")
 
-    def test_telegram_module_falls_back_to_the_platform_adapter(self, tmp_path):
-        env = self._env(tmp_path)
-        bundle = tmp_path / "bundle"
-
-        assert env["TELEGRAM_BOT_MODULE"] == "bot.telegram_adapter"
-        assert env["TELEGRAM_BOT_DIR"] == str(bundle / "container")
-
-    def test_a_wolt_owned_adapter_wins(self, tmp_path):
-        wolt_dir = tmp_path / "wolts" / "mywolt"
-        (wolt_dir / "wolt" / "bot").mkdir(parents=True)
-        (wolt_dir / "wolt" / "bot" / "telegram_adapter.py").write_text("# mine\n")
-
+    def test_no_adapter_module_is_chosen_here(self, tmp_path):
+        """Telegram runs from its connector folder; a custom one is a local connector folder."""
         env = self._env(tmp_path)
 
-        assert env["TELEGRAM_BOT_DIR"] == str(wolt_dir)
-        assert env["TELEGRAM_BOT_MODULE"] == "wolt.bot.telegram_adapter"
-        assert "SLACK_BOT_MODULE" not in env
-        assert "SLACK_BOT_DIR" not in env
+        for name in ("TELEGRAM_BOT_DIR", "TELEGRAM_BOT_MODULE", "SLACK_BOT_MODULE", "SLACK_BOT_DIR"):
+            assert name not in env
 
     def test_nothing_is_written_to_the_real_environment(self, tmp_path):
         import os
@@ -342,27 +331,48 @@ class TestPhaseDispatch:
         """The root phase rewrites HOME; never leak /home/node into the suite."""
         monkeypatch.setenv("HOME", "/root")
 
+    @pytest.fixture(autouse=True)
+    def _root_tools(self, monkeypatch):
+        """Tools resolve only through ROOT_PATH, never the image's PATH."""
+        monkeypatch.setattr(boot.shutil, "which", lambda name, path=None:
+                            f"/root-path/{name}" if path == boot.ROOT_PATH else None)
+
     def test_root_does_the_uid_fixup_then_re_execs_itself_as_node(self, monkeypatch):
-        commands = []
+        commands, paths = [], set()
         monkeypatch.setattr(boot.os, "getuid", lambda: 0)
-        monkeypatch.setattr(boot.subprocess, "run",
-                            lambda command, **kw: commands.append(list(command)))
+
+        def run(command, **kw):
+            commands.append(list(command))
+            paths.add(kw["env"]["PATH"])
+        monkeypatch.setattr(boot.subprocess, "run", run)
         monkeypatch.setenv("HOST_UID", "501")
         monkeypatch.setenv("HOST_GID", "20")
+        monkeypatch.setenv("PATH", "/node-owned/bin:/usr/bin")
         execs = []
-        monkeypatch.setattr(boot.os, "execvp", lambda f, a: execs.append((f, a)))
+        monkeypatch.setattr(boot.os, "execv", lambda f, a: execs.append((f, a)))
 
         boot.main()
 
-        assert commands[0] == ["groupmod", "-o", "-g", "20", "node"]
-        assert commands[1] == ["usermod", "-o", "-u", "501", "-g", "20", "node"]
-        assert commands[2] == ["chown", "node:node", "/workspace"]
-        assert commands[3] == ["chown", "-R", "node:node", "/home/node"]
+        assert commands[0] == ["/root-path/groupmod", "-o", "-g", "20", "node"]
+        assert commands[1] == ["/root-path/usermod", "-o", "-u", "501", "-g", "20", "node"]
+        assert commands[2] == ["/root-path/chown", "node:node", "/workspace"]
+        assert commands[3] == ["/root-path/chown", "-R", "node:node", "/home/node"]
         # ...and the bundle, which boot writes the derived worktui skill into
-        assert commands[4][:3] == ["chown", "-R", "node:node"]
-        assert execs == [("gosu", [
+        assert commands[4][:3] == ["/root-path/chown", "-R", "node:node"]
+        assert paths == {boot.ROOT_PATH}
+        assert execs == [("/root-path/gosu", [
             "gosu", "node", "/usr/local/bin/woltspace", "container-entrypoint",
         ])]
+        # the node phase keeps the image's PATH
+        assert boot.os.environ["PATH"] == "/node-owned/bin:/usr/bin"
+
+    def test_root_refuses_a_tool_missing_from_root_path(self, monkeypatch):
+        monkeypatch.setattr(boot.os, "getuid", lambda: 0)
+        monkeypatch.setattr(boot.shutil, "which", lambda name, path=None: None)
+        monkeypatch.setattr(boot.subprocess, "run", lambda command, **kw: None)
+
+        with pytest.raises(FileNotFoundError, match="groupmod"):
+            boot.main()
 
     def test_root_defaults_to_the_first_linux_user(self, monkeypatch):
         commands = []
@@ -371,17 +381,17 @@ class TestPhaseDispatch:
                             lambda command, **kw: commands.append(list(command)))
         monkeypatch.delenv("HOST_UID", raising=False)
         monkeypatch.delenv("HOST_GID", raising=False)
-        monkeypatch.setattr(boot.os, "execvp", lambda f, a: None)
+        monkeypatch.setattr(boot.os, "execv", lambda f, a: None)
 
         boot.main()
 
-        assert commands[1] == ["usermod", "-o", "-u", "1000", "-g", "1000", "node"]
+        assert commands[1] == ["/root-path/usermod", "-o", "-u", "1000", "-g", "1000", "node"]
 
     def test_root_names_nodes_home_before_dropping_privileges(self, monkeypatch):
         """gosu leaves the environment alone; root's HOME is /root."""
         monkeypatch.setattr(boot.os, "getuid", lambda: 0)
         monkeypatch.setattr(boot.subprocess, "run", lambda command, **kw: None)
-        monkeypatch.setattr(boot.os, "execvp", lambda f, a: None)
+        monkeypatch.setattr(boot.os, "execv", lambda f, a: None)
 
         boot.main()
 
@@ -404,3 +414,19 @@ def test_boot_never_picks_a_name_only_the_archive_holds(tmp_path, monkeypatch):
     assert boot.resolve_wolt_name(tmp_path) == "bob"
     monkeypatch.setenv("WOLTSPACE_WOLT_NAME", "pal")
     assert boot.resolve_wolt_name(tmp_path) == "bob"
+
+
+def test_the_image_boots_through_tini():
+    """PID 1 must collect orphans; the entrypoint never does, so tini runs it."""
+    dockerfile = (ROOT / "container" / "Dockerfile").read_text()
+    final_stage = re.split(r"(?im)^\s*FROM\s", dockerfile)[-1]
+    # Docker drops comment lines, even inside a continued RUN, and reads
+    # keywords in any case.
+    lines = [line.strip() for line in final_stage.splitlines()]
+    lines = [line for line in lines if line and not line.startswith("#")]
+    entrypoint = [line.split(None, 1) for line in lines if line.split()[0].upper() == "ENTRYPOINT"]
+    assert [json.loads(args) for _, args in entrypoint] == [
+        ["/usr/bin/tini", "--", "/usr/local/bin/woltspace", "container-entrypoint"]
+    ]
+    apt_list = "\n".join(lines).split("apt-get install -y \\\n", 1)[1].split("&&", 1)[0]
+    assert "tini" in apt_list.split()

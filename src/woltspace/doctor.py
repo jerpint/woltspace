@@ -252,25 +252,19 @@ def _live_tunnel_owner(layout: RuntimeLayout, *, runner=None) -> int | None:
 
 def _running_session_count(layout: RuntimeLayout) -> int:
     """How many sessions this data root believes are alive right now."""
+    import sqlite3
+    _graft_runtime_lib(layout)
+    import lodge_db
     try:
-        entries = list(layout.wolts_dir.iterdir())
-    except OSError:
+        conn = lodge_db.connect(layout.wolts_dir, readonly=True)
+    except sqlite3.Error:  # no lodge.db yet: nothing has run here
         return 0
-    running = 0
-    for entry in entries:
-        if not entry.is_dir() or entry.name.startswith("."):
-            continue
-        sessions = entry / ".state" / "sessions"
-        if not sessions.is_dir():
-            continue
-        for record in sessions.glob("*.json"):
-            try:
-                data = json.loads(record.read_text())
-            except (json.JSONDecodeError, OSError):
-                continue
-            if isinstance(data, dict) and data.get("status") == "running":
-                running += 1
-    return running
+    try:
+        return conn.execute("SELECT count(*) FROM sessions WHERE status='running'").fetchone()[0]
+    except sqlite3.Error:
+        return 0
+    finally:
+        conn.close()
 
 
 def _owner_is_live_and_foreign(layout: RuntimeLayout, *, runner=None) -> "InstanceOwner | None":

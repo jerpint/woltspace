@@ -6,6 +6,7 @@ leaves "running"; the CLI is a thin client; the vulture names held sessions.
 
 import argparse
 import runpy
+from types import SimpleNamespace
 import sys
 import time
 from pathlib import Path
@@ -218,7 +219,8 @@ def test_an_until_past_the_routes_cap_is_no_hold():
 
 
 def test_no_printer_raises_on_a_hand_edited_huge_until(tmp_path, monkeypatch):
-    from bot import core, telegram_adapter
+    from bot import core
+    import lodge_commands
     from creatures import vulture
 
     registry = _registry(tmp_path, monkeypatch, hold=dict(HUGE), harness_session_id="conv-1", created_at=1)
@@ -236,9 +238,9 @@ def test_no_printer_raises_on_a_hand_edited_huge_until(tmp_path, monkeypatch):
     monkeypatch.setattr(registry, "list", lambda *a, **k: alive)
     monkeypatch.setattr(core, "registry", registry)
     monkeypatch.setattr(core, "get_tunnel_url", lambda: "")
-    monkeypatch.setattr(telegram_adapter, "list_wolts", lambda: [])
-    text, markup = telegram_adapter._holds_message(core.list_sessions(), None)
-    assert text == "no held sessions." and markup is None
+    ports = SimpleNamespace(session_emoji=lambda name: "🦫", shown=lambda name: name)
+    reply = lodge_commands.holds_list(ports, core.list_sessions(), None)
+    assert reply.text == "no held sessions." and not reply.choices
 
     # The CLI's `hold` show, fed what the lodge answers for this session.
     monkeypatch.setattr(registry, "get", lambda *a, **k: SessionRegistry.get(registry, *a, **{**k, "check_alive": False}))
@@ -254,7 +256,7 @@ def test_no_printer_raises_on_a_hand_edited_huge_until(tmp_path, monkeypatch):
     data["hold"] = dict(BAD_SINCE)
     registry._write("pal", NAME, data)
     alive[:] = [_stored(registry) | {"alive": True}]
-    text, _markup = telegram_adapter._holds_message(core.list_sessions(), None)
+    text = lodge_commands.holds_list(ports, core.list_sessions(), None).text
     assert "hand-edited since" in text and "since" not in text.split("hand-edited since", 1)[1]
 
 

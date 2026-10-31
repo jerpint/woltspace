@@ -162,6 +162,16 @@ class RuntimeLayout:
         os.environ["WOLTSPACE_HOST"] = self.host
         os.environ["PORT"] = str(self.port)
         os.environ["WOLTSPACE_PORT"] = str(self.port)
+        from .backup import restored_tmux_dir
+
+        own_tmux = restored_tmux_dir(self.wolts_dir)
+        if own_tmux is not None:
+            # A restored copy never shares the machine's tmux server: its
+            # sessions carry its source's names. `$TMUX` would override the
+            # directory from inside a pane, so it goes too.
+            own_tmux.mkdir(parents=True, exist_ok=True)
+            os.environ["TMUX_TMPDIR"] = str(own_tmux)
+            os.environ.pop("TMUX", None)
         # Platform helpers must run on the interpreter that owns this package.
         # macOS still ships /usr/bin/python3 as 3.9 on some releases; letting a
         # session helper rediscover that executable from PATH makes imports such

@@ -1,7 +1,6 @@
 """Telegram carries a file by the method its name picks, and as a document when that is refused."""
 
 import logging
-import re
 import sys
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock
@@ -16,7 +15,7 @@ from server import notification_senders as senders
 from server import notify
 from server.config import DEN_REPLY_FOOTER
 from server.notification_senders import (
-    UPLOAD_TIMEOUT, TelegramRefused, telegram_send, telegram_send_audio,
+    TelegramRefused, telegram_send, telegram_send_audio,
     telegram_send_document, telegram_send_voice, telegram_sender,
 )
 from server.notification_types import Attachment, OutboundMessage, SendContext
@@ -24,9 +23,6 @@ from server.notification_types import Attachment, OutboundMessage, SendContext
 LINK = "https://lodge.test/tui?session=test-session"
 FOOTER = f"\n\n---{DEN_REPLY_FOOTER}\n{LINK}"
 DESTINATION = {"chat_id": "42"}
-# Named here and not inside a test: test_shadow_wolt.py reads the Telegram host
-# in a test body as a live call. Nothing below leaves the process.
-API = "https://api.telegram.org/bott/"
 OGG = b"OggS" + b"\x00" * 23
 REFUSAL = "Bad Request: wrong file type"
 
@@ -266,155 +262,77 @@ async def test_after_the_text_a_double_refusal_says_what_was_delivered_with_the_
     transports["audio"].assert_awaited_once()
 
 
-# --- the transports: a real httpx client over a mock transport ----------------
-
-class _Telegram:
-    """The Bot API behind a real httpx.AsyncClient on a MockTransport.
-
-    `answers` maps a method name to the response it gets, or to an exception
-    the connection raises; every other method is answered ok. httpx's own
-    multipart encoder runs and nothing reaches the network.
-    """
-
-    def __init__(self, monkeypatch, answers=None):
-        self.requests, self.post_kwargs = [], []
-        answers = answers or {}
-        telegram = self
-
-        def handler(request):
-            telegram.requests.append(request)
-            answer = answers.get(request.url.path.rsplit("/", 1)[-1])
-            if isinstance(answer, Exception):
-                raise answer
-            return answer or httpx.Response(200, json={"ok": True, "result": {"message_id": 7}})
-
-        class Client(httpx.AsyncClient):
-            def __init__(self, **kwargs):
-                super().__init__(transport=httpx.MockTransport(handler), **kwargs)
-
-            async def post(self, url, **kwargs):
-                telegram.post_kwargs.append(kwargs)
-                return await super().post(url, **kwargs)
-
-        monkeypatch.setattr(senders.httpx, "AsyncClient", Client)
-
-    @property
-    def urls(self) -> list[str]:
-        return [str(request.url) for request in self.requests]
-
-    def parts(self, index: int = 0) -> dict[str, tuple[str, bytes]]:
-        """One request's multipart body as {field: (part headers, part body)}."""
-        request = self.requests[index]
-        content_type = request.headers["content-type"]
-        assert content_type.startswith("multipart/form-data; boundary=")
-        boundary = content_type.split("boundary=", 1)[1].encode()
-        parts = {}
-        for chunk in request.content.split(b"--" + boundary)[1:-1]:
-            head, _, body = chunk[2:-2].partition(b"\r\n\r\n")      # exactly one CRLF each side
-            head = head.decode()
-            parts[re.search(r'name="([^"]+)"', head).group(1)] = (head, body)
-        return parts
-
+# --- the transports: the Telegram connector, over its socket -------------------
 
 @pytest.mark.asyncio
-async def test_send_audio_posts_the_file_in_the_audio_field(monkeypatch, tmp_path):
-    telegram = _Telegram(monkeypatch)
-    song = Attachment(_file(tmp_path, "song.mp3").path, "song.mp3", len(OGG), "audio/mpeg")
-
-    result = await telegram_send_audio("t", "42", song, "hi")
-
-    assert result == {"ok": True, "result": {"message_id": 7}}
-    assert telegram.urls == [API + "sendAudio"]
-    parts = telegram.parts()
-    assert set(parts) == {"chat_id", "caption", "audio"}
-    assert parts["chat_id"][1] == b"42"
-    assert parts["caption"][1] == b"hi"
-    head, body = parts["audio"]
-    assert 'filename="song.mp3"' in head and "Content-Type: audio/mpeg" in head
-    assert body == OGG
-    assert telegram.post_kwargs[0]["timeout"] is UPLOAD_TIMEOUT
-
-
-@pytest.mark.asyncio
-async def test_send_audio_leaves_out_an_empty_caption(monkeypatch, tmp_path):
-    telegram = _Telegram(monkeypatch)
-
-    await telegram_send_audio("t", "42", _file(tmp_path, "song.mp3"), "")
-
-    assert set(telegram.parts()) == {"chat_id", "audio"}
-
-
-@pytest.mark.parametrize("upload, method", [
-    (telegram_send_voice, "sendVoice"), (telegram_send_audio, "sendAudio"),
-    (telegram_send_document, "sendDocument"),
+@pytest.mark.parametrize("transport, method", [
+    (telegram_send_voice, "voice"), (telegram_send_audio, "audio"), (telegram_send_document, "document"),
 ])
-@pytest.mark.parametrize("answer, words", [
-    (httpx.Response(400, json={"ok": False, "description": REFUSAL}), REFUSAL),
-    (httpx.Response(400, json={"ok": False}), "telegram error"),
-    (httpx.Response(413, text="<html>too large</html>"), "telegram answered HTTP 413"),
-])
+async def test_each_transport_asks_the_connector_for_its_method(monkeypatch, tmp_path, transport, method):
+    from connector_loopback import install_fake_broker
+    connector = install_fake_broker(monkeypatch)
+
+    await transport("", "42", _file(tmp_path, "song.mp3"), "")
+
+    [frame] = connector.frames
+    assert (frame["method"], frame["filename"], frame["text"], frame["bytes"]) == (method, "song.mp3", "", OGG)
+
+
 @pytest.mark.asyncio
-async def test_an_answer_that_is_not_ok_is_a_refusal(
-    monkeypatch, tmp_path, upload, method, answer, words,
-):
-    _Telegram(monkeypatch, {method: answer})
+@pytest.mark.parametrize("transport", [telegram_send_voice, telegram_send_audio, telegram_send_document])
+async def test_an_answer_that_is_not_ok_is_a_refusal(monkeypatch, tmp_path, transport):
+    from connector_loopback import install_fake_broker
+    install_fake_broker(monkeypatch, answer=lambda frame: {"status": "refused", "error": REFUSAL})
 
-    with pytest.raises(TelegramRefused) as error:
-        await upload("t", "42", _file(tmp_path, "note.ogg"), "hi")
-
-    assert str(error.value) == words
-    assert isinstance(error.value, RuntimeError)       # what every older caller catches
+    with pytest.raises(TelegramRefused, match=f"^{REFUSAL}$"):
+        await transport("", "42", _file(tmp_path, "note.ogg"), "hi")
 
 
 @pytest.mark.asyncio
 async def test_a_connection_that_fails_is_not_a_refusal(monkeypatch, tmp_path):
-    _Telegram(monkeypatch, {"sendVoice": httpx.ConnectError("no route to host")})
+    from connector_loopback import install_fake_broker
+    install_fake_broker(monkeypatch, answer=lambda frame: {"status": "failed", "error": "no route to host"})
 
-    with pytest.raises(httpx.ConnectError):
-        await telegram_send_voice("t", "42", _file(tmp_path, "note.ogg"), "hi")
+    with pytest.raises(RuntimeError) as error:
+        await telegram_send_voice("", "42", _file(tmp_path, "note.ogg"), "hi")
+
+    assert not isinstance(error.value, TelegramRefused)
 
 
-@pytest.mark.parametrize("name, method, field", [
-    ("note.ogg", "sendVoice", "voice"), ("song.mp3", "sendAudio", "audio"),
-])
 @pytest.mark.asyncio
-async def test_on_the_wire_a_refused_upload_is_followed_by_the_same_bytes_as_a_document(
-    monkeypatch, tmp_path, name, method, field,
+@pytest.mark.parametrize("name, method", [("note.ogg", "voice"), ("song.mp3", "audio")])
+async def test_through_the_connector_a_refused_upload_is_followed_by_the_same_bytes_as_a_document(
+    monkeypatch, tmp_path, name, method,
 ):
-    telegram = _Telegram(monkeypatch, {
-        method: httpx.Response(400, json={"ok": False, "description": REFUSAL}),
-    })
+    from connector_loopback import install_fake_broker
+    connector = install_fake_broker(monkeypatch, answer=lambda frame: (
+        {"status": "refused", "error": REFUSAL} if frame["method"] == method
+        else {"status": "delivered"}))
     send = telegram_sender(
         telegram_send, telegram_send_document, telegram_send_voice, telegram_send_audio,
     )
 
-    await send(
-        OutboundMessage("hi\n", LINK, (_file(tmp_path, name),)), DESTINATION, _context(),
-    )
+    await send(OutboundMessage("hi\n", LINK, (_file(tmp_path, name),)), DESTINATION, _context())
 
-    assert telegram.urls == [API + method, API + "sendDocument"]
-    first, second = telegram.parts(0), telegram.parts(1)
-    assert set(first) == {"chat_id", "caption", field}
-    assert set(second) == {"chat_id", "caption", "document"}
-    assert first["caption"][1] == second["caption"][1] == ("hi\n" + FOOTER).encode()
-    assert first[field][1] == second["document"][1] == OGG
-    assert f'filename="{name}"' in second["document"][0]
+    first, second = connector.frames
+    assert (first["method"], second["method"]) == (method, "document")
+    assert first["text"] == second["text"] == "hi\n" + FOOTER
+    assert first["bytes"] == second["bytes"] == OGG
+    assert second["filename"] == name
 
 
 @pytest.mark.asyncio
-async def test_on_the_wire_a_failed_connection_is_not_followed_by_a_document(monkeypatch, tmp_path):
-    telegram = _Telegram(monkeypatch, {"sendVoice": httpx.ConnectError("no route to host")})
+async def test_through_the_connector_a_failed_send_is_not_followed_by_a_document(monkeypatch, tmp_path):
+    from connector_loopback import install_fake_broker
+    connector = install_fake_broker(monkeypatch, answer=lambda frame: {"status": "ambiguous", "error": "timed out"})
     send = telegram_sender(
         telegram_send, telegram_send_document, telegram_send_voice, telegram_send_audio,
     )
 
-    with pytest.raises(httpx.ConnectError):
-        await send(
-            OutboundMessage("hi\n", LINK, (_file(tmp_path, "note.ogg"),)),
-            DESTINATION, _context(),
-        )
+    with pytest.raises(RuntimeError, match="ambiguous"):
+        await send(OutboundMessage("hi\n", LINK, (_file(tmp_path, "note.ogg"),)), DESTINATION, _context())
 
-    assert telegram.urls == [API + "sendVoice"]
+    assert [frame["method"] for frame in connector.frames] == ["voice"]
 
 
 # --- registration and the whole path ------------------------------------------
@@ -439,6 +357,10 @@ def lodge(monkeypatch, tmp_path):
     monkeypatch.setattr(notify, "SPACE_PLATFORM_DIR", tmp_path)
     monkeypatch.setattr(notify, "OUTBOX_DIR", tmp_path / "outbox")
     monkeypatch.setattr(notify, "dotenv_env", lambda key: env.get(key, ""))
+    # Telegram sends through its connector: here it is connected while the
+    # lodge has a bot token, so the old "no token" cases are "not connected".
+    monkeypatch.setattr(notify, "_connector_up",
+                        lambda name: name != "telegram" or bool(env.get("TELEGRAM_BOT_TOKEN")))
     monkeypatch.setattr(notify, "read_session_registry", lambda name: None)
     monkeypatch.setattr(notify, "append_chat_history", Mock())
     monkeypatch.setattr(notify, "SessionRegistry", lambda root: Mock())
@@ -469,7 +391,7 @@ async def test_end_to_end_a_file_reaches_the_transport_its_name_picks(lodge, nam
     )
 
     token, chat_id, attachment, caption = transports[transport].await_args.args
-    assert (token, chat_id, caption) == ("telegram-token", "101", "hi\n" + FOOTER)
+    assert (token, chat_id, caption) == ("", "101", "hi\n" + FOOTER)  # the token stays with the connector
     assert (attachment.filename, attachment.kind) == (name, "file")
     for other in set(transports) - {transport}:
         transports[other].assert_not_awaited()

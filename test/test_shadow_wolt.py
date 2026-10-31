@@ -359,11 +359,11 @@ class TestRoutingIsActuallyResolvable:
             adapter="telegram", chat_id="-1000000000",
         )
         try:
-            record = wolts_dir / shadow_wolt / ".state" / "sessions" / f"{name}.json"
-            assert record.is_file(), (
-                f"notify scans wolts/*/.state/sessions/; nothing at {record}"
-            )
-            assert json.loads(record.read_text())["chat_id"] == "-1000000000"
+            sys.path.insert(0, str(TEST_DIR.parent))
+            from server.notify import read_session_registry
+            record = read_session_registry(name)
+            assert record is not None, f"notify reads {wolts_dir}'s lodge.db; {name} is not there"
+            assert record["chat_id"] == "-1000000000"
         finally:
             registry.delete(name, wolt=shadow_wolt)
 

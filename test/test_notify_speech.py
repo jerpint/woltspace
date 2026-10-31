@@ -101,6 +101,18 @@ async def test_it_asks_for_the_text_in_the_format_and_writes_a_private_file(monk
     assert stat.S_IMODE(target.stat().st_mode) == 0o600
 
 
+@pytest.mark.parametrize("instructions, extra", [(None, {}), ("Speak slowly.", {"instructions": "Speak slowly."})])
+@pytest.mark.asyncio
+async def test_instructions_are_sent_only_when_set(monkeypatch, tmp_path, instructions, extra):
+    service = _Service(monkeypatch)
+
+    await synthesize("hello", "opus", tmp_path / ("c" * 32), **SETTINGS, instructions=instructions)
+
+    assert json.loads(service.requests[0].content) == {
+        "model": "gpt-4o-mini-tts", "voice": "alloy", "input": "hello", "response_format": "opus",
+    } | extra
+
+
 @pytest.mark.parametrize("body", [MP3, b"\xff\xfb\x90\x00" + b"\x00" * 60])
 @pytest.mark.asyncio
 async def test_mp3_is_recognised_by_its_tag_or_its_frame_sync(monkeypatch, tmp_path, body):
@@ -286,9 +298,18 @@ async def test_a_refusal_is_not_retried(monkeypatch, tmp_path):
     assert len(service.requests) == 1
 
 
-def test_a_stall_is_cut_off_well_inside_a_two_minute_caller():
-    """Two tries at the read timeout must finish before the CLI's own two minutes."""
-    assert speech.SPEECH_TIMEOUT.read * speech.SPEECH_ATTEMPTS < 120
+def test_two_read_waits_stay_under_a_two_minute_caller():
+    """Only the read waits: connecting and sending have their own limits, so this
+    is no bound on the whole call."""
+    timeout = speech.SPEECH_TIMEOUT
+    assert (timeout.connect, timeout.write, timeout.pool, timeout.read, speech.SPEECH_ATTEMPTS) == (
+        30.0, 30.0, 30.0, 50.0, 2)
+    assert timeout.read * speech.SPEECH_ATTEMPTS < 120
+
+
+def test_a_slow_start_gets_more_than_thirty_seconds():
+    """A long message on a busy service can take over 30 s before the first byte."""
+    assert speech.SPEECH_TIMEOUT.read >= 50
 
 
 @pytest.mark.asyncio

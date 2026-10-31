@@ -33,7 +33,8 @@ def _layout(tmp_path, install_root=None, port=7799):
 
 
 def test_the_wolf_joins_the_pack_after_the_channels():
-    assert [c.name for c in CONNECTORS][:3] == ["telegram", "slack", "wolf"]
+    from woltspace.channels import all_connectors
+    assert [c.name for c in all_connectors()][:3] == ["telegram", "slack", "wolf"]
 
 
 class TestPlan:

@@ -14,9 +14,11 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 import outbox  # noqa: E402
 import voice_notes  # noqa: E402
+from creature_types import emoji_from  # noqa: E402
 from env_compat import get_env  # noqa: E402
 from notify_prompt import (  # noqa: E402
     MessageInputError,
+    parse_to,
     read_message_input,
     validate_argv,
 )
@@ -27,6 +29,7 @@ USAGE = f"""Usage:
   notify [--file PATH] [--voice PATH] [--speak]
   notify --telegram CHAT_ID [--file PATH] [--voice PATH] [--speak]
   notify --slack CHANNEL THREAD_TS [--file PATH] [--voice PATH] [--speak]
+  notify --to CONNECTOR:ROUTE [--file PATH] [--voice PATH] [--speak]
 
 Message text is read from standard input. Use a single-quoted heredoc.
 --file sends one file with the message; it may also come before the route flags.
@@ -115,6 +118,18 @@ def _parse_route(argv: list[str]) -> tuple[list[str], str, str, str, list[str]]:
             raise ValueError("--telegram requires CHAT_ID")
         adapter, route_id = "telegram", argv[1]
         route_argv, remaining = ["notify", *argv[:2]], argv[2:]
+    elif argv[:1] == ["--to"]:
+        if len(argv) < 2:
+            raise ValueError("--to requires CONNECTOR:ROUTE")
+        spec, route = parse_to(argv[1])
+        adapter = spec.name
+        if adapter == "telegram":
+            route_id = route["chat_id"]
+        elif adapter == "slack":
+            route_id, slack_thread = route["channel"], route["thread_ts"]
+        else:
+            route_id = spec.codec.format(route)
+        route_argv, remaining = ["notify", *argv[:2]], argv[2:]
     elif argv[:1] == ["--"]:
         route_argv, remaining = ["notify"], argv[1:]
     elif argv and argv[0].startswith("--"):
@@ -134,12 +149,12 @@ def _creature_emoji(session: str, session_reg: Path) -> str:
         text=True,
         check=False,
     )
-    return {
+    return emoji_from({
         "raccoon": "🦝",
         "beaver": "🦫",
         "otter": "🦦",
         "wolf": "🐺",
-    }.get(result.stdout.strip(), "🦫")
+    }, result.stdout.strip(), "🦫")
 
 
 def _safe_transport_detail(stderr: str, secrets: tuple[str, ...]) -> str:
@@ -224,6 +239,8 @@ def main(argv: list[str] | None = None) -> int:
         payload.update(adapter="slack", channel=route_id, thread_ts=slack_thread)
     elif adapter == "telegram":
         payload.update(adapter="telegram", chat_id=route_id)
+    elif adapter:
+        payload.update(adapter=adapter, route=route_id)
     if kind == "speak":
         # The words alone: the lodge reads them aloud without the name prefix.
         payload["speak"] = {"text": words}

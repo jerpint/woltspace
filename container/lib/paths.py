@@ -11,11 +11,33 @@ Usage:
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from env_compat import get_env
 
 WOLTS_DIR = Path(get_env("WOLTSPACE_WOLTS_DIR", "/workspace/wolts"))
+
+
+def pin_restored_tmux(wolts_dir: Path = None) -> None:
+    """Keep a restored copy on its own tmux server, whoever imports the runtime.
+
+    `woltspace restore` marks the copy (`.space/platform/restored.json`, see
+    `woltspace.backup`). A session's tmux name is its own name, so a copy on
+    the machine's shared server could stop its source's sessions. The control
+    plane pins this too; doing it here covers every helper that reaches tmux
+    without going through it. `$TMUX` would win over the directory from inside
+    a pane, so it goes.
+    """
+    root = Path(wolts_dir or WOLTS_DIR)
+    if (root / ".space" / "platform" / "restored.json").is_file():
+        own = root.parent / "tmux"
+        own.mkdir(parents=True, exist_ok=True)
+        os.environ["TMUX_TMPDIR"] = str(own)
+        os.environ.pop("TMUX", None)
+
+
+pin_restored_tmux()
 
 
 # ---------------------------------------------------------------------------

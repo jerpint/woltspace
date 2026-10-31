@@ -17,6 +17,7 @@ from pathlib import Path
 
 from env_compat import get_env
 from session_runtime import RuntimeHandle
+from settings_files import settings_lock, write_json_atomic
 
 
 ALLOWED_IDLE_TIMEOUTS = {None, 3600, 14400, 86400}
@@ -50,17 +51,16 @@ def set_idle_timeout(value: int | None) -> int | None:
     if value not in ALLOWED_IDLE_TIMEOUTS:
         raise ValueError("idle timeout must be 3600, 14400, 86400, or null")
     path = _config_path()
-    try:
-        config = json.loads(path.read_text()) if path.exists() else {}
-        if not isinstance(config, dict):
-            config = {}
-    except (json.JSONDecodeError, OSError):
-        config = {}
-    config.setdefault("sessions", {})["idle_timeout_seconds"] = value
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(config, indent=2) + "\n")
-    tmp.replace(path)
+    with settings_lock(path):
+        try:
+            config = json.loads(path.read_text()) if path.exists() else {}
+            if not isinstance(config, dict):
+                config = {}
+        except (json.JSONDecodeError, OSError):
+            config = {}
+        config.setdefault("sessions", {})["idle_timeout_seconds"] = value
+        write_json_atomic(path, config)
     return value
 
 

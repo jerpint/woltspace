@@ -124,13 +124,13 @@ technical as text.
   `the lodge sent the text instead`. The user has your words; do not send them
   again.
 - If it fails, send the same message again as text. The error says why: no
-  `OPENAI_API_KEY` in the lodge's `.env`, the audio was too large, or the
+  key for the speech service in the lodge's `.env`, the audio was too large, or the
   user has voice messages blocked. If it says the text was delivered, the user
   already has your words; do not send them twice.
-- Each `--speak` is one OpenAI API request, billed to the lodge's key, and the
-  text of the message goes
-  there. `OPENAI_TTS_VOICE` and `OPENAI_TTS_MODEL` in the lodge's `.env` change
-  the voice and the model.
+- The text of the message goes to the lodge's speech service: OpenAI by
+  default (one API request per `--speak`, billed to the lodge's key), or
+  whatever the owner set with `woltspace speech set`, such as a model on this
+  machine. `woltspace speech show` tells you which.
 
 Speech takes a few seconds to make, more for a long message, so let the command
 finish here too. If it times out, check before you send the text: the lodge may

@@ -157,7 +157,22 @@ def _validate_notify_argv(argv: tuple[str, ...]) -> None:
         if _TELEGRAM_CHAT_ID_RE.fullmatch(route_args[1]) is None:
             raise ValueError("Telegram chat ID must be an integer")
         return
+    if route_args[0] == "--to" and len(route_args) == 2:
+        parse_to(route_args[1])
+        return
     raise ValueError("invalid notify route arguments")
+
+
+def parse_to(target: str):
+    """`--to <connector>:<route>` as (spec, route); ValueError when either is unknown
+    or not in the connector's canonical form. The connector's codec decides."""
+    import connector_registry
+
+    name, sep, route_text = str(target).partition(":")
+    found = connector_registry.spec(name) if sep else None
+    if found is None:
+        raise ValueError("--to needs <connector>:<route> for a connector this lodge knows")
+    return found, found.codec.canonical(route_text)
 
 
 register_route_validator(("notify",), _validate_notify_argv)

@@ -25,8 +25,8 @@ if it dies, and shows up in `woltspace status`.
 │    catch_up?}        │      └────────────────────────┘     └──────────────────┘
 │ ]}                   │                 │
 └──────────────────────┘                 ▼
-        ▲                     .space/wolf/<wolt>/<name>.last   last-run stamps
-        │                     .space/wolf/jobs.jsonl           job journal
+        ▲                     .space/lodge.db, table wolf_runs:
+        │                     last-run stamps + job journal
   woltspace wolf ... ──▶ /wolf/crons API (validates, locks, writes)
 ```
 
@@ -92,5 +92,5 @@ container/lib/wolfcore.py        ← shared cron logic
 server/app.py  (# --- Wolf)      ← /wolf/* routes
 src/woltspace/cli.py             ← woltspace wolf
 wolt/wolf.json                   ← per-wolt schedule
-.space/wolf/                     ← last-run stamps + jobs.jsonl
+.space/lodge.db  (wolf_runs)     ← last-run stamps + job journal
 ```

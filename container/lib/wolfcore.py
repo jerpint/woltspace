@@ -6,7 +6,7 @@ Pure, stdlib-only, and the one place any of this is decided:
   - parsing a cron expression (strictly) and matching it against a time
   - when a cron runs next, and whether an entry is due right now
   - reading and writing a wolt's `wolt/wolf.json` under a lock
-  - the lodge-global last-run stamps and job journal in `.space/wolf/`
+  - the last-run stamps and the job journal: rows of the lodge DB's wolf_runs
 
 `container/creatures/wolf.py` is the loop that fires; `server/app.py` is the
 API that edits. Both import this, so a schedule the API accepts is exactly a
@@ -30,12 +30,14 @@ from __future__ import annotations
 import json
 import os
 import re
-from contextlib import contextmanager
+import sys
+from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Iterator, Optional
 
+import lodge_db
 from paths import space_wolf_dir
 
 try:  # POSIX (macOS, Linux, the container). Elsewhere the lock is a no-op.
@@ -411,7 +413,7 @@ def wolf_json_lock(wolts_dir: Path, wolt: str) -> Iterator[None]:
     lock on an inode nobody reads any more.
     """
     validate_name(wolt, "wolt")
-    lock_dir = wolt_state_dir(space_wolf_dir(Path(wolts_dir)), wolt)
+    lock_dir = space_wolf_dir(Path(wolts_dir)) / wolt
     lock_dir.mkdir(parents=True, exist_ok=True)
     with open(lock_dir / "wolf.json.lock", "a") as handle:
         if fcntl is not None:
@@ -462,107 +464,125 @@ def load_all(wolts_dir: Path) -> tuple[list[dict], list[tuple[str, str]]]:
     return crons, errors
 
 
-# ── State: stamps and journal ──────────────────────────────────────
+# ── State: the wolf_runs rows ──────────────────────────────────────
+# One table in the lodge DB holds both. A row with action 'fired' is a stamp:
+# the cron claimed `slot` (STAMP_FORMAT), and the newest one is its last run.
+# Every other row is one journal event, read back as the old jobs.jsonl line.
 
-def wolt_state_dir(state_dir: Path, wolt: str) -> Path:
-    return Path(state_dir) / wolt
-
-
-def _inside(state_dir: Path, path: Path) -> bool:
-    try:
-        path.resolve().relative_to(Path(state_dir).resolve())
-        return True
-    except ValueError:
-        return False
-
-
-def stamp_path(state_dir: Path, wolt: str, name: str) -> Optional[Path]:
-    """`<state>/<wolt>/<name>.last`, or None for a wolt or name that is not a
-    plain identifier. Keyed by wolt AND name: two wolts may both have a
-    `digest` without either one's stamp silencing the other."""
-    if not (NAME_RE.match(wolt or "") and NAME_RE.match(name or "")):
-        return None
-    path = Path(state_dir) / wolt / f"{name}.last"
-    return path if _inside(state_dir, path) else None
+def _rows(wolts_dir: Path, sql: str, args: tuple = ()) -> list:
+    # A lodge with no DB has no runs; reading it must not create one.
+    if not lodge_db.path(wolts_dir).exists():
+        return []
+    with closing(lodge_db.connect(wolts_dir)) as conn:
+        return conn.execute(sql, args).fetchall()
 
 
-def read_last_run(state_dir: Path, wolt: str, name: str) -> Optional[str]:
-    """The stamp of the last fire, or None.
+def read_last_run(wolts_dir: Path, wolt: str, name: str) -> Optional[str]:
+    """The stamp of the last fire, or None."""
+    rows = _rows(wolts_dir, "SELECT slot FROM wolf_runs WHERE wolt=? AND cron=?"
+                 " AND action='fired' ORDER BY ts DESC LIMIT 1", (wolt, name))
+    return rows[0]["slot"] if rows else None
 
-    Falls back to a pre-migration lodge-wide `<name>.last`, so a lodge read
-    before the wolf has started (and migrated) still shows the truth.
-    """
-    path = stamp_path(state_dir, wolt, name)
-    if path is None:
-        return None
-    for candidate in (path, Path(state_dir) / f"{name}.last"):
-        try:
-            return candidate.read_text().strip() or None
-        except OSError:
+
+def write_last_run(wolts_dir: Path, wolt: str, name: str, dt: datetime) -> None:
+    with lodge_db.write(wolts_dir) as conn:
+        conn.execute("INSERT INTO wolf_runs(wolt, cron, slot, action, ts)"
+                     " VALUES (?, ?, ?, 'fired', ?)",
+                     (wolt, name, dt.strftime(STAMP_FORMAT), datetime.now().timestamp()))
+
+
+def move_last_run(wolts_dir: Path, wolt: str, name: str, new_wolt: str, new_name: str) -> None:
+    """Carry a cron's stamps along when it is renamed or moved to another wolt."""
+    with lodge_db.write(wolts_dir) as conn:
+        conn.execute("UPDATE wolf_runs SET wolt=?, cron=? WHERE wolt=? AND cron=?"
+                     " AND action='fired'", (new_wolt, new_name, wolt, name))
+
+
+def forget_last_run(wolts_dir: Path, wolt: str, name: str | None = None) -> None:
+    """Drop the stamps of one cron, or of every cron of a wolt. The journal stays."""
+    with lodge_db.write(wolts_dir) as conn:
+        conn.execute("DELETE FROM wolf_runs WHERE wolt=? AND action='fired'"
+                     + (" AND cron=?" if name else ""), (wolt, name) if name else (wolt,))
+
+
+def append_journal(wolts_dir: Path, cron: str, event: str, *, owner: str,
+                   session: str | None = None, **fields) -> None:
+    """One journal event. `fields` (link, missed, error, ...) are kept as given."""
+    with lodge_db.write(wolts_dir) as conn:
+        conn.execute("INSERT INTO wolf_runs(wolt, cron, action, session, ts, extra)"
+                     " VALUES (?, ?, ?, ?, ?, ?)",
+                     (owner, cron, event, session, datetime.now().timestamp(),
+                      json.dumps(fields)))
+
+
+def read_journal(wolts_dir: Path, *, limit: int = 50, cron: str = "",
+                 wolt: str = "") -> list[dict]:
+    """Journal events newest first, each in the shape jobs.jsonl had:
+    `ts`, `cron`, `action` ("session"), `event`, `owner`, then the rest."""
+    sql, args = "SELECT * FROM wolf_runs WHERE action != 'fired'", []
+    for column, value in (("cron", cron), ("wolt", wolt)):
+        if value:
+            sql += f" AND {column}=?"
+            args.append(value)
+    rows = _rows(wolts_dir, sql + " ORDER BY ts DESC, id DESC LIMIT ?", (*args, limit))
+    out = []
+    for row in rows:
+        entry = {"ts": datetime.fromtimestamp(row["ts"]).isoformat(), "cron": row["cron"],
+                 "action": "session", "event": row["action"], "owner": row["wolt"]}
+        if row["session"] is not None:
+            entry["session"] = row["session"]
+        entry.update(json.loads(row["extra"] or "{}"))
+        out.append(entry)
+    return out
+
+
+def import_wolf(conn, wolts_dir: Path) -> tuple[dict, list[Path]]:
+    """One-time import of `.space/wolf/`: the per-wolt `<wolt>/<name>.last`
+    stamps, the lodge-wide `<name>.last` ones from before them (to every wolt
+    with a cron by that name), and `jobs.jsonl`. Returns the counts and the
+    files read, for `lodge_db.run_imports` to retire. OR IGNORE: what the DB
+    already has is never read twice."""
+    state = space_wolf_dir(Path(wolts_dir))
+    counts, retire = {"stamps": 0, "journal": 0, "skipped": 0}, []
+    owners: dict[str, list[str]] = {}
+    for cron in load_all(Path(wolts_dir))[0]:
+        owners.setdefault(cron.get("name"), []).append(cron["_owner"])
+    stamps = [(p, [p.parent.name]) for p in sorted(state.glob("*/*.last"))]
+    stamps += [(p, owners.get(p.stem, [])) for p in sorted(state.glob("*.last"))]
+    for path, wolts in stamps:
+        if not wolts:
             continue
-    return None
-
-
-def write_last_run(state_dir: Path, wolt: str, name: str, dt: datetime) -> None:
-    path = stamp_path(state_dir, wolt, name)
-    if path is None:
-        raise CronError(f"cannot stamp {wolt!r}/{name!r}: not a plain name", "name")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write(path, dt.strftime(STAMP_FORMAT))
-
-
-def move_last_run(state_dir: Path, wolt: str, name: str, new_wolt: str, new_name: str) -> None:
-    """Carry a cron's stamp along when it is renamed or moved to another wolt."""
-    src = stamp_path(state_dir, wolt, name)
-    dst = stamp_path(state_dir, new_wolt, new_name)
-    if src is None or dst is None or src == dst or not src.exists():
-        return
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    os.replace(src, dst)
-
-
-def migrate_legacy_stamps(state_dir: Path, owners: dict[str, list[str]]) -> list[str]:
-    """One-time move of lodge-wide `<name>.last` stamps to `<wolt>/<name>.last`.
-
-    `owners` maps a cron name to every wolt that has a cron by that name. One
-    owner: the stamp moves to it. Several: each gets a copy, so none of them
-    fires again for a minute it already fired for. No owner: left alone. An
-    existing per-wolt stamp is never overwritten. Idempotent — a migrated
-    stamp is gone from the top level, so a second run finds nothing to do.
-    """
-    moved = []
-    state_dir = Path(state_dir)
-    if not state_dir.is_dir():
-        return moved
-    for legacy in sorted(state_dir.glob("*.last")):
-        name = legacy.stem
-        wolts = [w for w in owners.get(name, []) if stamp_path(state_dir, w, name)]
-        if not wolts or not legacy.is_file():
-            continue
-        stamp = legacy.read_text()
+        slot, ts = path.read_text().strip(), path.stat().st_mtime
         for wolt in wolts:
-            target = stamp_path(state_dir, wolt, name)
-            if not target.exists():
-                target.parent.mkdir(parents=True, exist_ok=True)
-                atomic_write(target, stamp)
-            moved.append(f"{wolt}/{name}")
-        legacy.unlink()
-    return moved
-
-
-def append_journal(state_dir: Path, cron: str, action: str, **fields) -> None:
-    """One line in `jobs.jsonl`. Fields are only ever added, never renamed:
-    `ts`, `cron`, `action`, then `event`, `owner`, and whatever else."""
-    state_dir = Path(state_dir)
-    state_dir.mkdir(parents=True, exist_ok=True)
-    entry = {"ts": datetime.now().isoformat(), "cron": cron, "action": action, **fields}
-    with open(state_dir / JOURNAL, "a") as handle:
-        handle.write(json.dumps(entry) + "\n")
+            inserted = conn.execute(
+                "INSERT OR IGNORE INTO wolf_runs(wolt, cron, slot, action, ts)"
+                " VALUES (?, ?, ?, 'fired', ?)", (wolt, path.stem, slot, ts)).rowcount
+            counts["stamps" if inserted else "skipped"] += 1
+        retire.append(path)
+    journal = state / JOURNAL
+    if journal.exists():
+        for line in journal.read_text().splitlines():
+            try:
+                entry = json.loads(line)
+                ts = datetime.fromisoformat(entry.pop("ts")).timestamp()
+                cron, event = entry.pop("cron"), entry.pop("event")
+            except (ValueError, KeyError, TypeError, AttributeError):
+                print(f"[lodge-db] {journal}: line not imported: {line[:80]}", file=sys.stderr)
+                continue
+            entry.pop("action", None)
+            inserted = conn.execute(
+                "INSERT OR IGNORE INTO wolf_runs(wolt, cron, action, session, ts, extra)"
+                " VALUES (?, ?, ?, ?, ?, ?)",
+                (entry.pop("owner", ""), cron, event, entry.pop("session", None), ts,
+                 json.dumps(entry))).rowcount
+            counts["journal" if inserted else "skipped"] += 1
+        retire.append(journal)
+    return counts, retire
 
 
 # ── Presenting ─────────────────────────────────────────────────────
 
-def describe(entry: dict, wolt: str, state_dir: Path, now: datetime) -> dict:
+def describe(entry: dict, wolt: str, wolts_dir: Path, now: datetime) -> dict:
     """One cron as the API shows it: what it runs, when next, when last."""
     name = entry.get("name", "")
     out = {"wolt": wolt, "name": name}
@@ -573,7 +593,7 @@ def describe(entry: dict, wolt: str, state_dir: Path, now: datetime) -> dict:
         "notify": notify_channel(entry.get("notify")),
         "catch_up": entry.get("catch_up") is not False,
         "next_run": None,
-        "last_run": stamp_to_iso(read_last_run(state_dir, wolt, name)),
+        "last_run": stamp_to_iso(read_last_run(wolts_dir, wolt, name)),
     })
     try:
         when = parse_at(entry["at"]) if kind == "at" else next_run(entry.get("schedule", ""), now)

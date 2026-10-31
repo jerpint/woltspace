@@ -15,7 +15,7 @@ async function loadPage({ wolts = [PAL], archived = [], answers = {} } = {}) {
   const view = Object.assign(new Node('div'), { className: 'active' }), body = new Node('body');
   const calls = [], confirms = [], alerts = [];
   const context = {
-    allWolts: wolts, WOLT_TYPES: new Set(['beaver']), RODENT_TYPES: new Set(['beaver']), WOLT_EMOJI: {},
+    allWolts: wolts, WOLT_TYPES: new Set(['beaver']), RODENT_TYPES: new Set(['beaver']), WOLT_EMOJI: {}, woltBaseType: w => (w && (w.base_type || w.type)) || '', woltEmoji: (w, f = '🦫') => (w && w.emoji) || f,
     woltSessionSummary: w => ({ w, name: w.name, sessions: [], online: [], last: 0, total: 0 }),
     woltLabel: w => w.display_name || w.name, woltSpriteAvatar: () => '', woltStateText: () => 'offline',
     startSession() {}, openCreateWolt() {}, sessionRow: () => new Node('a'), showView() {}, scrollTo() {},

@@ -37,6 +37,8 @@ from sessions import (
 from env_compat import get_env
 from session_expiry import hold_active, public_hold
 from wolts import get_active_creature, find_by_type, list_wolts as _list_wolts_full
+from creature_types import emoji_from
+from settings_files import settings_lock, write_json_atomic
 from paths import (
     wolt_sessions_log,
     platform_version_file,
@@ -120,10 +122,11 @@ def switch_wolt(name: str) -> str | None:
     config_path = WOLTS_DIR / "woltspace.json"
     if config_path.exists():
         try:
-            config = json.loads(config_path.read_text())
-            adapter = os.environ.get("BOT_ADAPTER", "telegram")
-            config.setdefault(adapter, {})["active_wolt"] = name
-            config_path.write_text(json.dumps(config, indent=2) + "\n")
+            with settings_lock(config_path):
+                config = json.loads(config_path.read_text())
+                adapter = os.environ.get("BOT_ADAPTER", "telegram")
+                config.setdefault(adapter, {})["active_wolt"] = name
+                write_json_atomic(config_path, config)
         except Exception:
             pass
     return name
@@ -205,7 +208,7 @@ Never prefix your messages with emojis or your name — the adapter handles that
     try:
         for w in list_wolts():
             wtype = w.get("type", "rodent")
-            emoji = creature_emojis_map.get(wtype, "🐾")
+            emoji = emoji_from(creature_emojis_map, wtype, "🐾")
             role = w.get("role") or w.get("description") or ""
             wolt_roster_lines.append(f"- **{w['name']}** ({emoji} {wtype}) — {role}")
     except Exception:
@@ -329,7 +332,7 @@ def build_ack_text(url: str = None, session_name: str = None, adapter: str = Non
     """Build the 🪵 ack message shown when a session starts."""
     quote = random.choice(BEAVER_ACKS)
     wolt_name = session_name.split("-")[0] if session_name else "wolt"
-    emoji = CREATURE_EMOJIS.get(creature, "🦫")
+    emoji = emoji_from(CREATURE_EMOJIS, creature, "🦫")
     text = f'🪵 session started - "{quote}"\n\n{emoji} assigned: {wolt_name}'
     if url:
         text += f"\n\n---\nsession: {url}"
@@ -830,19 +833,12 @@ def _tool_wolf_jobs(args: dict, routing: dict | None) -> str:
     """Show recent wolf job log entries."""
     count = args.get("count", 10)
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    from creatures.wolf import get_state_dir
-    log_file = get_state_dir() / "jobs.jsonl"
-    if not log_file.exists():
-        return json.dumps({"jobs": [], "note": "no job log yet"})
+    import wolfcore
+    from creatures.wolf import WOLTS_DIR
     try:
-        lines = log_file.read_text().strip().split("\n")
-        recent = lines[-count:]
-        jobs = []
-        for line in recent:
-            try:
-                jobs.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
+        jobs = wolfcore.read_journal(WOLTS_DIR, limit=count)[::-1]  # oldest first
+        if not jobs:
+            return json.dumps({"jobs": [], "note": "no job log yet"})
         return json.dumps({"jobs": jobs, "count": len(jobs)})
     except Exception as e:
         return json.dumps({"error": str(e)})
@@ -1464,11 +1460,18 @@ def get_response(
 
 
 def transcribe_audio(file_path: str) -> str:
-    """Transcribe audio file using OpenAI Whisper."""
-    api_key = os.environ.get("OPENAI_API_KEY")
-    if not api_key:
-        return "[voice message — no OPENAI_API_KEY set for transcription]"
-    client = OpenAI(api_key=api_key)
-    with open(file_path, "rb") as f:
-        result = client.audio.transcriptions.create(model="whisper-1", file=f)
-    return result.text
+    """Transcribe a voice note with the lodge's transcription service.
+
+    `woltspace.json` `transcription` (see container/lib/transcription_settings),
+    read on every note; OpenAI `gpt-4o-transcribe` by default.
+    """
+    import transcription_settings as stt
+
+    try:
+        settings = stt.load_settings(stt.config_path(WOLTS_DIR))
+    except stt.SettingsInvalid as exc:
+        return f"[voice message — transcription settings unusable: {exc}]"
+    key = os.environ.get(settings.key_env) if settings.key_env else None
+    if settings.key_env and not key:
+        return f"[voice message — no {settings.key_env} set for transcription]"
+    return stt.transcribe(Path(file_path), settings, key)

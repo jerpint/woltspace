@@ -83,7 +83,7 @@ mode on purpose keeps asking even where Auto is approved, and asking for Auto
 where no grant exists is refused rather than quietly downgraded — you find out
 at spawn, not three commands into the transcript.
 
-Grants live in `<wolts>/.space/auto-grants.json`, owner-readable only, and
+Grants are rows in the lodge DB (`<wolts>/.space/lodge.db`, table `grants`), and
 `woltspace auto revoke` takes one back. Revoking does not touch a session
 already running under it: a live agent keeps the permissions it started with
 until it exits.
@@ -170,9 +170,10 @@ platform skills and templates — and the image points the familiar
 `/workspace/woltspace` path at that bundle with a symlink, so every skill, wolt
 `CLAUDE.md` and bin script that knows the old path still works.
 
-The **entrypoint IS the package**: `ENTRYPOINT ["/usr/local/bin/woltspace",
-"container-entrypoint"]`, a subcommand of the installed CLI
-(`src/woltspace/container_entrypoint.py`). The wheel ships no bash. The command
+The **entrypoint IS the package**: `ENTRYPOINT ["/usr/bin/tini", "--",
+"/usr/local/bin/woltspace", "container-entrypoint"]`, a subcommand of the
+installed CLI (`src/woltspace/container_entrypoint.py`) started by tini, which
+is PID 1 and collects orphaned processes. The wheel ships no bash. The command
 runs twice — once as root, which moves the `node` user onto the host's uid/gid
 and re-execs itself through `gosu`, and once as node, which does only what a
 container has to: seed harness credentials and trust into the per-wolt HOMEs
@@ -180,11 +181,11 @@ container has to: seed harness credentials and trust into the per-wolt HOMEs
 prepare the workspace dirs the mount shadows, declare
 `WOLTSPACE_ISOLATION=external` and `WOLTSPACE_ENTRYPOINT=1`, open the tmux
 window — and then run `serve` **in this very process**, through the same call
-the `serve` subcommand makes. No exec, no shell in between: docker's SIGTERM
-lands on the process that owns the connectors, which is the guarantee bash's
-`exec` used to provide. Skills sync, hook normalization, session adoption, the
-connectors and the tunnel all belong to that control plane, which is
-byte-for-byte the one a native user runs.
+the `serve` subcommand makes. No exec, no shell in between: docker's SIGTERM,
+passed on by tini, lands on the process that owns the connectors, which is the
+guarantee bash's `exec` used to provide. Skills sync, hook normalization,
+session adoption, the connectors and the tunnel all belong to that control
+plane, which is byte-for-byte the one a native user runs.
 
 Because the entrypoint comes from the installed package, a registry build is
 only coherent from the **first release that carries this slim entrypoint**: an
@@ -281,7 +282,7 @@ the clash, `woltspace status` reports it in those terms and stops restarting,
 because restarting cannot win that race:
 
 ```
-connector telegram: degraded · bot.telegram_adapter from …
+connector telegram: degraded · Telegram · bundled connector …
   error: another process is already polling this bot token (Telegram getUpdates returned 409 Conflict)
   fix: One bot token can only be polled by one process. Stop the other instance …
 ```

@@ -1212,6 +1212,9 @@ def test_voice_request_and_answer_are_the_ones_the_lodge_really_reads_and_writes
     monkeypatch.setattr(notify, "slack_send", AsyncMock())
     monkeypatch.setattr(notify, "slack_upload_file", upload)
     monkeypatch.setattr(notify, "dotenv_env", lambda key: lodge_env.get(key, ""))
+    # Telegram sends through its connector: connected here while the lodge has its token.
+    monkeypatch.setattr(notify, "_connector_up",
+                        lambda name: name != "telegram" or bool(lodge_env.get("TELEGRAM_BOT_TOKEN")))
     monkeypatch.setattr(notify, "OUTBOX_DIR", box)
     monkeypatch.setattr(notify, "SPACE_PLATFORM_DIR", tmp_path)
     monkeypatch.setattr(notify, "read_session_registry", lambda name: None)
@@ -1282,6 +1285,9 @@ def test_speak_request_and_answer_are_the_ones_the_lodge_really_reads_and_writes
     monkeypatch.setattr(notify, "slack_send", AsyncMock())
     monkeypatch.setattr(notify, "slack_upload_file", upload)
     monkeypatch.setattr(notify, "dotenv_env", lambda key: lodge_env.get(key, ""))
+    # Telegram sends through its connector: connected here while the lodge has its token.
+    monkeypatch.setattr(notify, "_connector_up",
+                        lambda name: name != "telegram" or bool(lodge_env.get("TELEGRAM_BOT_TOKEN")))
     monkeypatch.setattr(notify, "OUTBOX_DIR", box)
     monkeypatch.setattr(notify, "SPACE_PLATFORM_DIR", tmp_path)
     monkeypatch.setattr(notify, "read_session_registry", lambda name: None)
@@ -1335,6 +1341,9 @@ def test_a_file_for_a_chat_that_is_not_the_lodge_s_own_is_refused_and_removed(
     monkeypatch.setattr(notify, "telegram_send", AsyncMock())
     monkeypatch.setattr(notify, "telegram_send_document", telegram_send_document)
     monkeypatch.setattr(notify, "dotenv_env", lambda key: lodge_env.get(key, ""))
+    # Telegram sends through its connector: connected here while the lodge has its token.
+    monkeypatch.setattr(notify, "_connector_up",
+                        lambda name: name != "telegram" or bool(lodge_env.get("TELEGRAM_BOT_TOKEN")))
     monkeypatch.setattr(notify, "OUTBOX_DIR", box)
     monkeypatch.setattr(notify, "SPACE_PLATFORM_DIR", tmp_path)
     monkeypatch.setattr(notify, "read_session_registry", lambda name: None)
@@ -1362,3 +1371,28 @@ def test_a_file_for_a_chat_that_is_not_the_lodge_s_own_is_refused_and_removed(
     )
     assert second.stdout == ""
     assert _entries(box) == []                          # and the command, what it staged
+
+
+@pytest.mark.parametrize("legacy, generic", [
+    (["--telegram", "-100123"], ["--to", "telegram:-100123"]),
+    (["--slack", "C0123ABC", "123.456"], ["--to", "slack:C0123ABC:123.456"]),
+])
+def test_notify_to_sends_what_the_legacy_flag_sends(tmp_path, legacy, generic):
+    """`--to <connector>:<route>` is the general form; the old flags are aliases."""
+    payloads = []
+    for argv in (legacy, generic):
+        home = tmp_path / str(len(payloads))
+        home.mkdir()
+        env, capture = _environment(home)
+        result = subprocess.run([NOTIFY, *argv], input="hi", text=True, capture_output=True, env=env)
+        assert result.returncode == 0, result.stderr
+        payloads.append(json.loads(capture.read_text()))
+    assert payloads[0] == payloads[1]
+
+
+@pytest.mark.parametrize("target", ["telegram:12a", "slack:C1", "nowhere:1", "telegram"])
+def test_notify_to_refuses_a_route_its_connector_does_not_accept(tmp_path, target):
+    env, capture = _environment(tmp_path)
+    result = subprocess.run([NOTIFY, "--to", target], input="hi", text=True, capture_output=True, env=env)
+    assert result.returncode != 0
+    assert not capture.exists()

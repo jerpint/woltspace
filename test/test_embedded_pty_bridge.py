@@ -14,7 +14,6 @@ sys.path.insert(0, str(ROOT))
 
 from server.pty_bridge import PtyBridgeError, attach_tmux
 from server.pty_bridge import PtyTextDecoder
-from woltspace.channels import CONNECTORS
 from woltspace.doctor import run_doctor
 from woltspace.layout import RuntimeLayout
 
@@ -27,7 +26,8 @@ def _layout(tmp_path):
 
 
 def test_browser_bridge_is_not_a_supervised_node_connector():
-    assert [connector.name for connector in CONNECTORS] == ["telegram", "slack", "wolf", "vulture"]
+    from woltspace.channels import all_connectors
+    assert [connector.name for connector in all_connectors()] == ["telegram", "slack", "wolf", "vulture"]
 
 
 def test_doctor_reports_the_embedded_browser_terminal(tmp_path):

@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-import fcntl
 import json
+import sys
 import time
-from contextlib import contextmanager
+from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 
+import lodge_db
 from session_targets import SessionTarget
 
 
@@ -82,48 +83,36 @@ class ExecutionPolicy:
 
 
 class AutoGrantStore:
-    """Atomic lodge-level store keyed by wolt, canonical path, and version."""
+    """Auto consents, keyed by wolt, canonical path, and version: the lodge
+    DB's `grants` rows of kind 'auto'."""
 
     def __init__(self, wolts_dir: str | Path):
         self.wolts_dir = Path(wolts_dir)
-        self.path = self.wolts_dir / ".space" / "auto-grants.json"
-        self.lock_path = self.path.with_suffix(".lock")
 
-    @contextmanager
-    def _lock(self):
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        with self.lock_path.open("w") as handle:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-            yield
-
-    def _read(self) -> list[AutoGrant]:
-        try:
-            payload = json.loads(self.path.read_text())
-        except (FileNotFoundError, json.JSONDecodeError, OSError):
+    def _select(self, where: str, args: tuple) -> list[AutoGrant]:
+        # A lodge with no DB has no grants; reading it must not create one.
+        if not lodge_db.path(self.wolts_dir).exists():
             return []
-        records = payload.get("grants", []) if isinstance(payload, dict) else []
-        return [AutoGrant.from_record(item) for item in records if isinstance(item, dict)]
-
-    def _write(self, grants: list[AutoGrant]):
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.path.with_suffix(".tmp")
-        tmp.write_text(json.dumps({"grants": [g.to_record() for g in grants]}, indent=2) + "\n")
-        tmp.chmod(0o600)
-        tmp.replace(self.path)
+        with closing(lodge_db.connect(self.wolts_dir)) as conn:
+            rows = conn.execute(
+                "SELECT wolt_id, scope, policy_version, approved_at FROM grants"
+                f" WHERE kind='auto'{where}", args,
+            ).fetchall()
+        return [AutoGrant(r["wolt_id"], Path(r["scope"]), r["policy_version"],
+                          r["approved_at"]) for r in rows]
 
     @staticmethod
-    def _matches(grant: AutoGrant, target: SessionTarget) -> bool:
-        return (
-            grant.wolt_id == target.wolt_id
-            and grant.canonical_workdir == target.canonical_workdir
-            and grant.policy_version == POLICY_VERSION
-        )
+    def _key(target: SessionTarget) -> tuple:
+        return (target.wolt_id, str(target.canonical_workdir), POLICY_VERSION)
 
     def list(self) -> list[AutoGrant]:
-        return self._read()
+        return self._select("", ())
 
     def find(self, target: SessionTarget) -> AutoGrant | None:
-        return next((g for g in self._read() if self._matches(g, target)), None)
+        found = self._select(
+            " AND wolt_id=? AND scope=? AND policy_version=?", self._key(target)
+        )
+        return found[0] if found else None
 
     def grant(self, target: SessionTarget) -> AutoGrant:
         approved = AutoGrant(
@@ -131,29 +120,66 @@ class AutoGrantStore:
             canonical_workdir=target.canonical_workdir,
             approved_at=int(time.time()),
         )
-        with self._lock():
-            grants = [g for g in self._read() if not self._matches(g, target)]
-            grants.append(approved)
-            self._write(grants)
+        with lodge_db.write(self.wolts_dir) as conn:
+            conn.execute(
+                "INSERT INTO grants(kind, wolt_id, scope, policy_version, approved_at)"
+                " VALUES ('auto', ?, ?, ?, ?) ON CONFLICT(kind, wolt_id, scope) DO UPDATE"
+                " SET policy_version=excluded.policy_version, approved_at=excluded.approved_at",
+                self._key(target) + (approved.approved_at,),
+            )
         return approved
 
     def revoke(self, target: SessionTarget) -> bool:
-        with self._lock():
-            grants = self._read()
-            kept = [g for g in grants if not self._matches(g, target)]
-            changed = len(kept) != len(grants)
-            if changed:
-                self._write(kept)
-        return changed
+        with lodge_db.write(self.wolts_dir) as conn:
+            return conn.execute(
+                "DELETE FROM grants WHERE kind='auto' AND wolt_id=? AND scope=?"
+                " AND policy_version=?", self._key(target),
+            ).rowcount > 0
 
     def revoke_wolt(self, wolt_id: str) -> int:
         """Revoke every grant for a wolt, whatever its workdir; return how many."""
-        with self._lock():
-            grants = self._read()
-            kept = [g for g in grants if g.wolt_id != wolt_id]
-            if len(kept) != len(grants):
-                self._write(kept)
-        return len(grants) - len(kept)
+        with lodge_db.write(self.wolts_dir) as conn:
+            return conn.execute(
+                "DELETE FROM grants WHERE kind='auto' AND wolt_id=?", (wolt_id,)
+            ).rowcount
+
+
+def import_grants(conn, wolts_dir: str | Path) -> tuple[dict, list[Path]]:
+    """One-time import of `.space/auto-grants.json` and `.space/digs/grants.json`.
+
+    Returns the counts and the files read, which `lodge_db.run_imports`
+    retires after the commit. One that cannot be read is logged and kept.
+    """
+    space = Path(wolts_dir) / ".space"
+    counts = {"auto": 0, "dig": 0, "skipped": 0}
+    retire = []
+    for kind, source in (("auto", space / "auto-grants.json"),
+                         ("dig", space / "digs" / "grants.json")):
+        if not source.exists():
+            continue
+        try:
+            records = json.loads(source.read_text())["grants"]
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            print(f"[lodge-db] {source} not imported: {exc}", file=sys.stderr)
+            continue
+        for item in records:
+            if not isinstance(item, dict) or (kind == "dig" and not item.get("name")):
+                continue
+            # OR IGNORE: a row the DB already has is newer than any file.
+            if kind == "auto":
+                grant = AutoGrant.from_record(item)
+                row = (grant.wolt_id, str(grant.canonical_workdir), grant.policy_version,
+                       grant.approved_at, None)
+            else:
+                row = (str(item.get("wolt", "")), item["name"], 0,
+                       int(item.get("created_at", 0)), json.dumps(item))
+            inserted = conn.execute(
+                "INSERT OR IGNORE INTO grants(kind, wolt_id, scope, policy_version,"
+                " approved_at, record) VALUES (?, ?, ?, ?, ?, ?)", (kind, *row),
+            ).rowcount
+            counts[kind if inserted else "skipped"] += 1
+        retire.append(source)
+    return counts, retire
 
 
 def resolve_execution_policy(

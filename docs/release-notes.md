@@ -1,65 +1,40 @@
-# Woltspace 0.5.21
+# Woltspace 0.5.25
 
-Python **0.5.21** and **@woltspace/tui 0.5.3** are a release pair for 0.5.
-Both registries publish this time.
-
-## Thank you
-
-- [@asharakeh](https://github.com/asharakeh) built archive, unarchive and
-  delete for wolts (#575), kept large boot memory from stopping new sessions
-  (#580), and fixed messages left unsent in Claude's input box (#576).
+Python **0.5.25** and **@woltspace/tui 0.5.4** are published together.
 
 ## What's new
 
-- **Two npm doors.** `npx woltspace` opens the lodge's terminal cockpit. On a
-  machine with no lodge it lists what is there and what is missing, in the
-  lodge's voice, then gives the one line to paste into Claude Code, Codex or
-  opencode. If woltspace is installed but stopped, it gives the start command
-  instead. It never installs anything; the steps stay in the README's "For
-  agents" section. `npx skills add jerpint/woltspace` brings Onboardie 🦫 into
-  any agent, to explain Woltspace and install it with you, asking before each
-  step. It offers that one skill only; the lodge's own skills are not listed
-  (#582).
-- **One Onboardie everywhere.** The skill, the starter lodge's chat skill and
-  the site all use the same Onboardie and the same paste line, pointing at
-  the README (#582).
-- **Archive, unarchive and delete a wolt.** Put away a wolt you no longer
-  need from the ⋯ menu on the Wolts page or with `woltspace wolt archive
-  <name>`. It comes back exactly as it was with unarchive. Delete works only
-  on an archived wolt and asks first. A held session blocks archiving, an
-  archived name stays reserved, and a delete also clears that wolt's Auto
-  grants and cron stamps so a later wolt with the same name starts clean
-  (#575).
+- **The TUI shows custom creatures.** A wolt that is a custom creature shows
+  its own emoji in the TUI's session list and in "wake a wolt" (#633, #646).
+- **The TUI runs on Ink 8 and React 19.** Ink 5 counted one-character emoji
+  such as ⭐ as one column, so a row with one wrapped and left a blank line.
+  Ink 8 measures them as terminals draw them (#646).
 
-## Fixes
+## Changes to know about
 
-- **A wolt with a lot of memory still gets new sessions.** A new session's
-  opening prompt carried the boot memory whole, and past Linux's limit for
-  one argument (128 KiB) every new session exited at once while the message
-  read as delivered. Oversized boot memory is now cut to fit, so the session
-  starts (#580, fixes #578).
-- **Messages to Claude are sent, not left in the input box.** A message with
-  two or more image paths on their own lines could sit unsent while the
-  lodge reported it delivered. Claude now waits half a second before Enter,
-  like every other engine (#576).
-- **`woltspace wolt …` works from an ordinary terminal.** The installed CLI
-  had no `wolt` noun; it now hands it to the bundled client, as it does for
-  `session` (#575).
-- **Telegram and Slack let go of a wolt that is gone.** A chat whose wolt was
-  archived or removed goes back to the wolt picker (#575).
+- **The TUI needs Node.js 22 or newer** (was 18). `woltspace tui` says so
+  when the Node it finds is older. CI, the release workflow and the container
+  image already use Node 22 or newer (#646).
+- **The unused v1 Telegram adapter is gone.** The Telegram connector from
+  0.5.24 is the only Telegram path (#636).
 
 ## Upgrade notes
 
+Take a backup first, with the release you are leaving:
+
 ```sh
+woltspace backup --tag pre-upgrade
 woltspace update
 ```
 
-No colony-data migration is required. Native upgrades stop and restart the
-control plane while preserving tmux sessions. Container lodges update from the
-host as before.
+Native upgrades stop and restart the control plane while preserving tmux
+sessions. Container lodges update from the host as before.
 
-The TUI updates on its own: `npx woltspace` or `npx @woltspace/tui` fetch
-0.5.3. A global install updates with `npm install -g @woltspace/tui`.
+If you run the TUI with `npx woltspace` or `woltspace tui`, update Node.js to
+22 or newer first.
+
+Going back to 0.5.24 works without extra steps: nothing in the lodge's data
+changed.
 
 After upgrading, verify the lodge is healthy:
 

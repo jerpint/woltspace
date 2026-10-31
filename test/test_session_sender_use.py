@@ -1,12 +1,11 @@
 """A session that talks is in use: its own notify, message or spawn stamps it.
 
-The stamp is last_activity only, on a running record only, under the session
-lock: a touch that races a rest must never write running back over resting.
+The stamp is last_activity only, on a running record only, in one guarded
+write: a touch that races a rest must never write running back over resting.
 """
 
 import sys
 import time
-from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock
 
@@ -52,29 +51,11 @@ def test_touch_never_writes_over_a_session_that_left_running(tmp_path, monkeypat
     assert stored["last_activity"] == 1000
 
 
-def test_touch_reads_and_writes_under_the_session_lock(tmp_path, monkeypatch):
+def test_touch_stamps_a_running_session(tmp_path, monkeypatch):
+    """One UPDATE guarded by status='running': the check and the write are one statement."""
     registry = _registry(tmp_path, monkeypatch)
-    held = []
-    real_lock, real_read = registry._lock, registry._read
-
-    @contextmanager
-    def tracking_lock(*args):
-        with real_lock(*args):
-            held.append(True)
-            try:
-                yield
-            finally:
-                held.pop()
-
-    reads_locked = []
-
-    def tracking_read(*args):
-        reads_locked.append(bool(held))
-        return real_read(*args)
-
-    registry._lock, registry._read = tracking_lock, tracking_read
     assert registry.touch(SENDER, wolt="pal") is True
-    assert reads_locked and all(reads_locked)
+    assert registry._read("pal", SENDER)["status"] == "running"
     assert _used(registry) >= int(time.time()) - 5
 
 

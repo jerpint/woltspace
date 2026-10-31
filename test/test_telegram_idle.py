@@ -49,8 +49,9 @@ class FakeLodge:
 
 
 @pytest.fixture
-def adapter(monkeypatch):
-    from bot import telegram_adapter as adapter
+def adapter(monkeypatch, tmp_path):
+    from connector_loopback import TelegramFacade
+    adapter = TelegramFacade(monkeypatch, tmp_path / "wolts")
     monkeypatch.setattr(adapter, "is_allowed", lambda update: True)
     monkeypatch.setenv("WOLTSPACE_API", API)
     return adapter

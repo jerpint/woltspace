@@ -135,14 +135,12 @@ def test_grant_for_same_path_does_not_cross_wolts(tmp_path):
     assert store.find(target_b) is None
 
 
-def test_grant_store_is_versioned_private_and_revocable(tmp_path):
+def test_grant_store_is_versioned_and_revocable(tmp_path):
     target, wolts = _target(tmp_path)
     store = AutoGrantStore(wolts)
     grant = store.grant(target)
 
-    payload = json.loads(store.path.read_text())
-    assert payload["grants"][0]["policy_version"] == POLICY_VERSION
-    assert store.path.stat().st_mode & 0o777 == 0o600
+    assert store.find(target).policy_version == POLICY_VERSION
     assert grant.approved_at > 0
     assert store.revoke(target) is True
     assert store.find(target) is None

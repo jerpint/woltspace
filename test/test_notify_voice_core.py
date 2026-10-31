@@ -36,6 +36,10 @@ def lodge(monkeypatch, tmp_path):
     monkeypatch.setattr(notify, "SPACE_PLATFORM_DIR", tmp_path)
     monkeypatch.setattr(notify, "OUTBOX_DIR", state.box)
     monkeypatch.setattr(notify, "dotenv_env", lambda key: env.get(key, ""))
+    # Telegram sends through its connector: here it is connected while the
+    # lodge has a bot token, so the old "no token" cases are "not connected".
+    monkeypatch.setattr(notify, "_connector_up",
+                        lambda name: name != "telegram" or bool(env.get("TELEGRAM_BOT_TOKEN")))
     monkeypatch.setattr(notify, "read_session_registry", lambda name: state.routing)
     monkeypatch.setattr(notify, "append_chat_history", state.history)
     monkeypatch.setattr(notify, "SessionRegistry", lambda root: Mock())
@@ -216,6 +220,10 @@ def real_senders(monkeypatch, tmp_path):
     monkeypatch.setattr(notify, "SPACE_PLATFORM_DIR", tmp_path)
     monkeypatch.setattr(notify, "OUTBOX_DIR", tmp_path / "outbox")
     monkeypatch.setattr(notify, "dotenv_env", lambda key: env.get(key, ""))
+    # Telegram sends through its connector: here it is connected while the
+    # lodge has a bot token, so the old "no token" cases are "not connected".
+    monkeypatch.setattr(notify, "_connector_up",
+                        lambda name: name != "telegram" or bool(env.get("TELEGRAM_BOT_TOKEN")))
     monkeypatch.setattr(notify, "read_session_registry", lambda name: None)
     monkeypatch.setattr(notify, "append_chat_history", Mock())
     monkeypatch.setattr(notify, "SessionRegistry", lambda root: Mock())
@@ -235,7 +243,7 @@ async def test_end_to_end_a_voice_entry_goes_out_through_send_voice(real_senders
     await notify.send_notification("test-session", "hi\n", None, _voice(entry))
 
     token, chat_id, attachment, caption = send_voice.await_args.args
-    assert (token, chat_id) == ("telegram-token", "101")
+    assert (token, chat_id) == ("", "101")  # the token stays with the connector
     assert attachment == Attachment(box / entry, "note.ogg", len(OGG), "audio/ogg", "voice")
     assert caption.startswith("hi\n\n\n---")     # the text's own newline, then the footer's two
     send_document.assert_not_awaited()

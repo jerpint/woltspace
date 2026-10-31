@@ -515,9 +515,9 @@ class TestRegressions:
         assert os.access(notify, os.X_OK)
 
     def test_den_reply_footer_consistent(self):
-        """Footer constant must match between server/config.py and telegram_adapter.py."""
+        """Footer constant must match between server/config.py and the lodge side that reads it."""
         config_src = (Path(__file__).resolve().parents[1] / "server/config.py").read_text()
-        adapter_src = (Path(__file__).resolve().parents[1] / "container/bot/telegram_adapter.py").read_text()
+        adapter_src = (Path(__file__).resolve().parents[1] / "container/lib/chat_lodge.py").read_text()
 
         # Both should contain the exact same sentinel string
         sentinel = "↩️ reply to this message to talk to this session directly"
