@@ -137,6 +137,79 @@ _MIGRATIONS: list[tuple[int, tuple[str, ...]]] = [
         )""",
         "CREATE INDEX IF NOT EXISTS connector_events_ts ON connector_events(ts)",
     )),
+    (5, (
+        # The inbox (inbox.py, RFC #615): mail held until the recipient's
+        # engine takes it. Nothing in the lodge writes it yet. A row is never
+        # deleted, so seq and key are never reused; body goes once accepted,
+        # while size and the SHA-256 of its UTF-8 bytes stay to match retries.
+        """CREATE TABLE IF NOT EXISTS inbox_messages (
+            seq          INTEGER PRIMARY KEY AUTOINCREMENT,
+            key          TEXT NOT NULL UNIQUE,
+            recipient    TEXT NOT NULL,
+            conversation TEXT NOT NULL,
+            body         BLOB,
+            size         INTEGER NOT NULL,
+            digest       BLOB NOT NULL,
+            state        TEXT NOT NULL,
+            reason       TEXT,
+            calls        INTEGER NOT NULL DEFAULT 0,
+            created_at   REAL NOT NULL
+        )""",
+        # Each conversation's oldest unresolved message, without reading the
+        # accepted ones; queries must say `state != 'native_accepted'` to use it.
+        "CREATE INDEX IF NOT EXISTS inbox_unresolved"
+        " ON inbox_messages(recipient, conversation, seq) WHERE state != 'native_accepted'",
+        # One row per engine call, kept for good (at most three per message).
+        """CREATE TABLE IF NOT EXISTS inbox_attempts (
+            id         TEXT PRIMARY KEY,
+            seq        INTEGER NOT NULL REFERENCES inbox_messages(seq),
+            ordinal    INTEGER NOT NULL,
+            generation TEXT NOT NULL,
+            outcome    TEXT,
+            UNIQUE (seq, ordinal)
+        )""",
+        # A fixed-size ring of state changes for observers; the oldest go.
+        """CREATE TABLE IF NOT EXISTS inbox_events (
+            cursor  INTEGER PRIMARY KEY AUTOINCREMENT,
+            seq     INTEGER NOT NULL,
+            state   TEXT NOT NULL,
+            reason  TEXT,
+            repeats INTEGER NOT NULL DEFAULT 1
+        )""",
+        # Running totals, one row for the lodge ('') and one per recipient,
+        # changed in the same transaction as the rows they count.
+        """CREATE TABLE IF NOT EXISTS inbox_usage (
+            scope   TEXT PRIMARY KEY,
+            pending INTEGER NOT NULL,
+            bytes   INTEGER NOT NULL,
+            keys    INTEGER NOT NULL
+        )""",
+    )),
+    (6, (
+        # Who inbox mail is for (inbox_binding.py): a session enrolled by hand,
+        # never by the lodge yet. The incarnation is made at enrollment and
+        # dies with the row; harness and conversation are frozen there.
+        # sessions.status stays the session's only lifecycle.
+        "ALTER TABLE sessions ADD COLUMN inbox_incarnation TEXT",
+        "ALTER TABLE sessions ADD COLUMN inbox_harness TEXT",
+        "ALTER TABLE sessions ADD COLUMN inbox_conversation TEXT",
+        "ALTER TABLE sessions ADD COLUMN inbox_readiness TEXT",
+        "ALTER TABLE sessions ADD COLUMN inbox_generation TEXT",
+        "ALTER TABLE sessions ADD COLUMN inbox_revision INTEGER",
+        "CREATE UNIQUE INDEX IF NOT EXISTS sessions_inbox_incarnation"
+        " ON sessions(inbox_incarnation) WHERE inbox_incarnation IS NOT NULL",
+        # A wolt's pick, newest activity first; queries must order by these
+        # words and say `inbox_incarnation IS NOT NULL` to use it.
+        "CREATE INDEX IF NOT EXISTS sessions_inbox_pick ON sessions(wolt,"
+        " coalesce(last_activity, 0) DESC, created_at DESC, name) WHERE inbox_incarnation IS NOT NULL",
+        # What a bound request asked for, kept to match retries after the
+        # body is gone. NULL request_kind: a row of the direct Store API.
+        "ALTER TABLE inbox_messages ADD COLUMN request_kind TEXT",
+        "ALTER TABLE inbox_messages ADD COLUMN request_address TEXT",
+        "ALTER TABLE inbox_messages ADD COLUMN bound_harness TEXT",
+        # The binding's revision a bound attempt was claimed under.
+        "ALTER TABLE inbox_attempts ADD COLUMN revision INTEGER",
+    )),
 ]
 _BREAKING: set[int] = set()
 
@@ -149,9 +222,13 @@ def path(wolts_dir) -> Path:
     return Path(wolts_dir) / ".space" / "lodge.db"
 
 
-def connect(wolts_dir, *, readonly: bool = False) -> sqlite3.Connection:
+def connect(wolts_dir, *, readonly: bool = False, durable: bool = False,
+            busy_ms: int = 5000) -> sqlite3.Connection:
     """A new connection, never shared across threads. Readonly (mode=ro) fails
-    on a missing file, so a reader never creates an empty lodge."""
+    on a missing file, so a reader never creates an empty lodge. Durable syncs
+    every commit to disk (synchronous=FULL), from before the schema is touched:
+    for mail the lodge holds for someone (inbox.py). busy_ms bounds the wait
+    for another writer."""
     db = path(wolts_dir)
     if readonly:
         conn = sqlite3.connect(
@@ -165,10 +242,10 @@ def connect(wolts_dir, *, readonly: bool = False) -> sqlite3.Connection:
         conn = sqlite3.connect(db, isolation_level=None)
     conn.row_factory = sqlite3.Row
     try:
-        conn.execute("PRAGMA busy_timeout=5000")
+        conn.execute(f"PRAGMA busy_timeout={int(busy_ms)}")
         if not readonly:
             _wal(conn)
-        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute(f"PRAGMA synchronous={'FULL' if durable else 'NORMAL'}")
         conn.execute("PRAGMA foreign_keys=ON")
         if readonly:
             # mode=ro opens lazily: touch the file now so a missing one
@@ -268,13 +345,13 @@ _STATE = threading.local()
 
 
 @contextmanager
-def write(wolts_dir):
+def write(wolts_dir, *, durable: bool = False, busy_ms: int = 5000):
     """One write transaction: BEGIN IMMEDIATE, then COMMIT, or ROLLBACK on error.
 
     BEGIN IMMEDIATE takes the write lock up front, so what the block reads
     cannot change before it writes. This is the lodge's only lock.
     """
-    conn = connect(wolts_dir)
+    conn = connect(wolts_dir, durable=durable, busy_ms=busy_ms)
     try:
         conn.execute("BEGIN IMMEDIATE")
         outer = in_write()
