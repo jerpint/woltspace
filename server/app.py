@@ -75,7 +75,7 @@ from session_expiry import (
 )
 from session_runtime import RuntimeHandle, get_runtime
 from session_targets import SessionTarget
-from execution_policy import AutoGrantStore, POLICY_VERSION
+from execution_policy import AutoGrantStore, POLICY_VERSION, RECORD_VERSION
 from runtime_context import RuntimeContext
 from harness_auth import auth_source, claude_authenticated
 from skills_sync import wolt_skills_delivery
@@ -86,6 +86,8 @@ from harnesses import (
     set_tier_defaults,
     resolve_harness,
     harness_install_problem,
+    levels,
+    LevelNotOffered,
     platform_skill_invoke,
     is_valid_model,
     model_catalog,
@@ -1307,7 +1309,7 @@ async def session_new_lodge(request: Request):
         return result
     except PermissionError as e:
         return JSONResponse({"error": str(e)}, status_code=403)
-    except HarnessNotInstalled as e:
+    except (HarnessNotInstalled, LevelNotOffered) as e:
         return JSONResponse({"error": str(e)}, status_code=400)
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=404)
@@ -2225,9 +2227,11 @@ async def runtime_capabilities():
         "isolation": context.isolation,
         "supports_host_workdirs": context.isolation == "host",
         "default_execution_policy": (
-            "prompt" if context.isolation == "host" else "auto"
+            "prompt" if context.isolation == "host" else "bypass"
         ),
-        "policy_version": POLICY_VERSION,
+        "policy_version": POLICY_VERSION,  # the host grant's
+        "record_version": RECORD_VERSION,
+        "levels": levels(context.isolation),
     }
 
 

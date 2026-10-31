@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  agentAlive, inactiveCount, sessionPolicy, sessionWorkdir, spawnTarget,
+  agentAlive, inactiveCount, sessionPolicy, sessionWorkdir, spawnLevels, spawnTarget,
 } from '../src/session-view.js';
 
 test('session view prefers canonical target metadata', () => {
@@ -16,9 +16,22 @@ test('session view prefers canonical target metadata', () => {
   assert.equal(sessionPolicy(session), 'prompt');
 });
 
-test('legacy session view keeps old dir and implicit Auto visible', () => {
+test('legacy session view keeps old dir and shows a version 1 auto as legacy bypass', () => {
   assert.equal(sessionWorkdir({ dir: '/old/repo' }), '/old/repo');
-  assert.equal(sessionPolicy({}), 'auto');
+  assert.equal(sessionPolicy({}), 'bypass*');
+  assert.equal(sessionPolicy({ execution_policy: 'auto' }), 'bypass*');
+  assert.equal(sessionPolicy({ execution_policy: { mode: 'auto', policy_version: 1 } }), 'bypass*');
+  assert.equal(sessionPolicy({ execution_policy: { mode: 'auto', policy_version: 2 } }), 'auto');
+  assert.equal(sessionPolicy({ execution_policy: { mode: 'bypass', policy_version: 2 } }), 'bypass');
+});
+
+test('the level picker offers only what the wolt engine offers here, and sends the pick', () => {
+  const caps = { levels: { opencode: { prompt: 'Ask (engine settings)', bypass: 'Bypass' } } };
+  assert.deepEqual(spawnLevels(caps, { harness: 'opencode' }).map(([mode]) => mode), ['', 'prompt', 'bypass']);
+  assert.deepEqual(spawnLevels(caps, { harness: 'claude' }).map(([mode]) => mode), ['', 'prompt', 'auto', 'bypass']);
+  assert.deepEqual(spawnLevels(null, null).map(([mode]) => mode), ['', 'prompt', 'auto', 'bypass']);
+  assert.equal(spawnTarget(caps, { home: '/w' }, '/x', 'bypass').executionPolicy, 'bypass');
+  assert.equal(spawnTarget(caps, { home: '/w' }, '/x', '').executionPolicy, undefined);
 });
 
 test('native spawn roots the wolt in its own home, not the launch directory', () => {

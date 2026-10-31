@@ -190,6 +190,7 @@ def test_session_spawn_reads_optional_seed_prompt_from_stdin(monkeypatch, prompt
         json=False,
         workdir="/tmp/work tree",
         auto=True,
+        policy=None,
     )
 
     client["cmd_session_spawn"](args)
@@ -233,6 +234,35 @@ def test_session_spawn_rejects_legacy_prompt_with_recovery():
     assert "woltspace session spawn target --from sender --json" in error
     assert "--workdir '/tmp/work tree' --auto <<'WOLTSPACE_IWCL_" in error
     assert prompt in error
+
+
+def test_session_spawn_policy_asks_for_that_level_and_survives_the_recovery_hint(monkeypatch):
+    client = _load_client()
+    sent = {}
+    client["cmd_session_spawn"].__globals__["_req"] = lambda method, path, body=None: (
+        sent.update(body=body) or (200, {"name": "target-maple-d4e5f6"}))
+    monkeypatch.setattr("sys.stdin", io.StringIO(""))
+    client["cmd_session_spawn"](argparse.Namespace(
+        wolt="target", prompt=[], from_="", json=False, workdir="", auto=False, policy="prompt"))
+    assert sent["body"]["execution_policy"] == "prompt"
+
+    rejected = subprocess.run([WOLTSPACE, "session", "spawn", "target", "hi", "--policy", "prompt"],
+                              capture_output=True, text=True, check=False)
+    assert rejected.returncode == 2
+    assert "woltspace session spawn target --policy prompt <<'WOLTSPACE_IWCL_" in rejected.stderr
+
+
+def test_session_list_shows_a_version_1_auto_as_legacy_bypass(capsys):
+    client = _load_client()
+    client["_print_sessions"]([
+        {"name": "old", "execution_policy": {"mode": "auto", "isolation": "external", "policy_version": 1}},
+        {"name": "new", "execution_policy": {"mode": "auto", "isolation": "host", "policy_version": 2}},
+        {"name": "fast", "execution_policy": {"mode": "bypass", "isolation": "host", "policy_version": 2}},
+    ])
+    rows = {line.split()[0]: line.split()[1] for line in capsys.readouterr().out.splitlines()[1:-1]}
+    assert rows == {"old": "bypass*", "new": "auto", "fast": "bypass"}
+    client["_print_sessions"]([{"name": "new", "execution_policy": {"mode": "auto", "policy_version": 2}}])
+    assert "legacy" not in capsys.readouterr().out
 
 
 def test_session_describe_defaults_to_current_session(monkeypatch, capsys):

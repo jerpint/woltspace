@@ -9,6 +9,7 @@ from pathlib import Path
 import httpx
 import pytest
 
+import harnesses
 from server import app as app_module
 
 
@@ -48,7 +49,10 @@ def test_runtime_capabilities_distinguish_host_from_external(monkeypatch):
         "supports_host_workdirs": True,
         "default_execution_policy": "prompt",
         "policy_version": 1,
+        "record_version": 2,
+        "levels": harnesses.levels("host"),
     }
+    assert response.json()["levels"]["pi"] == {"bypass": "Bypass"}
 
 
 def test_health_identifies_the_exact_control_plane(monkeypatch):
@@ -284,7 +288,7 @@ def test_harness_tiers_route_saves_and_validates(tmp_path, monkeypatch):
 @pytest.mark.parametrize("harness", ["claude", "codex"])
 @pytest.mark.parametrize("approved, override, expected", [
     (False, None, "prompt"),
-    (True, None, "auto"),
+    (True, None, "bypass"),
     (True, "prompt", "prompt"),
     (False, "auto", None),
     (True, "auto", "auto"),
@@ -339,6 +343,20 @@ def test_tui_payload_through_api_resolves_grants_and_harness_command(
     assert session["execution_policy"]["mode"] == expected
     assert session["target"]["canonical_workdir"] == str(home.resolve())
     command = sessions.prepare_session_command(session["name"], "spawn")
-    auto_flag = ("--dangerously-skip-permissions" if harness == "claude"
-                 else "--dangerously-bypass-approvals-and-sandbox")
-    assert (auto_flag in command) == (expected == "auto")
+    bypass_flag = ("--dangerously-skip-permissions" if harness == "claude"
+                   else "--dangerously-bypass-approvals-and-sandbox")
+    assert (bypass_flag in command) == (expected == "bypass")
+    assert " ".join(harnesses.policy_flags(harness, session["execution_policy"])) in command
+
+
+def test_a_level_the_engine_does_not_offer_is_a_400_with_the_reason(tmp_path, monkeypatch, fake_runtime):
+    import sessions
+
+    _, home, _ = _layout(tmp_path, monkeypatch)
+    (home / "wolt" / "wolt.json").write_text(json.dumps({"name": "maple", "type": "raccoon", "harness": "hermes"}))
+    monkeypatch.setenv("WOLTSPACE_ISOLATION", "external")
+    response = asyncio.run(_request("POST", "/sessions/new/lodge",
+                                    json={"wolt": "maple", "execution_policy": "auto"}))
+    assert response.status_code == 400
+    assert response.json()["error"].startswith("hermes does not offer Auto on external")
+    assert sessions.SessionRegistry().list() == []  # refused before anything is recorded

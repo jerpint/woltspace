@@ -13,9 +13,15 @@ import lodge_db
 from session_targets import SessionTarget
 
 
+# POLICY_VERSION versions the host consent (grants); RECORD_VERSION versions a
+# session's stored policy. Record version 1 had two modes, and its "auto" ran
+# every engine with no checks at all: that is "bypass" now.
 POLICY_VERSION = 1
+RECORD_VERSION = 2
 VALID_ISOLATION = {"external", "host"}
-VALID_MODES = {"prompt", "auto"}
+VALID_MODES = {"prompt", "auto", "bypass"}
+GRANTED_MODES = {"auto", "bypass"}  # what the host grant allows
+_V1_MODES = {"auto": "bypass"}
 
 
 @dataclass(frozen=True)
@@ -51,7 +57,7 @@ class ExecutionPolicy:
 
     mode: str
     isolation: str
-    policy_version: int = POLICY_VERSION
+    policy_version: int = RECORD_VERSION
 
     def __post_init__(self):
         if self.mode not in VALID_MODES:
@@ -68,18 +74,27 @@ class ExecutionPolicy:
 
     @classmethod
     def from_record(cls, value, *, default_isolation: str = "external"):
-        """Read current records plus the historical implicit-Auto behavior."""
+        """Read a stored policy of any version as a current one.
+
+        A bare string or a dict without a version is version 1, and no policy
+        at all is the historical implicit Auto: in version 1, "auto" means
+        bypass. A version this build does not know is refused, never guessed.
+        """
         if isinstance(value, cls):
             return value
         if isinstance(value, dict):
-            return cls(
-                mode=value.get("mode", "auto"),
-                isolation=value.get("isolation", default_isolation),
-                policy_version=int(value.get("policy_version", POLICY_VERSION)),
-            )
-        if isinstance(value, str) and value:
-            return cls(mode=value, isolation=default_isolation)
-        return cls(mode="auto", isolation="external")
+            version = int(value.get("policy_version", 1))
+            mode = value.get("mode", "auto")
+            isolation = value.get("isolation", default_isolation)
+            if version == 1:
+                mode = _V1_MODES.get(mode, mode)
+            elif version != RECORD_VERSION:
+                raise ValueError(f"unknown execution policy version: {version}")
+        elif isinstance(value, str) and value:
+            mode, isolation = _V1_MODES.get(value, value), default_isolation
+        else:
+            mode, isolation = "bypass", "external"
+        return cls(mode=mode, isolation=isolation)
 
 
 class AutoGrantStore:
@@ -189,34 +204,30 @@ def resolve_execution_policy(
     target: SessionTarget,
     grants: AutoGrantStore,
 ) -> tuple[ExecutionPolicy, AutoGrant | None]:
-    """Resolve defaults and enforce host Auto consent for the exact target.
+    """Resolve defaults and enforce host consent for the exact target.
 
     On the host the grant *is* the consent, so it also decides the default: a
-    caller that asks for nothing gets Auto exactly where someone has already
+    caller that asks for nothing gets Bypass exactly where someone has already
     approved this wolt in this directory, and prompt everywhere else. Without
     that, every unattended native session — the bot's spawns, the lodge's —
     booted prompt-mode with nobody there to answer, because no spawn path asks
-    for Auto by name.
+    for a level by name.
 
-    Explicit still beats implicit in both directions: `requested="prompt"`
-    keeps asking even where Auto is approved, and `requested="auto"` without a
-    grant is refused rather than quietly downgraded.
+    One grant allows both Auto and Bypass. Explicit still beats implicit in
+    both directions: `requested="prompt"` keeps asking even where the grant
+    exists, and Auto or Bypass without a grant is refused rather than quietly
+    downgraded.
     """
     grant = grants.find(target) if isolation == "host" else None
-    default = "auto" if isolation == "external" or grant is not None else "prompt"
+    default = "bypass" if isolation == "external" or grant is not None else "prompt"
     mode = requested or default
     policy = ExecutionPolicy(mode=mode, isolation=isolation)
-    if mode == "auto" and isolation == "host" and grant is None:
+    if mode in GRANTED_MODES and isolation == "host" and grant is None:
         raise PermissionError(
-            "Auto is not approved for "
+            "Auto and Bypass are not approved for "
             f"wolt '{target.wolt_id}' in '{target.canonical_workdir}'. "
             "Grant that exact wolt and directory before spawning."
         )
     # A prompt-mode session records no grant: the registry says what the
     # session actually runs under, not what it could have run under.
-    return policy, grant if mode == "auto" else None
-
-
-def policy_mode(value) -> str:
-    """Return a command-builder mode, preserving old implicit-Auto callers."""
-    return ExecutionPolicy.from_record(value).mode
+    return policy, grant if mode in GRANTED_MODES else None

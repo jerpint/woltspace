@@ -5,7 +5,9 @@ import os from 'node:os';
 import { Box, Text, useApp, useInput } from 'ink';
 import * as api from '../api.js';
 import { color, creatureGlyph, lore, age, clock } from '../theme.js';
-import { agentAlive, inactiveCount, sessionPolicy, sessionWorkdir, spawnTarget } from '../session-view.js';
+import {
+  agentAlive, inactiveCount, sessionPolicy, sessionWorkdir, spawnLevels, spawnTarget,
+} from '../session-view.js';
 import { createWoltAction, validateWoltName, woltTypes } from '../create-wolt.js';
 import { versionBanner } from '../version.js';
 
@@ -37,6 +39,7 @@ export default function App({ onAction, launchCwd = process.cwd() }) {
   const [spawnCursor, setSpawnCursor] = useState(0);
   const [createName, setCreateName] = useState('');
   const [createTypeCursor, setCreateTypeCursor] = useState(0);
+  const [levelCursor, setLevelCursor] = useState(0);
   const pendingG = useRef(false);
 
   const view = sortSessions(sessions).filter((s) => showAll || agentAlive(s));
@@ -168,11 +171,17 @@ export default function App({ onAction, launchCwd = process.cwd() }) {
       return;
     }
 
+    if ((mode === 'spawn-confirm' || mode === 'create-confirm') && ch === 'p') {
+      const count = spawnLevels(capabilities, mode === 'spawn-confirm' ? wolts[spawnCursor] : null).length;
+      return setLevelCursor((c) => (c + 1) % count);
+    }
+
     if (mode === 'spawn-confirm') {
       if (key.escape || ch === 'n') {
         setMode('spawn');
       } else if (ch === 'y' && wolts[spawnCursor]) {
-        const target = spawnTarget(capabilities, wolts[spawnCursor], launchCwd);
+        const level = spawnLevels(capabilities, wolts[spawnCursor])[levelCursor]?.[0];
+        const target = spawnTarget(capabilities, wolts[spawnCursor], launchCwd, level);
         onAction?.({
           type: 'spawn',
           wolt: wolts[spawnCursor].name,
@@ -191,6 +200,7 @@ export default function App({ onAction, launchCwd = process.cwd() }) {
       } else if (ch === 'y') {
         onAction?.(createWoltAction(
           createName, woltTypes[createTypeCursor], capabilities, launchCwd,
+          spawnLevels(capabilities, null)[levelCursor]?.[0],
         ));
         exit();
       }
@@ -207,7 +217,10 @@ export default function App({ onAction, launchCwd = process.cwd() }) {
       }
       if (key.return) {
         if (!capabilities) setError('runtime capabilities are not loaded; press r and retry');
-        else setMode('create-confirm');
+        else {
+          setLevelCursor(0);
+          setMode('create-confirm');
+        }
       }
       return;
     }
@@ -221,6 +234,7 @@ export default function App({ onAction, launchCwd = process.cwd() }) {
           setError('runtime capabilities are not loaded yet');
           return;
         }
+        setLevelCursor(0);
         setMode('spawn-confirm');
       }
       return;
@@ -329,6 +343,9 @@ export default function App({ onAction, launchCwd = process.cwd() }) {
     );
   });
 
+  const levelLines = (wolt) => spawnLevels(capabilities, wolt).map(([mode, text], i) =>
+    h(Text, { key: `lv${mode}`, bold: i === levelCursor }, `${i === levelCursor ? ' ▸ ' : '   '}${text}`));
+
   const emptyText = () => {
     if (loading) return lore.loading;
     if (needle) return lore.emptyMatch;
@@ -377,8 +394,8 @@ export default function App({ onAction, launchCwd = process.cwd() }) {
       const target = spawnTarget(capabilities, wolt, launchCwd);
       lines.push(h(Text, { key: 'sc1', color: color.amber }, `start ${wolt.name}?`));
       lines.push(h(Text, { key: 'sc2' }, `   cwd: ${target.displayWorkdir}`));
-      lines.push(h(Text, { key: 'sc3' }, `   policy: ${target.executionPolicy || 'server default (uses Auto grants)'}`));
-      lines.push(h(Text, { key: 'sc4', color: color.dim }, '   y confirm · n/esc back'));
+      lines.push(...levelLines(wolt));
+      lines.push(h(Text, { key: 'sc4', color: color.dim }, '   p level · y confirm · n/esc back'));
     } else if (mode === 'create-name') {
       lines.push(h(Text, { key: 'cn1', color: color.amber }, 'name the new wolt'));
       lines.push(h(Text, { key: 'cn2' }, `   ${createName}▏`));
@@ -394,8 +411,8 @@ export default function App({ onAction, launchCwd = process.cwd() }) {
       lines.push(h(Text, { key: 'cc1', color: color.amber }, `create ${createName}?`));
       lines.push(h(Text, { key: 'cc2' }, `   type: ${woltTypes[createTypeCursor]}`));
       lines.push(h(Text, { key: 'cc3' }, `   cwd: ${target.displayWorkdir}`));
-      lines.push(h(Text, { key: 'cc4' }, `   policy: ${target.executionPolicy || 'server default (uses Auto grants)'}`));
-      lines.push(h(Text, { key: 'cc5', color: color.dim }, '   y confirm · n/esc back'));
+      lines.push(...levelLines(null));
+      lines.push(h(Text, { key: 'cc5', color: color.dim }, '   p level · y confirm · n/esc back'));
     } else {
       lines.push(h(Text, { key: 'k1', color: color.dim },
         `j/k move  enter attach${selected && !agentAlive(selected) ? ' (wakes it)' : ''} (quit claude to end)  n session  c wolt`));
@@ -403,6 +420,9 @@ export default function App({ onAction, launchCwd = process.cwd() }) {
         's send  x stop  r refresh  / find  tab/shift-tab match  a all  q quit'));
       if (hidden && view.length) {
         lines.push(h(Text, { key: 'k3', color: color.dim }, lore.hiddenHint(hidden)));
+      }
+      if (view.some((s) => sessionPolicy(s) === 'bypass*')) {
+        lines.push(h(Text, { key: 'k4', color: color.dim }, '* legacy auto record: runs as Bypass'));
       }
     }
     if (error) lines.push(h(Text, { key: 'e', color: color.terra }, error));

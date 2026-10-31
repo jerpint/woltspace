@@ -12,6 +12,7 @@ from execution_policy import (
     AutoGrantStore,
     ExecutionPolicy,
     POLICY_VERSION,
+    RECORD_VERSION,
     resolve_execution_policy,
 )
 from session_targets import SessionTarget
@@ -25,12 +26,12 @@ def _target(tmp_path, wolt="testwolt", repo="repo"):
     return SessionTarget.resolve(wolt, workdir, wolts_dir=wolts), wolts
 
 
-def test_external_isolation_defaults_to_auto(tmp_path):
+def test_external_isolation_defaults_to_bypass(tmp_path):
     target, wolts = _target(tmp_path)
     policy, grant = resolve_execution_policy(
         None, isolation="external", target=target, grants=AutoGrantStore(wolts)
     )
-    assert policy == ExecutionPolicy(mode="auto", isolation="external")
+    assert policy == ExecutionPolicy(mode="bypass", isolation="external")
     assert grant is None
 
 
@@ -43,7 +44,7 @@ def test_host_defaults_to_prompt_without_a_grant(tmp_path):
     assert grant is None
 
 
-def test_host_defaults_to_auto_where_the_grant_already_says_so(tmp_path):
+def test_host_defaults_to_bypass_where_the_grant_already_says_so(tmp_path):
     """The grant *is* the consent, so it decides the default too.
 
     Nothing on the spawn path asks for Auto by name — not the bot, not the
@@ -57,7 +58,7 @@ def test_host_defaults_to_auto_where_the_grant_already_says_so(tmp_path):
     policy, grant = resolve_execution_policy(
         None, isolation="host", target=target, grants=store
     )
-    assert policy == ExecutionPolicy(mode="auto", isolation="host")
+    assert policy == ExecutionPolicy(mode="bypass", isolation="host")
     assert grant is not None
     assert grant.canonical_workdir == target.canonical_workdir
 
@@ -97,33 +98,51 @@ def test_external_isolation_ignores_grants_entirely(tmp_path):
     policy, grant = resolve_execution_policy(
         None, isolation="external", target=target, grants=store
     )
-    assert policy == ExecutionPolicy(mode="auto", isolation="external")
+    assert policy == ExecutionPolicy(mode="bypass", isolation="external")
     assert grant is None
 
     store.grant(target)
     policy, grant = resolve_execution_policy(
         None, isolation="external", target=target, grants=store
     )
-    assert policy == ExecutionPolicy(mode="auto", isolation="external")
+    assert policy == ExecutionPolicy(mode="bypass", isolation="external")
     assert grant is None
 
 
-def test_host_auto_requires_exact_wolt_and_path(tmp_path):
+@pytest.mark.parametrize("mode", ["auto", "bypass"])
+def test_one_host_grant_allows_auto_and_bypass_for_the_exact_wolt_and_path(tmp_path, mode):
     target_a, wolts = _target(tmp_path, repo="repo-a")
     target_b, _ = _target(tmp_path, repo="repo-b")
     store = AutoGrantStore(wolts)
     store.grant(target_a)
 
     policy, grant = resolve_execution_policy(
-        "auto", isolation="host", target=target_a, grants=store
+        mode, isolation="host", target=target_a, grants=store
     )
-    assert policy.mode == "auto"
+    assert policy == ExecutionPolicy(mode=mode, isolation="host")
     assert grant is not None
 
-    with pytest.raises(PermissionError, match="repo-b"):
+    with pytest.raises(PermissionError, match="Auto and Bypass are not approved .*repo-b"):
         resolve_execution_policy(
-            "auto", isolation="host", target=target_b, grants=store
+            mode, isolation="host", target=target_b, grants=store
         )
+
+
+# Version 1 decoding is checked against migration 6 on the same inputs (test_lodge_db).
+@pytest.mark.parametrize("mode", ["prompt", "auto", "bypass"])
+def test_a_version_2_policy_reads_as_written(mode):
+    stored = {"mode": mode, "isolation": "host", "policy_version": 2}
+    assert ExecutionPolicy.from_record(stored).to_record() == stored
+    assert RECORD_VERSION == 2
+
+
+def test_an_unknown_record_version_is_refused_not_guessed():
+    with pytest.raises(ValueError, match="unknown execution policy version: 3"):
+        ExecutionPolicy.from_record({"mode": "auto", "isolation": "host", "policy_version": 3})
+
+
+def test_the_grant_keeps_its_own_version():
+    assert POLICY_VERSION == 1
 
 
 def test_grant_for_same_path_does_not_cross_wolts(tmp_path):
@@ -178,13 +197,51 @@ def test_start_session_native_policy_and_grant_are_persisted(
     assert automated["execution_policy"]["mode"] == "auto"
     assert automated["auto_grant"]["canonical_workdir"] == str(repo.resolve())
     auto_cmd = sessions.prepare_session_command(automated["name"], "spawn")
-    assert "--dangerously-skip-permissions" in auto_cmd
+    assert "--permission-mode auto" in auto_cmd
+    assert "--dangerously-skip-permissions" not in auto_cmd
 
-    # And the caller that asks for nothing — every real spawn path — now gets
-    # the same Auto, because the grant is already there to say so.
+    # And the caller that asks for nothing — every real spawn path — gets
+    # Bypass, as before, because the grant is already there to say so.
     implicit = sessions.start_session(wolt="testwolt", workdir=repo)
-    assert implicit["execution_policy"]["mode"] == "auto"
+    assert implicit["execution_policy"]["mode"] == "bypass"
     assert implicit["auto_grant"]["canonical_workdir"] == str(repo.resolve())
     assert "--dangerously-skip-permissions" in sessions.prepare_session_command(
         implicit["name"], "spawn"
     )
+
+
+def _host_wolt(tmp_path, monkeypatch):
+    import paths
+    import sessions
+
+    wolts = tmp_path / "wolts"
+    home = wolts / "testwolt"
+    (home / "wolt" / "site").mkdir(parents=True)
+    (home / "wolt" / "wolt.json").write_text(
+        json.dumps({"name": "testwolt", "type": "raccoon", "harness": "claude"})
+    )
+    monkeypatch.setattr(sessions, "WOLTS_DIR", wolts)
+    monkeypatch.setattr(paths, "WOLTS_DIR", wolts)
+    return wolts
+
+
+def test_an_old_session_file_imported_after_the_migration_resumes_as_bypass(
+    tmp_path, monkeypatch, fake_runtime
+):
+    import lodge_db
+    import sessions
+
+    wolts = _host_wolt(tmp_path, monkeypatch)
+    lodge_db.connect(wolts).close()  # migration 6 has run; the file arrives after it
+    folder = wolts / "testwolt" / ".state" / "sessions"
+    folder.mkdir(parents=True)
+    (folder / "testwolt-old.json").write_text(json.dumps({
+        "name": "testwolt-old", "wolt": "testwolt", "harness": "claude",
+        "status": "stopped", "created_at": 1,
+        "harness_session_id": "00000000-0000-4000-8000-000000000001",
+        "execution_policy": {"mode": "auto", "isolation": "external", "policy_version": 1},
+    }))
+    lodge_db.run_imports(wolts, {"sessions": sessions.import_sessions})
+    command = sessions.prepare_session_command("testwolt-old", "resume")
+    assert "--dangerously-skip-permissions" in command
+    assert "--resume 00000000-0000-4000-8000-000000000001" in command

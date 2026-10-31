@@ -4,6 +4,7 @@ Usage: uv run --extra test pytest test/test_harnesses.py -v
 """
 
 import json
+import re
 import sys
 from pathlib import Path
 from unittest.mock import patch
@@ -13,6 +14,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "container" / "lib"))
 
 import harnesses  # noqa: E402
+from harnesses import LevelNotOffered  # noqa: E402
 from harnesses import (
     DEFAULT_HARNESS,
     HARNESSES,
@@ -1598,3 +1600,43 @@ def test_a_missing_engine_is_named_on_a_native_lodge(monkeypatch):
         assert entry["binary"] == name
     monkeypatch.setattr(harnesses, "_engine_on_path", lambda binary: True)
     assert harness_install_problem("pi", isolation="host") == ""
+
+
+# --- permission levels: one table, enforced or refused ---------------------
+
+def _policy(mode, isolation):
+    return {"mode": mode, "isolation": isolation, "policy_version": 2}
+
+
+@pytest.mark.parametrize("harness, mode, isolation, flags", [  # flags: str, or the refusal
+    ("claude", "prompt", "host", "--permission-mode manual"),
+    ("claude", "auto", "external", "--permission-mode auto"),
+    ("claude", "bypass", "external", "--dangerously-skip-permissions"),
+    ("codex", "prompt", "host", "-a on-request -s workspace-write"),
+    ("codex", "prompt", "external", "-a on-request -s danger-full-access"),
+    ("codex", "auto", "host", "--approve-for-me -c sandbox_workspace_write.network_access=true"),
+    ("codex", "bypass", "external", "--dangerously-bypass-approvals-and-sandbox"),
+    ("opencode", "prompt", "host", ""),  # engine settings decide
+    ("opencode", "bypass", "host", "--auto"),
+    ("hermes", "prompt", "host", ""),
+    ("hermes", "bypass", "host", "--yolo"),
+    ("codex", "auto", "external", LevelNotOffered("codex does not offer Auto on external; it offers Ask, Bypass")),
+    ("opencode", "auto", "host", LevelNotOffered("opencode does not offer Auto on host")),
+    ("hermes", "auto", "host", LevelNotOffered("hermes does not offer Auto on host")),
+    ("pi", "prompt", "host", LevelNotOffered(
+        "pi does not offer Ask on host; it offers Bypass; grant this wolt and directory first")),
+])
+def test_each_level_launches_with_its_engine_flags_or_is_refused_never_replaced(harness, mode, isolation, flags):
+    if isinstance(flags, LevelNotOffered):
+        with pytest.raises(LevelNotOffered, match=re.escape(str(flags))):
+            build_command(harness, "resume", resume_id="r1", execution_policy=_policy(mode, isolation))
+        return
+    assert " ".join(harnesses.policy_flags(harness, _policy(mode, isolation))) == flags
+    command = build_command(harness, "spawn", execution_policy=_policy(mode, isolation))
+    assert f" {flags}" in command or not flags
+
+
+def test_levels_list_what_each_engine_offers_on_this_isolation():
+    assert harnesses.levels("host")["opencode"] == {"prompt": "Ask (engine settings)", "bypass": "Bypass"}
+    assert harnesses.levels("host")["pi"] == {"bypass": "Bypass"}
+    assert harnesses.levels("external")["codex"] == {"prompt": "Ask", "bypass": "Bypass"}

@@ -1,5 +1,6 @@
 """lodge_db: the one SQLite file that holds the lodge's changing state."""
 
+import json
 import os
 import sqlite3
 import stat
@@ -48,6 +49,7 @@ def test_a_migration_that_lands_late_still_runs(tmp_path, monkeypatch):
     base = lodge_db._MIGRATIONS[:1]
     two = (2, ("CREATE TABLE two (x)",))
     three = (3, ("CREATE TABLE three (x)",))
+    monkeypatch.setattr(lodge_db, "_BREAKING", set())
     monkeypatch.setattr(lodge_db, "_MIGRATIONS", base + [three])
     lodge_db.connect(tmp_path).close()
     monkeypatch.setattr(lodge_db, "_MIGRATIONS", base + [two, three])
@@ -75,7 +77,7 @@ def test_an_additive_newer_migration_still_opens_with_older_code(tmp_path, monke
     with closing(lodge_db.connect(tmp_path, readonly=readonly)) as conn:
         assert lodge_db.applied_migrations(conn)[-1] == newest + 1
         meta = dict(conn.execute("SELECT key, value FROM meta").fetchall())
-    assert meta["min_schema"] == "0"
+    assert meta["min_schema"] == str(max(lodge_db._BREAKING))  # this build's own floor
     assert meta["written_by"] == lodge_db._build()
 
 
@@ -270,3 +272,78 @@ def test_many_first_openers_at_once_all_get_in(tmp_path):
         for t in threads:
             t.join()
     assert errors == []
+
+
+# --- migration 6: session policies to record version 2 ----------------------
+
+_V5 = [entry for entry in lodge_db._MIGRATIONS if entry[0] <= 5]
+
+
+def _lodge_at_5(tmp_path, monkeypatch, policies: dict) -> None:
+    """A lodge.db as the build before migration 6 left it, one session per policy."""
+    with monkeypatch.context() as old_build:
+        old_build.setattr(lodge_db, "_MIGRATIONS", _V5)
+        old_build.setattr(lodge_db, "_BREAKING", set())
+        with lodge_db.write(tmp_path) as conn:
+            for name, policy in policies.items():
+                record = {"name": name, "title": "kept"}
+                if policy != "missing":
+                    record["execution_policy"] = policy
+                conn.execute("INSERT INTO sessions(name, wolt, status, created_at, record, updated_at)"
+                             " VALUES (?, 'wolt-a', 'stopped', 1, ?, 1)", (name, json.dumps(record)))
+
+
+def _records(tmp_path) -> dict:
+    with closing(lodge_db.connect(tmp_path)) as conn:
+        return {r["name"]: json.loads(r["record"]) for r in conn.execute("SELECT name, record FROM sessions")}
+
+
+_BYPASS = {"mode": "bypass", "isolation": "external", "policy_version": 2}
+_V1_TO_V2 = [  # (stored, migrated); "missing" = a record with no policy at all
+    ("missing", _BYPASS),
+    (None, _BYPASS),
+    ("", _BYPASS),
+    ("auto", _BYPASS),
+    ("prompt", {"mode": "prompt", "isolation": "external", "policy_version": 2}),
+    ({"mode": "auto"}, _BYPASS),
+    ({"mode": "auto", "isolation": "host", "policy_version": 1},
+     {"mode": "bypass", "isolation": "host", "policy_version": 2}),
+    ({"mode": "prompt", "isolation": "host", "policy_version": 1},
+     {"mode": "prompt", "isolation": "host", "policy_version": 2}),
+]
+
+
+def test_migration_6_rewrites_every_version_1_policy_as_the_decoder_reads_it(tmp_path, monkeypatch):
+    from execution_policy import ExecutionPolicy
+
+    _lodge_at_5(tmp_path, monkeypatch, {f"s{i}": stored for i, (stored, _) in enumerate(_V1_TO_V2)})
+    records = _records(tmp_path)
+    for i, (stored, migrated) in enumerate(_V1_TO_V2):
+        assert records[f"s{i}"] == {"name": f"s{i}", "title": "kept", "execution_policy": migrated}, stored
+        decoded = ExecutionPolicy.from_record(None if stored == "missing" else stored)
+        assert decoded.to_record() == migrated, stored
+
+
+def test_migration_6_leaves_version_2_and_unknown_versions_as_they_are(tmp_path, monkeypatch):
+    kept = {
+        "v2-auto": {"mode": "auto", "isolation": "host", "policy_version": 2},
+        "v2-bypass": {"mode": "bypass", "isolation": "external", "policy_version": 2},
+        "v3": {"mode": "auto", "isolation": "host", "policy_version": 3},
+    }
+    _lodge_at_5(tmp_path, monkeypatch, kept)
+    assert {name: r["execution_policy"] for name, r in _records(tmp_path).items()} == kept
+
+
+def test_after_migration_6_an_older_build_refuses_the_file(tmp_path, monkeypatch):
+    _lodge_at_5(tmp_path, monkeypatch, {"s": "auto"})
+    lodge_db.connect(tmp_path).close()
+    monkeypatch.setattr(lodge_db, "_MIGRATIONS", _V5)
+    monkeypatch.setattr(lodge_db, "_BREAKING", set())
+    with pytest.raises(lodge_db.SchemaTooNew, match="needs schema >= 6"):
+        lodge_db.connect(tmp_path)
+
+
+def test_a_fresh_lodge_starts_at_the_migration_6_floor(tmp_path):
+    with closing(lodge_db.connect(tmp_path)) as conn:
+        assert 6 in lodge_db.applied_migrations(conn)
+        assert conn.execute("SELECT value FROM meta WHERE key='min_schema'").fetchone()[0] == "6"

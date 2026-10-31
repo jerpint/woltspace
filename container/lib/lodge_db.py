@@ -137,8 +137,28 @@ _MIGRATIONS: list[tuple[int, tuple[str, ...]]] = [
         )""",
         "CREATE INDEX IF NOT EXISTS connector_events_ts ON connector_events(ts)",
     )),
+    (6, (
+        # Session policies to record version 2, where "auto" is the engine's
+        # own Auto and the old "auto" (no checks at all) is "bypass". First a
+        # missing policy or a bare string becomes a version 1 object, then
+        # every version 1 object becomes version 2. Breaking: an older build
+        # would read "bypass" as unknown.
+        """UPDATE sessions SET record = json_set(record, '$.execution_policy', json_object(
+            'mode', coalesce(nullif(json_extract(record, '$.execution_policy'), ''), 'auto'),
+            'isolation', 'external', 'policy_version', 1))
+        WHERE coalesce(json_type(record, '$.execution_policy'), 'null') IN ('null', 'text')""",
+        """UPDATE sessions SET record = json_set(record,
+            '$.execution_policy.mode', CASE json_extract(record, '$.execution_policy.mode')
+                WHEN 'prompt' THEN 'prompt' ELSE 'bypass' END,
+            '$.execution_policy.isolation',
+                coalesce(json_extract(record, '$.execution_policy.isolation'), 'external'),
+            '$.execution_policy.policy_version', 2)
+        WHERE json_type(record, '$.execution_policy') = 'object'
+            AND coalesce(json_extract(record, '$.execution_policy.policy_version'), 1) = 1
+            AND coalesce(json_extract(record, '$.execution_policy.mode'), 'auto') IN ('auto', 'prompt')""",
+    )),
 ]
-_BREAKING: set[int] = set()
+_BREAKING: set[int] = {6}
 
 
 class SchemaTooNew(sqlite3.DatabaseError):
