@@ -35,7 +35,7 @@ from pathlib import Path
 from env_compat import get_env
 from settings_files import settings_lock, write_json_atomic
 from session_runtime import RuntimeHandle, get_runtime
-from execution_policy import policy_mode
+from execution_policy import ExecutionPolicy
 from skills_sync import COPY_DELIVERY, PLUGIN_DELIVERY
 
 DEFAULT_HARNESS = "claude"
@@ -48,6 +48,68 @@ WCODEX = str(_BIN_DIR / "wcodex")
 WOPENCODE = str(_BIN_DIR / "wopencode")
 WPI = str(_BIN_DIR / "wpi")
 WHERMES = str(_BIN_DIR / "whermes")
+
+# Each engine's flags per permission level, and per isolation where they
+# differ. A level an engine does not list is refused, never replaced by another.
+# Codex's model decides when to ask, so only its sandbox makes it ask: on the
+# host it asks for what the sandbox would block, and in the box container,
+# where the sandbox cannot start (no user namespaces), it never asks, so
+# neither Ask nor Auto is offered there. opencode and hermes have no Ask flag:
+# their own settings decide. The labels say so.
+POLICY_FLAGS = {
+    "claude": {"prompt": ["--permission-mode", "manual"],
+               "auto": ["--permission-mode", "auto"],
+               "bypass": ["--dangerously-skip-permissions"]},
+    "codex": {"prompt": {"host": ["-a", "on-request", "-s", "workspace-write"]},
+              # Network on, or the lodge API on 127.0.0.1 is out of reach.
+              "auto": {"host": ["--approve-for-me", "-c",
+                                "sandbox_workspace_write.network_access=true"]},
+              "bypass": ["--dangerously-bypass-approvals-and-sandbox"]},
+    "opencode": {"prompt": [], "bypass": ["--auto"]},
+    "hermes": {"prompt": [], "bypass": ["--yolo"]},
+    "pi": {"bypass": []},  # Pi has no tool approvals at all
+}
+LEVEL_NAMES = {"prompt": "Ask", "auto": "Auto", "bypass": "Bypass"}
+LEVEL_LABELS = {("codex", "prompt"): "Ask (sandbox escalations)"}
+
+
+class LevelNotOffered(ValueError):
+    """The engine has no flags for this permission level on this isolation."""
+
+
+def policy_flags(harness: str, execution_policy) -> list[str]:
+    """The engine flags for a policy (any stored version), or ValueError."""
+    policy = ExecutionPolicy.from_record(execution_policy)
+    flags = POLICY_FLAGS.get(harness, {}).get(policy.mode)
+    if isinstance(flags, dict):
+        flags = flags.get(policy.isolation)
+    if flags is None:
+        offered = list(levels(policy.isolation).get(harness, {}).values())
+        hint = ("; grant this wolt and directory first (woltspace auto grant)"
+                if offered == ["Bypass"] and policy.isolation == "host" else "")
+        if harness == "codex" and policy.isolation == "external":
+            hint = "; its sandbox cannot start in this container, and without it Codex never asks"
+        raise LevelNotOffered(f"{harness} does not offer {LEVEL_NAMES[policy.mode]} on"
+                              f" {policy.isolation}; it offers {', '.join(offered) or 'nothing'}{hint}")
+    return list(flags)
+
+
+def levels(isolation: str) -> dict:
+    """{engine: {level: label}} for the levels each engine offers here."""
+    offered = {}
+    for harness, table in POLICY_FLAGS.items():
+        offered[harness] = {}
+        for mode, flags in table.items():
+            if isinstance(flags, dict):
+                if isolation not in flags:
+                    continue
+                flags = flags[isolation]
+            label = LEVEL_LABELS.get((harness, mode), LEVEL_NAMES[mode])
+            if mode == "prompt" and not flags:
+                label += " (engine settings)"
+            offered[harness][mode] = label
+    return offered
+
 
 _ROLLOUT_UUID_RE = re.compile(
     r"rollout-.*-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$"
@@ -114,9 +176,7 @@ def _claude_command(entry: dict, mode: str, *, session_id: str = "",
     if mode == "login":
         return f"{wrapper} /login"
 
-    parts = [wrapper]
-    if policy_mode(execution_policy) == "auto":
-        parts.append("--dangerously-skip-permissions")
+    parts = [wrapper, *policy_flags("claude", execution_policy)]
     if mode == "spawn":
         if session_id:
             parts += ["--session-id", session_id]
@@ -186,10 +246,7 @@ def _codex_command(entry: dict, mode: str, *, session_id: str = "",
     # Each woltspace session runs its own codex process instead.
     if codex_supports_no_daemon():
         parts.append("--no-daemon")
-    # Codex's own help: "Intended solely for running in environments that are
-    # externally sandboxed" — which is exactly the woltspace container.
-    if policy_mode(execution_policy) == "auto":
-        parts.append("--dangerously-bypass-approvals-and-sandbox")
+    parts += policy_flags("codex", execution_policy)
     if model:
         parts += ["-m", model]
     if prompt:
@@ -321,9 +378,7 @@ def _opencode_command(entry: dict, mode: str, *, session_id: str = "",
     # --auto = full permissions, no approval prompts (unattended, like all wolts)
     # No --prompt ever — the boot prompt arrives via deliver_boot_prompt (see
     # docstring); a CLI prompt would race model resolution and strand on "/".
-    parts = [wrapper]
-    if policy_mode(execution_policy) == "auto":
-        parts.append("--auto")
+    parts = [wrapper, *policy_flags("opencode", execution_policy)]
     if mode == "resume" and resume_id:
         parts += ["--session", resume_id]
     if model:
@@ -427,7 +482,7 @@ def _pi_command(entry: dict, mode: str, *, session_id: str = "",
     if mode not in ("spawn", "resume"):
         raise ValueError(f"unknown mode: {mode}")
 
-    parts = [wrapper, "--no-approve"]
+    parts = [wrapper, "--no-approve", *policy_flags("pi", execution_policy)]
     if mode == "spawn" and session_id:
         parts += ["--session-id", session_id]
     elif mode == "resume" and resume_id:
@@ -482,8 +537,7 @@ def _hermes_command(entry: dict, mode: str, *, session_id: str = "",
     parts = [wrapper, "chat"]
     if mode == "resume" and resume_id:
         parts += ["--resume", resume_id]
-    if policy_mode(execution_policy) == "auto":
-        parts.append("--yolo")
+    parts += policy_flags("hermes", execution_policy)
     parts += _hermes_model_flags(model)
     return " ".join(shlex.quote(p) for p in parts)
 
@@ -1178,6 +1232,19 @@ def get_default_harness() -> str:
         return resolve_harness(cfg.get("harness", {}).get("default"))
     except (json.JSONDecodeError, OSError, AttributeError):
         return DEFAULT_HARNESS
+
+
+def get_default_level(harness: str | None, isolation: str) -> str | None:
+    """woltspace.json "sessions.default_execution_policy" if this engine offers that
+    level here, else None (the built-in default applies)."""
+    try:
+        cfg = json.loads(_woltspace_json_path().read_text())
+        level = cfg.get("sessions", {}).get("default_execution_policy")
+    except (json.JSONDecodeError, OSError, AttributeError):
+        return None
+    if not isinstance(level, str):  # a malformed value must not break every spawn
+        return None
+    return level if level in levels(isolation).get(resolve_harness(harness), {}) else None
 
 
 def _load_lodge_settings_for_write() -> tuple[Path, dict]:

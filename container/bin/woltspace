@@ -76,14 +76,20 @@ def _print_sessions(sessions, *, as_json=False):
         print("no sessions.")
         return
     print(f"{'SESSION':<34} {'WOLT':<12} {'ENGINE':<24} {'POLICY':<8} {'STATE':<9} WORKDIR")
+    legacy = False
     for s in sessions:
-        policy = s.get("execution_policy") or {}
-        policy_name = policy.get("mode", "auto") if isinstance(policy, dict) else str(policy)
+        policy = s.get("execution_policy")
+        policy_name = (policy.get("mode") if isinstance(policy, dict) else policy) or "auto"
+        version = policy.get("policy_version") if isinstance(policy, dict) else None
+        if policy_name == "auto" and version != 2:  # before v2, "auto" ran as Bypass
+            policy_name, legacy = "bypass*", True
         state = "running" if s.get("alive") else s.get("status", "offline")
         workdir = s.get("workdir") or s.get("dir", "")
         engine = "/".join(p for p in (s.get("harness", ""), s.get("model", "")) if p)
         print(f"{s.get('name',''):<34} {s.get('wolt_id') or s.get('wolt',''):<12} "
               f"{engine:<24} {policy_name:<8} {state:<9} {workdir}")
+    if legacy:
+        print("* legacy auto record: runs as Bypass")
 
 
 def cmd_session_list(args):
@@ -255,6 +261,7 @@ def cmd_session_spawn(args):
             as_json=args.json,
             workdir=args.workdir,
             auto=args.auto,
+            policy=args.policy or "",
         )
         prompt = read_message_input(
             command,
@@ -280,8 +287,8 @@ def cmd_session_spawn(args):
                "from_wolt": from_wolt, "from_session": from_session}
     if args.workdir:
         payload["workdir"] = args.workdir
-    if args.auto:
-        payload["execution_policy"] = "auto"
+    if args.auto or args.policy:
+        payload["execution_policy"] = args.policy or "auto"
     status, result = _req("POST", "/sessions/new/lodge", payload)
     if args.json:
         print(json.dumps(result, indent=2))
@@ -417,7 +424,8 @@ def cmd_auto_check(args):
 def cmd_auto_grant(args):
     canonical = os.path.realpath(os.path.expanduser(args.workdir))
     if not args.yes:
-        print(f"refusing to grant Auto without --yes for exact directory: {canonical}", file=sys.stderr)
+        print(f"refusing to grant Auto and Bypass without --yes for exact directory: {canonical}",
+              file=sys.stderr)
         sys.exit(1)
     status, result = _req("POST", "/auto-grants/grant", {
         "wolt_id": args.wolt, "workdir": args.workdir, "confirm": canonical,
@@ -426,7 +434,7 @@ def cmd_auto_grant(args):
         print(result.get("error", f"HTTP {status}"), file=sys.stderr)
         sys.exit(1)
     print(json.dumps(result, indent=2) if args.json else
-          f"Auto approved: {args.wolt} · {result['grant']['canonical_workdir']}")
+          f"Auto and Bypass approved: {args.wolt} · {result['grant']['canonical_workdir']}")
 
 
 def cmd_auto_revoke(args):
@@ -602,7 +610,10 @@ def main():
     sp.add_argument("--workdir", default="",
                     help="existing working directory (native runtime)")
     sp.add_argument("--auto", action="store_true",
-                    help="request Auto policy (host requires an exact-path grant)")
+                    help="request the engine's Auto level, same as --policy auto")
+    sp.add_argument("--policy", choices=("prompt", "auto", "bypass"),
+                    help="Ask, Auto or Bypass (on the host, Auto and Bypass need an"
+                         " exact-path grant); default: the lodge decides")
     sp.set_defaults(func=cmd_session_spawn)
 
     sd = ssub.add_parser("describe", help="set this session's title and one-line summary")
@@ -664,7 +675,7 @@ def main():
     warchived.add_argument("--json", action="store_true")
     warchived.set_defaults(func=cmd_wolt_archived)
 
-    auto = sub.add_parser("auto", help="manage repository-scoped Auto consent")
+    auto = sub.add_parser("auto", help="manage repository-scoped Auto and Bypass consent")
     asub = auto.add_subparsers(dest="verb")
     for verb, func in (("check", cmd_auto_check), ("grant", cmd_auto_grant),
                        ("revoke", cmd_auto_revoke)):

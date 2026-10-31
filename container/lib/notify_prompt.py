@@ -210,9 +210,12 @@ def _validate_session_spawn_argv(argv: tuple[str, ...]) -> None:
         option = remaining.pop(0)
         if option in {"--json", "--auto"}:
             continue
-        if option in {"--from", "--workdir"} and remaining:
+        if option in {"--from", "--workdir", "--policy"} and remaining:
             value = remaining.pop(0)
-            if option == "--workdir" or _SESSION_TARGET_RE.fullmatch(value):
+            if option == "--policy":
+                if value in {"prompt", "auto", "bypass"}:
+                    continue
+            elif option == "--workdir" or _SESSION_TARGET_RE.fullmatch(value):
                 continue
         raise ValueError("invalid session spawn arguments")
 
@@ -275,6 +278,7 @@ def session_spawn_argv(
     as_json: bool = False,
     workdir: object = "",
     auto: bool = False,
+    policy: str = "",
 ) -> list[str]:
     """Return the canonical argv for spawning a wolt session."""
     argv = ["woltspace", "session", "spawn", str(wolt)]
@@ -286,5 +290,7 @@ def session_spawn_argv(
         argv.extend(["--workdir", str(workdir)])
     if auto:
         argv.append("--auto")
+    if policy:
+        argv.extend(["--policy", policy])
     validate_argv(argv)
     return argv
