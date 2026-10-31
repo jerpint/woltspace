@@ -136,7 +136,7 @@ vim.keymap.set('n', '<leader>ak', function() local l = vim.fn.line '.'; wolts.as
 
 ## Verification
 
-For a focused smoke, with Neovim 0.11+ on PATH and pytest installed: `python -m pytest -q nvim/test_plugin.py`. It uses a loopback dummy API and a harmless terminal process, not a real lodge or model.
+For a focused smoke, with Neovim 0.11+ on PATH and pytest installed: `python -m pytest -q nvim/test_plugin.py`. It creates private temporary home/data directories, clears inherited lodge credentials and session identifiers, and uses a loopback dummy API plus a harmless terminal process. Inherited key/config sentinels are checked for changes; direct Lua runs outside the private fixture are refused. No real lodge or model is used.
 
 ## Author
 

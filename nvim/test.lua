@@ -1,3 +1,13 @@
+-- Refuse direct runs before loading the plugin or writing any fixture files.
+local sandbox = vim.env.WOLTS_TEST_ROOT
+local stat = sandbox and vim.uv.fs_lstat(sandbox)
+assert(stat and stat.type == 'directory' and stat.mode % 512 == 448
+  and vim.fs.basename(sandbox):match('^wolts%-nvim%-')
+  and vim.uv.fs_realpath(vim.env.HOME) == sandbox .. '/home'
+  and vim.uv.fs_realpath(vim.env.WOLTSPACE_WOLTS_DIR) == sandbox .. '/wolts',
+  'private test root required; run pytest nvim/test_plugin.py')
+assert(not vim.env.WOLTSPACE_LODGE_KEY and not vim.env.WOLTSPACE_WOLT_SESSION and not vim.env.WOLT_SESSION)
+local url = assert(vim.env.WOLTS_TEST_URL, 'run pytest nvim/test_plugin.py')
 local root = vim.fn.fnamemodify(debug.getinfo(1, 'S').source:sub(2), ':p:h')
 vim.opt.runtimepath:append(root)
 local M, notices, commands = require('wolts'), {}, {}
@@ -11,7 +21,6 @@ vim.env.WOLT_SESSION = 'test'; assert(M.local_key() == 'wolt-dummy')
 vim.env.WOLTSPACE_LODGE_KEY = 'override'; assert(M.local_key() == 'override')
 vim.env.WOLTSPACE_LODGE_KEY, vim.env.WOLT_SESSION = nil, nil
 vim.notify = function(msg) table.insert(notices, msg) end
-local url = assert(vim.env.WOLTS_TEST_URL, 'run test/test_nvim_plugin.py')
 local system, jobstart = vim.system, vim.fn.jobstart
 vim.system = function(cmd, opts, cb)
   assert(not table.concat(cmd, ' '):find('dummy-secret', 1, true))
