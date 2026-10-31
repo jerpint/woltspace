@@ -78,6 +78,31 @@ def test_an_app_holding_a_reserved_name_keeps_remote_sites_off(tmp_path):
     assert "mill" not in json.loads((tmp_path / "woltspace.json").read_text())
 
 
+def _settings(root):
+    return json.loads((root / "woltspace.json").read_text())
+
+
+def test_a_code_doesnt_decide_a_domain_the_lodge_already_used_is_clean(tmp_path):
+    (tmp_path / ".env").write_text("CLOUDFLARE_TUNNEL_URL=https://other.ery.woltspace.app\n")
+    result = connect.apply(layout(tmp_path), connect.decode(code()))
+    assert result["remote_sites"] is False and "remote_sites" not in _settings(tmp_path).get("mill", {})
+
+
+@pytest.mark.parametrize("env", ["", "CLOUDFLARE_TUNNEL_URL=https://lodge.ery.woltspace.app\n",
+                                 "CLOUDFLARE_TUNNEL_URL=https://old.elsewhere.example.com\n"])
+def test_a_code_never_overrides_the_owners_refusal(tmp_path, env):
+    (tmp_path / ".env").write_text(env)
+    (tmp_path / "woltspace.json").write_text(json.dumps({"mill": {"remote_sites": False}}))
+    connect.apply(layout(tmp_path), connect.decode(code()))
+    assert _settings(tmp_path)["mill"]["remote_sites"] is False
+
+
+def test_moving_to_a_new_domain_turns_remote_sites_on(tmp_path):
+    (tmp_path / ".env").write_text("CLOUDFLARE_TUNNEL_URL=https://old.elsewhere.example.com\n")
+    connect.apply(layout(tmp_path), connect.decode(code()))
+    assert _settings(tmp_path)["mill"]["remote_sites"] is True
+
+
 def _run(tmp_path, monkeypatch, capsys, *args, stdin=None):
     import io
     from woltspace import cli

@@ -12,7 +12,7 @@ With it **off**, anything that gets through to the port is treated as the owner.
 | A web page using DNS rebinding | Refused (the `Host` check) | Refused |
 | A wolt's site or an app, in your browser | Its write is refused, as another origin | Refused |
 | Another user on the machine | Acts as you | Refused: the keys are `0600` |
-| A wolt's tools | Everything you can do | Reads, and only the writes in `WOLT_WRITES`: no lodge settings, no auto mode, no publishing an app |
+| A wolt's tools | Everything you can do | Reads, and only the writes in `WOLT_WRITES`: no lodge settings, no auto mode. It may share an app, when asked; every share is logged |
 | A program running as you | Acts as you | **Can read the keys, so still acts as you** |
 | A browser elsewhere, through Cloudflare | Stopped by Access alone | Stopped by Access, then checked again by the lodge |
 
@@ -48,7 +48,7 @@ WebSockets (terminals, reload) are the owner's only, so a wolt's key can't open 
 |---|---|---|---|
 | **Owner key** | Your terminal, the lodge itself | `<data root>/.space/run/lodge/owner.key` | Until replaced |
 | **Wolt key** | Tools inside a wolt session | `<data root>/.space/run/lodge/wolt.key` | Until replaced |
-| **Paired browser** | Your browser on any device | `woltspace pair`, in your own terminal | 30 days |
+| **Paired browser** | Your browser on any device | `woltspace pair`, in your own terminal (in a container: `docker exec <container> woltspace pair`) | 30 days |
 | **A way in's login** | Your browser elsewhere | Your email, at Cloudflare Access | Until the login ends |
 
 These files are machine-local. They never sync and never go in a backup. Only hashes of pairing codes and browser tokens are stored.

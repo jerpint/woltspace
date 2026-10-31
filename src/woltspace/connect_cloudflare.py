@@ -107,8 +107,14 @@ def _reserved_app_names(layout: RuntimeLayout) -> list[str]:
     return sorted(p.name for p in apps.glob("site-*")) if apps.is_dir() else []
 
 
+def _domain(url: str) -> str:
+    """Where sites and apps live: the lodge's name without its first label."""
+    return (urlsplit(url).hostname or "").lower().rstrip(".").partition(".")[2]
+
+
 def apply(layout: RuntimeLayout, connection: Connection) -> dict:
     """Save the connection. Running it twice changes nothing the second time."""
+    new_domain = _domain(current_url(layout)) != _domain(connection.url)
     env_file = layout.wolts_dir / ".env"
     text = env_file.read_text() if env_file.is_file() else ""
     _write_private(env_file, _with_values(text, {
@@ -126,13 +132,16 @@ def apply(layout: RuntimeLayout, connection: Connection) -> dict:
         "owner_email": connection.owner_email,
     }
     config["ways_in"] = ways_in
-    # This address is new to the lodge, so no app of its ever had a `site-` name
-    # here. An app holding such a name now keeps the matching site off anyway.
+    # On a domain new to the lodge, no app of its ever had a `site-` name there.
+    # On one it already had, only the owner knows, so a code never decides that,
+    # and it never overrides what the owner set. An app holding such a name now
+    # keeps the matching site off anyway.
     reserved = _reserved_app_names(layout)
-    if not reserved:
-        mill = config.get("mill") if isinstance(config.get("mill"), dict) else {}
+    mill = config.get("mill") if isinstance(config.get("mill"), dict) else {}
+    if new_domain and not reserved and "remote_sites" not in mill:
         mill["remote_sites"] = True
         config["mill"] = mill
     mode = settings.stat().st_mode & 0o777 if settings.is_file() else 0o644
     _write_private(settings, json.dumps(config, indent=2) + "\n", mode)
-    return {"url": connection.url, "owner_email": connection.owner_email, "remote_sites_held_by": reserved}
+    return {"url": connection.url, "owner_email": connection.owner_email, "remote_sites_held_by": reserved,
+            "remote_sites": mill.get("remote_sites") is True}

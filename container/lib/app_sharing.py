@@ -430,6 +430,9 @@ def share(wolts_dir, name: str, lodge_port: int, *, by: str, said_by: str = "",
     why. The log entry is written before the share goes live: if it can't be,
     nothing is shared.
     """
+    if not _NAME_RE.fullmatch(name):
+        raise RuntimeError(f"nothing shared: an app's address can't hold the name {name!r}. "
+                           "Rename it with only letters, digits and dashes, then share it")
     start, stop = start or start_cloudflared, stop or stop_cloudflared
     is_ours = is_ours or is_sharing_tunnel
     existing = shared(wolts_dir, name)

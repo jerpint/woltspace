@@ -1279,6 +1279,32 @@ def test_with_lodge_auth_on_nobody_else_opens_the_lodge(lodge_auth_on, headers):
     assert _through_tunnel(LODGE_HOST).get("/tunnel", headers=headers).status_code == 401
 
 
+def test_the_owners_login_opens_sites_and_apps_from_the_lodge(lodge_auth_on):
+    _remote_sites_on(lodge_auth_on)
+    client = _through_tunnel(LODGE_HOST)
+    login = {"cf-access-jwt-assertion": "good"}
+    app = client.get("/apps/open?app=board&path=/x", headers=login, follow_redirects=False)
+    assert app.status_code == 303 and app.headers["location"] == f"https://board.{DOMAIN}/x"
+    site = client.get("/sites/open?wolt=softie", headers=login, follow_redirects=False)
+    assert site.status_code == 303 and site.headers["location"] == f"https://site-softie.{DOMAIN}/"
+
+
+def test_a_wolts_key_still_cant_open_a_site_or_app(lodge_auth_on):
+    import lodge_auth
+    key = lodge_auth.ensure_keys(lodge_auth_on)[lodge_auth.WOLT]
+    client = TestClient(server_app.app, base_url="http://localhost:7777", client=("127.0.0.1", 50000))
+    for path in ("/apps/open?app=board", "/sites/open?wolt=softie"):
+        assert client.get(path, headers={lodge_auth.KEY_HEADER: key}, follow_redirects=False).status_code == 403
+
+
+def test_a_name_sharing_cant_hold_says_so_and_changes_nothing(lodge):
+    started = []
+    with pytest.raises(RuntimeError, match="Rename it"):
+        app_sharing.share(lodge, "my_app", 7777, by="owner", start=lambda *a: started.append(a))
+    assert not started and not app_sharing.shared(lodge, "my_app")
+    assert app_sharing.state_problem(lodge) is None
+
+
 def test_the_owners_login_opens_only_the_host_of_its_way_in(lodge_auth_on):
     client = TestClient(server_app.app, base_url="http://localhost:7777", client=("127.0.0.1", 50000))
     assert client.get("/tunnel", headers={"cf-access-jwt-assertion": "good"}).status_code == 401

@@ -265,6 +265,19 @@ def test_wolf_goes_to_the_python_cli_natively_and_in_the_container(isolation, tm
     assert json.loads(result.stdout) == {"native": True, "argv": "wolf list --json"}
 
 
+@pytest.mark.parametrize("isolation", ["host", "external"])
+def test_pair_goes_to_the_python_cli_natively_and_in_the_container(isolation, tmp_path):
+    """The owner pairs a browser from a shell in the container too."""
+    client, _ = _fake_bundle(tmp_path)
+    result = subprocess.run(
+        [sys.executable, str(client), "pair", "--json"],
+        capture_output=True, text=True, timeout=30,
+        env=_clean_env(tmp_path, WOLTSPACE_ISOLATION=isolation),
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {"native": True, "argv": "pair --json"}
+
+
 def test_control_nouns_stay_local_and_never_delegate(tmp_path):
     """`session send` is how wolts talk to each other; it must keep working.
 

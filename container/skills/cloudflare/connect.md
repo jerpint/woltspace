@@ -14,7 +14,8 @@ Someone who runs Cloudflare for this lodge gave the owner one connection code, s
    WOLTSPACE_CODE_<16_RANDOM_HEX>
    ```
    Running it twice changes nothing the second time. If the lodge already has another address, it stops and says so: moving it is the owner's decision, so ask them first, then add `--replace`.
-3. **Tell the owner:** open the address it printed, from any device, and log in with the email it named. A new address can take a few minutes to start working.
+3. **If it says sites through the tunnel stay off,** pass that on: only the owner knows whether an app ever used that name on this domain.
+4. **Tell the owner:** open the address it printed, from any device, and log in with the email it named. A new address can take a few minutes to start working.
 
 If the owner would rather keep the code out of this session's transcript, they can run step 2 in their own terminal.
 

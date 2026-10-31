@@ -480,6 +480,12 @@ def _lodge_auth_scope(headers) -> str | None:
     return None
 
 
+def _lodge_caller(request: Request) -> str | None:
+    """Who the lodge auth middleware let in, way in included. Paths it leaves
+    open have no such answer, so they read the request's own key or cookie."""
+    return request.scope.get("woltspace.lodge_caller") or _lodge_auth_scope(request.headers)
+
+
 class LodgeAuthMiddleware:
     """Refuse lodge HTTP and WebSocket requests without a key, a paired browser,
     or the proof of the owner from the way in that named this lodge."""
@@ -527,6 +533,7 @@ class LodgeAuthMiddleware:
         expires_at = None
         if caller is None:
             caller, expires_at = await self._through_way_in(scope, headers, hosts[0].decode("latin-1"))
+        scope["woltspace.lodge_caller"] = caller
         if scope["type"] == "websocket":
             # Terminals and reload sockets are the owner's; wolt tools use HTTP.
             if caller != lodge_auth.OWNER:
@@ -1035,7 +1042,7 @@ def _remote_base(request: Request, kind: str, name: str) -> str:
 @app.get("/apps/open")
 async def open_app(request: Request, app_name: str = Query("", alias="app"), path: str = "/"):
     """Open an app on its own origin, with a one-time grant when auth is on."""
-    if lodge_auth.enabled() and _lodge_auth_scope(request.headers) != lodge_auth.OWNER:
+    if lodge_auth.enabled() and _lodge_caller(request) != lodge_auth.OWNER:
         return JSONResponse({"error": "only the owner can open an app"}, status_code=403)
     name = (app_name or "").lower()
     if parse_app_host(f"{name}.localhost") is None or get_app(name) is None:
@@ -1057,7 +1064,7 @@ async def open_app(request: Request, app_name: str = Query("", alias="app"), pat
 @app.get("/sites/open")
 async def open_site(request: Request, wolt: str = "", path: str = "/"):
     """Open a wolt's site on its own origin, with a one-time grant when auth is on."""
-    if lodge_auth.enabled() and _lodge_auth_scope(request.headers) != lodge_auth.OWNER:
+    if lodge_auth.enabled() and _lodge_caller(request) != lodge_auth.OWNER:
         return JSONResponse({"error": "only the owner can open a site"}, status_code=403)
     label = (wolt or "").lower()
     from .content_hosts import anchored_site_root
@@ -2863,7 +2870,7 @@ def _share_summary(name: str) -> dict | None:
 def _share_by(request: Request) -> str:
     if not lodge_auth.enabled():
         return "local"
-    return _lodge_auth_scope(request.headers) or "unknown"
+    return _lodge_caller(request) or "unknown"
 
 
 async def _said_by(request: Request) -> str:
