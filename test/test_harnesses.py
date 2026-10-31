@@ -184,7 +184,7 @@ class TestBuildCommandCodex:
         assert cmd.endswith("login --device-auth")
 
     def test_prompt_policy_keeps_normal_sandbox(self):
-        cmd = build_command("codex", "spawn", execution_policy="prompt")
+        cmd = build_command("codex", "spawn", execution_policy={"mode": "prompt", "isolation": "host"})
         assert "--dangerously-bypass-approvals-and-sandbox" not in cmd
 
     def test_codex_tier_models(self):
@@ -1613,14 +1613,14 @@ def _policy(mode, isolation):
     ("claude", "auto", "external", "--permission-mode auto"),
     ("claude", "bypass", "external", "--dangerously-skip-permissions"),
     ("codex", "prompt", "host", "-a on-request -s workspace-write"),
-    ("codex", "prompt", "external", "-a on-request -s danger-full-access"),
     ("codex", "auto", "host", "--approve-for-me -c sandbox_workspace_write.network_access=true"),
     ("codex", "bypass", "external", "--dangerously-bypass-approvals-and-sandbox"),
     ("opencode", "prompt", "host", ""),  # engine settings decide
     ("opencode", "bypass", "host", "--auto"),
     ("hermes", "prompt", "host", ""),
     ("hermes", "bypass", "host", "--yolo"),
-    ("codex", "auto", "external", LevelNotOffered("codex does not offer Auto on external; it offers Ask, Bypass")),
+    ("codex", "prompt", "external", LevelNotOffered(
+        "codex does not offer Ask on external; it offers Bypass; its sandbox cannot start in this container")),
     ("opencode", "auto", "host", LevelNotOffered("opencode does not offer Auto on host")),
     ("hermes", "auto", "host", LevelNotOffered("hermes does not offer Auto on host")),
     ("pi", "prompt", "host", LevelNotOffered(
@@ -1639,4 +1639,5 @@ def test_each_level_launches_with_its_engine_flags_or_is_refused_never_replaced(
 def test_levels_list_what_each_engine_offers_on_this_isolation():
     assert harnesses.levels("host")["opencode"] == {"prompt": "Ask (engine settings)", "bypass": "Bypass"}
     assert harnesses.levels("host")["pi"] == {"bypass": "Bypass"}
-    assert harnesses.levels("external")["codex"] == {"prompt": "Ask", "bypass": "Bypass"}
+    assert harnesses.levels("host")["codex"]["prompt"] == "Ask (sandbox escalations)"
+    assert harnesses.levels("external")["codex"] == {"bypass": "Bypass"}

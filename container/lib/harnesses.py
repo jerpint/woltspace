@@ -51,15 +51,16 @@ WHERMES = str(_BIN_DIR / "whermes")
 
 # Each engine's flags per permission level, and per isolation where they
 # differ. A level an engine does not list is refused, never replaced by another.
-# Codex's sandbox cannot start in the box container (no user namespaces), so
-# there Ask relies on approvals alone and Auto is not offered. opencode and
-# hermes have no Ask flag: their own settings decide, and the label says so.
+# Codex's model decides when to ask, so only its sandbox makes it ask: on the
+# host it asks for what the sandbox would block, and in the box container,
+# where the sandbox cannot start (no user namespaces), it never asks, so
+# neither Ask nor Auto is offered there. opencode and hermes have no Ask flag:
+# their own settings decide. The labels say so.
 POLICY_FLAGS = {
     "claude": {"prompt": ["--permission-mode", "manual"],
                "auto": ["--permission-mode", "auto"],
                "bypass": ["--dangerously-skip-permissions"]},
-    "codex": {"prompt": {"host": ["-a", "on-request", "-s", "workspace-write"],
-                         "external": ["-a", "on-request", "-s", "danger-full-access"]},
+    "codex": {"prompt": {"host": ["-a", "on-request", "-s", "workspace-write"]},
               # Network on, or the lodge API on 127.0.0.1 is out of reach.
               "auto": {"host": ["--approve-for-me", "-c",
                                 "sandbox_workspace_write.network_access=true"]},
@@ -69,6 +70,7 @@ POLICY_FLAGS = {
     "pi": {"bypass": []},  # Pi has no tool approvals at all
 }
 LEVEL_NAMES = {"prompt": "Ask", "auto": "Auto", "bypass": "Bypass"}
+LEVEL_LABELS = {("codex", "prompt"): "Ask (sandbox escalations)"}
 
 
 class LevelNotOffered(ValueError):
@@ -85,6 +87,8 @@ def policy_flags(harness: str, execution_policy) -> list[str]:
         offered = list(levels(policy.isolation).get(harness, {}).values())
         hint = ("; grant this wolt and directory first (woltspace auto grant)"
                 if offered == ["Bypass"] and policy.isolation == "host" else "")
+        if harness == "codex" and policy.isolation == "external":
+            hint = "; its sandbox cannot start in this container, and without it Codex never asks"
         raise LevelNotOffered(f"{harness} does not offer {LEVEL_NAMES[policy.mode]} on"
                               f" {policy.isolation}; it offers {', '.join(offered) or 'nothing'}{hint}")
     return list(flags)
@@ -100,7 +104,7 @@ def levels(isolation: str) -> dict:
                 if isolation not in flags:
                     continue
                 flags = flags[isolation]
-            label = LEVEL_NAMES[mode]
+            label = LEVEL_LABELS.get((harness, mode), LEVEL_NAMES[mode])
             if mode == "prompt" and not flags:
                 label += " (engine settings)"
             offered[harness][mode] = label

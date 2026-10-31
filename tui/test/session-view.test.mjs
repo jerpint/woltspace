@@ -28,6 +28,7 @@ test('legacy session view keeps old dir and shows a version 1 auto as legacy byp
 test('the level picker offers only what the wolt engine offers here, and sends the pick', () => {
   const caps = { levels: { opencode: { prompt: 'Ask (engine settings)', bypass: 'Bypass' } } };
   assert.deepEqual(spawnLevels(caps, { harness: 'opencode' }).map(([mode]) => mode), ['', 'prompt', 'bypass']);
+  assert.match(spawnLevels(caps, { harness: 'opencode' })[1][1], /^Ask \(engine settings\): /);
   assert.deepEqual(spawnLevels(caps, { harness: 'claude' }).map(([mode]) => mode), ['', 'prompt', 'auto', 'bypass']);
   assert.deepEqual(spawnLevels(null, null).map(([mode]) => mode), ['', 'prompt', 'auto', 'bypass']);
   assert.equal(spawnTarget(caps, { home: '/w' }, '/x', 'bypass').executionPolicy, 'bypass');

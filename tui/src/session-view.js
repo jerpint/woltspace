@@ -40,7 +40,8 @@ export const LEVELS = [
 // Only the levels this wolt's engine offers here, when the lodge says so.
 export const spawnLevels = (capabilities, wolt) => {
   const offered = capabilities?.levels?.[wolt?.harness];
-  return LEVELS.filter(([mode]) => !mode || !offered || mode in offered);
+  return LEVELS.filter(([mode]) => !mode || !offered || mode in offered)
+    .map(([mode, text]) => [mode, offered?.[mode] ? text.replace(/^[^:]+/, offered[mode]) : text]);
 };
 
 // Where a newly woken wolt starts.
