@@ -30,6 +30,9 @@ class FakeLodge:
         lodge = self
 
         class Client:
+            def __init__(self, **kwargs):  # the lodge client carries its key header
+                pass
+
             async def __aenter__(self):
                 return self
 

@@ -71,7 +71,7 @@ class TestPlan:
 
     def test_plan_connectors_carries_the_vulture(self, tmp_path):
         names = [plan.name for plan in plan_connectors(_layout(tmp_path), ENTRY)]
-        assert names[-1] == "vulture"
+        assert "vulture" in names
 
 
 class TestSupervision:

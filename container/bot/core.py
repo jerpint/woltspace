@@ -367,6 +367,8 @@ def _call_server(method: str, path: str, body: dict | None = None) -> dict:
         headers={"Content-Type": "application/json"} if data else {},
         method=method,
     )
+    import lodge_auth
+    lodge_auth.sign(req)
     with urllib.request.urlopen(req, timeout=5) as resp:
         return json.loads(resp.read())
 

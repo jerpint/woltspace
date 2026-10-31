@@ -361,16 +361,22 @@ class ChatLodge:
     def _api(self) -> str:
         return get_env("WOLTSPACE_API", "http://localhost:7777")
 
-    async def _fetch_apps(self) -> list[dict]:
+    @staticmethod
+    def _lodge_client():
+        """An HTTP client for the lodge's own API, carrying the owner key: the
+        chat lodge acts for the owner, whatever shell started the lodge."""
         import httpx
-        async with httpx.AsyncClient() as client:
+        import lodge_auth
+        return httpx.AsyncClient(headers=lodge_auth.owner_headers(get_env("WOLTSPACE_WOLTS_DIR")))
+
+    async def _fetch_apps(self) -> list[dict]:
+        async with self._lodge_client() as client:
             resp = await client.get(f"{self._api()}/apps", timeout=5)
             resp.raise_for_status()
             return resp.json()
 
     async def _app_action(self, name: str, action: str) -> bool:
-        import httpx
-        async with httpx.AsyncClient() as client:
+        async with self._lodge_client() as client:
             try:
                 resp = await client.post(f"{self._api()}/apps/{name}/{action}", timeout=15)
                 return resp.status_code < 400
@@ -379,8 +385,7 @@ class ChatLodge:
 
     async def _release_hold(self, name: str) -> bool:
         """The session rests at the next sweep only if nobody is using it."""
-        import httpx
-        async with httpx.AsyncClient() as client:
+        async with self._lodge_client() as client:
             try:
                 resp = await client.delete(f"{self._api()}/sessions/{name}/hold", timeout=15)
                 return resp.status_code < 400
@@ -388,9 +393,8 @@ class ChatLodge:
                 return False
 
     async def _idle_setting(self, body: dict | None = None) -> tuple[int, dict]:
-        import httpx
         url = f"{self._api()}/settings/session-expiry"
-        async with httpx.AsyncClient() as client:
+        async with self._lodge_client() as client:
             resp = await (client.get(url, timeout=10) if body is None
                           else client.post(url, json=body, timeout=10))
         try:

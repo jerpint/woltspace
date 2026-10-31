@@ -397,6 +397,185 @@ def _graft_runtime_lib(layout: RuntimeLayout) -> None:
         sys.path.insert(0, lib_dir)
 
 
+def _apps_check(layout: RuntimeLayout) -> DoctorCheck | None:
+    """What the Mill can't fix for an app: a wide bind or a shared name.
+
+    Read-only: it reads manifests and changes nothing.
+    """
+    import json
+    apps_dir = layout.wolts_dir / "apps"
+    if not apps_dir.is_dir():
+        return None
+    names: dict[str, list[str]] = {}
+    wide: list[str] = []
+    reserved: list[str] = []
+    for manifest in sorted(apps_dir.glob("*/woltspace.json")):
+        try:
+            data = json.loads(manifest.read_text())
+        except (OSError, ValueError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        name = str(data.get("name") or manifest.parent.name)
+        names.setdefault(name, []).append(manifest.parent.name)
+        if "0.0.0.0" in str(data.get("start") or ""):
+            wide.append(name)
+        if name.startswith("site-"):
+            reserved.append(name)
+    shared = {name: dirs for name, dirs in names.items() if len(dirs) > 1}
+    problems = []
+    if wide:
+        problems.append(f"listen on every interface (0.0.0.0): {', '.join(sorted(set(wide)))}")
+    if reserved:
+        problems.append(f"use the reserved site- prefix and aren't served: {', '.join(sorted(set(reserved)))}")
+    if shared:
+        problems.append("share a name: " + "; ".join(
+            f"{name} in {', '.join(dirs)}" for name, dirs in sorted(shared.items())))
+    if not problems:
+        return DoctorCheck("apps", "pass", f"{sum(len(d) for d in names.values())} apps, all on loopback")
+    return DoctorCheck(
+        "apps", "warn", "apps that " + " and apps that ".join(problems),
+        "Pass `--host $HOST` (the lodge sets HOST=127.0.0.1) instead of 0.0.0.0, so an app is "
+        "reachable from this machine only; give each app its own name, not starting with site-.",
+    )
+
+
+def _app_tunnels_check(layout: RuntimeLayout) -> DoctorCheck | None:
+    """Per-app quick tunnels from an older lodge that are still running."""
+    try:
+        import apps
+        states = apps.intended_apps()
+        live = [s["name"] for s in states
+                if s.get("tunnel_pid") and apps.is_cloudflared(int(s["tunnel_pid"]))]
+    except Exception:
+        return None
+    if not live:
+        return None
+    return DoctorCheck(
+        "app-tunnels", "fail",
+        f"old per-app quick tunnels still running for: {', '.join(sorted(live))}",
+        "They reach an app around Access and the Mill. Restart the lodge (it retires them at "
+        "boot), or stop them yourself.",
+    )
+
+
+def _wolt_sites_check(layout: RuntimeLayout) -> DoctorCheck | None:
+    """A wolt's site needs a name that fits in a host; say which ones don't."""
+    import re
+    names = sorted(p.parent.parent.name for p in layout.wolts_dir.glob("*/wolt/site") if p.is_dir())
+    bad = [name for name in names if not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", name.lower())]
+    labels = [name.lower() for name in names]
+    bad += [name for name in names if labels.count(name.lower()) > 1 and name not in bad]
+    if not bad:
+        return None
+    return DoctorCheck(
+        "wolt-sites", "warn", f"these wolts' sites have no address: {', '.join(bad)}",
+        "A site's address is the wolt's name: only letters, digits and dashes, unique ignoring case.",
+    )
+
+
+def _shared_apps_check(layout: RuntimeLayout) -> DoctorCheck | None:
+    """Apps anyone with the link can use: shown every time, so a share is never forgotten."""
+    try:
+        import app_sharing
+        shared = app_sharing.all_shared(layout.wolts_dir)
+        stuck = app_sharing.stuck_tunnels(layout.wolts_dir, layout.port)
+        corrupt = app_sharing.corrupt_files(layout.wolts_dir)
+        invalid = app_sharing.state_problem(layout.wolts_dir)
+    except Exception:
+        return None
+    if invalid:
+        return DoctorCheck(
+            "shared-apps", "fail", f"the sharing state is invalid ({invalid}): every app is private",
+            "The lodge keeps it aside the next time sharing changes. Read it, then share again "
+            "what should be shared.",
+        )
+    if stuck:
+        return DoctorCheck(
+            "shared-apps", "fail",
+            "unshared apps' quick tunnels still running: " + ", ".join(
+                f"{r.get('name')} (pid {r.get('pid')})" for r in stuck),
+            "They reach nothing (their share is gone), but should stop: restart the lodge, "
+            "or stop those pids.",
+        )
+    if corrupt:
+        return DoctorCheck(
+            "shared-apps", "warn",
+            f"an unreadable sharing state was kept aside: {', '.join(p.name for p in corrupt)}",
+            "Every app was made private. Read it, share again what should be, then delete it.",
+        )
+    if not shared:
+        return None
+    listed = "; ".join(
+        f"{name} ({record.get('tunnel_url') or record.get('domain_url') or 'no address yet'}, "
+        f"since {record.get('since', '?')}, by {record.get('by', '?')})"
+        for name, record in sorted(shared.items()))
+    return DoctorCheck(
+        "shared-apps", "warn", f"PUBLIC: anyone with the link can use: {listed}",
+        "Stop with `woltspace app unshare <name>`, or `woltspace app unshare-all`. "
+        "The log is .space/logs/sharing.log.",
+    )
+
+
+def _tunnel_url(layout: RuntimeLayout) -> str:
+    """The lodge's named tunnel URL: exported, or in the data root's .env,
+    which is where a native lodge keeps it (the supervisor loads it too)."""
+    value = (os.environ.get("CLOUDFLARE_TUNNEL_URL") or "").strip()
+    if value:
+        return value
+    env_file = layout.wolts_dir / ".env"
+    if env_file.is_file():
+        from dotenv import dotenv_values
+        return (dotenv_values(env_file).get("CLOUDFLARE_TUNNEL_URL") or "").strip()
+    return ""
+
+
+def _access_settings_problem(raw) -> str:
+    """Why the lodge would refuse these access settings, or "" if it takes them.
+
+    The same rules as server/access.py validate_access_settings.
+    """
+    import re
+    keys = {"team_domain", "apps_aud", "owner_email"}
+    if not isinstance(raw, dict):
+        return "no access settings in woltspace.json"
+    if not keys <= set(raw) <= keys | {"lodge_aud"}:
+        missing = sorted(keys - set(raw))
+        extra = sorted(set(raw) - keys - {"lodge_aud"})
+        return ("access settings need team_domain, apps_aud and owner_email"
+                + (f" (missing: {', '.join(missing)})" if missing else "")
+                + (f" (unexpected: {', '.join(extra)})" if extra else ""))
+    team = str(raw["team_domain"]).strip().lower().rstrip(".")
+    if not re.fullmatch(r"[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?", team) or "." not in team or ".." in team:
+        return "team_domain must be a domain name, like <team>.cloudflareaccess.com"
+    apps_aud = str(raw["apps_aud"]).strip()
+    if not apps_aud or len(apps_aud) > 512:
+        return "apps_aud must be an Access AUD tag"
+    if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", str(raw["owner_email"]).strip()):
+        return "owner_email must be an email address"
+    return ""
+
+
+def _remote_apps_check(layout: RuntimeLayout) -> DoctorCheck | None:
+    """Apps and sites through a tunnel need Access settings the lodge accepts."""
+    import json
+    if not _tunnel_url(layout):
+        return None
+    try:
+        config = json.loads((layout.wolts_dir / "woltspace.json").read_text())
+    except (OSError, ValueError):
+        config = {}
+    ways_in = config.get("ways_in") if isinstance(config, dict) else None
+    problem = _access_settings_problem(ways_in.get("cloudflare") if isinstance(ways_in, dict) else None)
+    if not problem:
+        return DoctorCheck("remote-apps", "pass", "Access settings for apps through the tunnel")
+    return DoctorCheck(
+        "remote-apps", "warn",
+        f"apps and wolt sites through the tunnel are refused: {problem}",
+        'Set "ways_in": {"cloudflare": {...}} in woltspace.json (team_domain, apps_aud, owner_email), with an '
+        "Access application covering *.<your domain>; see container/migrations/v0.6.0.md.",
+    )
+
 def run_doctor(
     layout: RuntimeLayout, *, check_port: bool = True, as_entrypoint: bool = False
 ) -> list[DoctorCheck]:
@@ -514,6 +693,10 @@ def run_doctor(
             f"{layout.host}:{layout.port} is {'available' if available else 'already in use'}",
             "Stop the existing service or choose --port <free-port>." if not available else "",
         ))
+    for extra in (_apps_check(layout), _wolt_sites_check(layout), _remote_apps_check(layout), _app_tunnels_check(layout),
+                  _shared_apps_check(layout)):
+        if extra is not None:
+            checks.append(extra)
     return checks
 
 

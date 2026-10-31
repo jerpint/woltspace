@@ -11,6 +11,7 @@
 #   woltspace chat                    — open claude in container
 #   woltspace chat --session <slug>   — attach to a live wolt session in your terminal
 #   woltspace logs                    — stream container logs
+#   woltspace pair [--forget]         — print a one-time link that pairs a browser
 #   woltspace backup [tag]            — snapshot container + wolts (tag defaults to datetime)
 #   woltspace backup [tag] --bundle  — same, but zipped into one portable file
 #   woltspace update                  — check for updates and apply (spawns Claude)
@@ -568,7 +569,7 @@ if [ ! -d "$WOLTS_DIR" ] || [ "$(_count_wolts)" -eq 0 ]; then
   fi
   # Allow container-management commands even with no wolts (onboarding)
   case "$cmd" in
-    logs|shell|stop|chat|build) ;;  # fall through to subcommands
+    logs|shell|stop|chat|build|pair) ;;  # fall through to subcommands
     *)
       echo ""
       echo "  🦫 no wolts found at $WOLTS_DIR"
@@ -605,6 +606,17 @@ case "$cmd" in
     exec docker exec -e "WOLTSPACE_WOLT_NAME=${HUMAN_NAME:-$(whoami)}" \
       -e "WOLT_NAME=${HUMAN_NAME:-$(whoami)}" "$CONTAINER_NAME" \
       /workspace/woltspace/container/bin/woltspace "$@"
+    ;;
+  pair)
+    # The link names the lodge's port inside the container; a browser here
+    # reaches it at the port docker published.
+    if ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+      echo "  ${_D}💤 container not running — run 'woltspace start'${_R}"
+      exit 1
+    fi
+    _published=$(docker port "$CONTAINER_NAME" 7777/tcp | head -1 | sed 's/.*://')
+    docker exec -u node "$CONTAINER_NAME" /usr/local/bin/woltspace "$@" \
+      | sed "s#http://127.0.0.1:7777#http://localhost:${_published:-7777}#"
     ;;
   tui)
     # Terminal cockpit — runs HOST-SIDE (talks to the API on localhost:7777,

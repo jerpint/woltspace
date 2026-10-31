@@ -60,9 +60,9 @@ curl -X PUT \
 
 **Important:** The wildcard rule must come AFTER any specific hostname rules (like the lodge or apps with dedicated ports like `deck`). Cloudflare matches rules top-to-bottom, first match wins. The catch-all `http_status:404` must always be last.
 
-### 3. Cloudflare Access policy (recommended)
+### 3. Cloudflare Access application (required)
 
-Without this step, any app subdomain is publicly accessible to anyone who knows the URL. Add an Access application to require authentication:
+Without this step, Cloudflare lets anyone through to the lodge, and the lodge refuses them all: it opens an app only for the owner's Access token for this application. Add the Access application, and put its AUD in `woltspace.json` as `ways_in.cloudflare.apps_aud` (see `container/migrations/v0.6.0.md`):
 
 ```bash
 # Create Access application
@@ -102,17 +102,14 @@ The auth cookie is scoped to `.yourdomain.com`, so logging in once (at the lodge
 Browser → corework.yourdomain.com
   → Cloudflare Access (auth check at the edge)
   → Cloudflare Tunnel (wildcard ingress rule)
-  → localhost:7777 (FastAPI server)
-  → subdomain proxy middleware (extracts app name from hostname)
-  → proxy to localhost:{app_port}
+  → localhost:7777 (the lodge)
+  → the lodge verifies the Access token (apps audience, owner email)
+  → the Mill, over its unix socket
+  → localhost:{app_port}
   → response flows back
 ```
 
-The server reads `CLOUDFLARE_TUNNEL_URL` at boot to determine the parent domain. When a request arrives at `corework.woltspace.com`, the middleware strips `.woltspace.com` to get the app name, looks up the running app's port, and proxies the request. The app sees clean requests at `/` on its own port — no path prefixes, no URL rewriting.
-
-## Fallback: quick tunnels
-
-Lodges without a custom domain (`CLOUDFLARE_TUNNEL_URL` not set) automatically fall back to per-app quick tunnels with random `trycloudflare.com` URLs. The `public: true` flag in `woltspace.json` triggers this. No additional setup needed.
+The server reads `CLOUDFLARE_TUNNEL_URL` at boot to determine the parent domain. When a request arrives at `corework.woltspace.com`, the lodge checks the Access token against the `ways_in.cloudflare` settings in `woltspace.json` (this Access application's AUD is `apps_aud`), then hands the request to the Mill, which proxies it to the app. The app sees clean requests at `/` on its own port. See `docs/mill.md`.
 
 ## Verifying the setup
 
@@ -120,8 +117,8 @@ Lodges without a custom domain (`CLOUDFLARE_TUNNEL_URL` not set) automatically f
 # Check DNS resolves
 dig corework.yourdomain.com
 
-# Test from inside the container (bypasses Access)
-curl -H "Host: corework.yourdomain.com" http://localhost:7777/
+# From inside, without an Access token the lodge refuses (403): that's by design.
+curl -s -o /dev/null -w '%{http_code}\n' -H "Host: corework.yourdomain.com" http://localhost:7777/
 
 # Test from outside (should get Access login page)
 curl -sL https://corework.yourdomain.com/ | grep -i "cloudflare"

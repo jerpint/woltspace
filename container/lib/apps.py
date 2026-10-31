@@ -24,7 +24,7 @@ from pydantic import BaseModel, Field
 import lodge_db
 from env_compat import get_env
 from paths import space_apps_dir
-from tunnel import start_cloudflared, stop_cloudflared
+from tunnel import is_cloudflared, process_command, stop_cloudflared
 
 WOLTS_DIR = Path(get_env("WOLTSPACE_WOLTS_DIR", "/workspace/wolts"))
 APPS_DIR = WOLTS_DIR / "apps"
@@ -42,8 +42,9 @@ _RUNNING_STATE_DIR = space_apps_dir(WOLTS_DIR)
 # for those services, and an app would otherwise inherit them all. An app that
 # really needs one keeps its own copy in its own .env.
 LODGE_ONLY_ENV_PREFIXES = ("TELEGRAM_", "SLACK_", "GITHUB_APP_", "CLOUDFLARE_")
-# The owner's own Claude Code login, for wolt sessions only.
-LODGE_ONLY_ENV_KEYS = frozenset({"CLAUDE_CODE_OAUTH_TOKEN"})
+# The owner's own Claude Code login, for wolt sessions only, and a lodge API
+# key handed to a script.
+LODGE_ONLY_ENV_KEYS = frozenset({"CLAUDE_CODE_OAUTH_TOKEN", "WOLTSPACE_LODGE_KEY"})
 
 
 def app_environment(**extra: str) -> dict[str, str]:
@@ -207,6 +208,12 @@ def _clear_state(name: str) -> None:
 
 
 def _is_pid_alive(pid: int) -> bool:
+    # A stopped app stays a zombie, which signals as alive, until it's reaped.
+    try:
+        if os.waitpid(pid, os.WNOHANG)[0] == pid:
+            return False
+    except OSError:
+        pass  # not our child
     try:
         os.kill(pid, 0)
         return True
@@ -251,7 +258,8 @@ def intended_apps() -> list[dict]:
 def start_app(name: str) -> dict:
     """Start an app's dev server. Returns state dict with port and pid.
 
-    Uses the port declared in woltspace.json — no dynamic allocation.
+    The app gets PORT, its manifest's port, and HOST=127.0.0.1: the Mill
+    reaches it on loopback, and nothing else needs to.
     """
     app = get_app(name)
     if not app:
@@ -282,8 +290,9 @@ def start_app(name: str) -> dict:
                 env=app_environment(),
             )
 
-    # Start the process with PORT env var
-    env = app_environment(PORT=str(port))
+    # Start the process with PORT and HOST: commands that pass `--host $HOST`
+    # stay on loopback.
+    env = app_environment(PORT=str(port), HOST="127.0.0.1")
     _RUNNING_STATE_DIR.mkdir(parents=True, exist_ok=True)
     log_handle = app_log_file(name).open("ab", buffering=0)
     try:
@@ -308,16 +317,58 @@ def start_app(name: str) -> dict:
     }
     _write_state(name, state)
 
-    # Auto-share if public=true and sharing is enabled
-    if app.public and SHARING_ENABLED:
-        try:
-            share_result = share_app(name)
-            state["tunnel_url"] = share_result.get("tunnel_url")
-            state["tunnel_pid"] = share_result.get("pid")
-        except Exception:
-            pass  # Non-fatal — app starts even if tunnel fails
-
     return state
+
+
+def _is_apps_quick_tunnel(pid: int, port) -> bool:
+    """Whether a cloudflared pid is the quick tunnel an older lodge started for
+    an app: `cloudflared tunnel --url http://localhost:<the app's port>`."""
+    try:
+        command = process_command(pid).split()
+    except Exception:
+        return False
+    target = f"http://localhost:{port}" if port else None
+    return (target is not None and "--url" in command
+            and command[command.index("--url") + 1:command.index("--url") + 2] == [target])
+
+
+def retire_app_tunnels() -> list[dict]:
+    """Stop the per-app quick tunnels an older lodge started; they're gone in 0.6.
+
+    A quick tunnel reached an app's port directly, around Cloudflare Access
+    and the Mill. Each recorded tunnel is stopped only if its pid is still a
+    cloudflared (a reused pid is left alone), and its record is cleared only
+    once nothing of it is running, so a failed stop is reported again at the
+    next boot and by `woltspace doctor`. Running this twice changes nothing.
+    """
+    results = []
+    for state in _all_states():
+        pid, url = state.get("tunnel_pid"), state.get("tunnel_url")
+        if not pid and not url:
+            continue
+        name = state["name"]
+        if pid and is_cloudflared(pid) and not _is_apps_quick_tunnel(pid, state.get("port")):
+            # A cloudflared, but not this app's quick tunnel: the pid was
+            # reused, perhaps by the lodge's own tunnel. Never signal it;
+            # keep the record so the owner sees it.
+            results.append({"name": name, "action": "tunnel-pid-ambiguous", "pid": pid})
+            print(f"[apps] {name}: pid {pid} is a cloudflared that isn't its old quick tunnel; left alone")
+            continue
+        if pid and is_cloudflared(pid):
+            stop_cloudflared(pid)
+            for _ in range(20):
+                if not is_cloudflared(pid):
+                    break
+                time.sleep(0.1)
+            if is_cloudflared(pid):
+                results.append({"name": name, "action": "tunnel-still-running", "pid": pid})
+                print(f"[apps] {name}: its old quick tunnel (pid {pid}) did not stop")
+                continue
+        state["tunnel_pid"], state["tunnel_url"] = None, None
+        _write_state(name, state)
+        results.append({"name": name, "action": "tunnel-retired", "pid": pid})
+        print(f"[apps] {name}: retired its old quick tunnel")
+    return results
 
 
 def apps_restore() -> list[dict]:
@@ -328,11 +379,21 @@ def apps_restore() -> list[dict]:
     - PID alive         → leave it (survived the restart)
     - PID dead          → respawn via start_app()
 
-    Returns a summary list of actions for logging.
+    Returns a summary list of actions for logging. Old per-app quick tunnels
+    are retired first.
     """
-    actions = []
+    actions = retire_app_tunnels()
+    # An app whose old tunnel won't stop keeps its row untouched: cleaning it
+    # up or restarting the app would lose the record of a tunnel that still
+    # reaches it directly, and the next boot and `doctor` need that record.
+    stuck = {a["name"] for a in actions
+             if a["action"] in ("tunnel-still-running", "tunnel-pid-ambiguous")}
     for state in _all_states():
         name = state["name"]
+        if name in stuck:
+            actions.append({"name": name, "action": "held-for-tunnel"})
+            print(f"[apps] {name} left as is until its old quick tunnel stops")
+            continue
 
         # Manifest gone — app was removed while container was down
         if get_app(name) is None:
@@ -416,140 +477,3 @@ def set_app_keeper(name: str, keeper: str) -> WoltspaceApp:
         state["keeper"] = keeper
         _write_state(name, state)
     return updated
-
-
-# --- Sharing (cloudflared tunnels) ---
-
-# Env var kill switch — if set to anything falsy, sharing is disabled entirely.
-# Default: sharing is enabled (no env var needed).
-SHARING_ENABLED = os.environ.get("WOLTSPACE_SHARING_ENABLED", "1").lower() not in ("0", "false", "no", "off")
-
-
-def _check_sharing_enabled():
-    """Raise if sharing is disabled by env var."""
-    if not SHARING_ENABLED:
-        raise RuntimeError("Sharing is disabled (WOLTSPACE_SHARING_ENABLED=0)")
-
-
-def _get_subdomain_url(app_name: str) -> str | None:
-    """Return the wildcard subdomain URL for an app, or None if not available."""
-    tunnel_url = os.environ.get("CLOUDFLARE_TUNNEL_URL", "")
-    if not tunnel_url:
-        return None
-    from urllib.parse import urlparse
-    parsed = urlparse(tunnel_url)
-    hostname = parsed.hostname or ""
-    parts = hostname.split(".", 1)
-    if len(parts) != 2:
-        return None
-    return f"{parsed.scheme}://{app_name}.{parts[1]}"
-
-
-def share_app(name: str) -> dict:
-    """Share an app publicly.
-
-    With a named tunnel + custom domain: returns the subdomain URL
-    (e.g. corework.woltspace.com) — no per-app tunnel needed.
-
-    Without a custom domain: falls back to a per-app quick tunnel
-    with --http-host-header localhost for Vite 6+ compatibility.
-
-    Stores tunnel_pid and tunnel_url in the app's apps_running row.
-    Also sets public=true in woltspace.json.
-    Returns dict with tunnel_url and pid.
-    Raises ValueError if app is not running.
-    Raises RuntimeError if sharing is disabled or tunnel fails.
-    """
-    _check_sharing_enabled()
-
-    state = _read_state(name)
-    if not state:
-        raise ValueError(f"App {name} is not running")
-
-    # Subdomain routing: stable URL, no per-app tunnel needed
-    subdomain_url = _get_subdomain_url(name)
-    if subdomain_url:
-        state["tunnel_url"] = subdomain_url
-        state["tunnel_pid"] = None
-        _write_state(name, state)
-        _set_public(name, True)
-        return {"tunnel_url": subdomain_url, "pid": None}
-
-    # Fallback: per-app quick tunnel
-    port = state["port"]
-
-    # Return existing tunnel if still alive
-    tunnel_pid = state.get("tunnel_pid")
-    if tunnel_pid and _is_pid_alive(tunnel_pid):
-        return {
-            "tunnel_url": state.get("tunnel_url", ""),
-            "pid": tunnel_pid,
-        }
-
-    result = start_cloudflared(port=port, host_header="localhost")
-
-    state["tunnel_pid"] = result["pid"]
-    state["tunnel_url"] = result["url"]
-    _write_state(name, state)
-
-    # Persist public=true in woltspace.json
-    _set_public(name, True)
-
-    return {"tunnel_url": result["url"], "pid": result["pid"]}
-
-
-def unshare_app(name: str) -> bool:
-    """Stop the cloudflared tunnel for an app.
-
-    Sets public=false in woltspace.json.
-    Returns True if a tunnel was running and stopped.
-    """
-    state = _read_state(name)
-    if not state:
-        return False
-
-    tunnel_pid = state.get("tunnel_pid")
-    stopped = stop_cloudflared(tunnel_pid) if tunnel_pid else False
-
-    state["tunnel_pid"] = None
-    state["tunnel_url"] = None
-    _write_state(name, state)
-
-    # Persist public=false in woltspace.json
-    _set_public(name, False)
-
-    return stopped or tunnel_pid is not None
-
-
-def unshare_all_apps() -> list[str]:
-    """Panic button — stop ALL cloudflared tunnels across all apps.
-
-    Returns list of app names that were unshared.
-    """
-    unshared = []
-    for state in _all_states():
-        name = state["name"]
-        tunnel_pid = state.get("tunnel_pid")
-        try:
-            if tunnel_pid and stop_cloudflared(tunnel_pid):
-                state["tunnel_pid"] = None
-                state["tunnel_url"] = None
-                _write_state(name, state)
-                _set_public(name, False)
-                unshared.append(name)
-        except (json.JSONDecodeError, OSError):
-            continue
-    return unshared
-
-
-def _set_public(name: str, public: bool) -> None:
-    """Update the public field in an app's woltspace.json."""
-    manifest = app_dir(name) / MANIFEST
-    if not manifest.exists():
-        return
-    try:
-        data = json.loads(manifest.read_text())
-        data["public"] = public
-        manifest.write_text(json.dumps(data, indent=2) + "\n")
-    except (json.JSONDecodeError, OSError):
-        pass

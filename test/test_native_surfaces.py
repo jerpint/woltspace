@@ -74,7 +74,7 @@ class TestSitePathsResolveFromTheLayout:
         assert payload["config_wolts_dir"] == payload["layout_wolts_dir"]
         assert payload["site_dir"] == str(native_root / "sitewolt" / "wolt" / "site")
 
-    def test_the_server_serves_that_site_with_livereload_injected(self, native_root):
+    def test_the_server_sends_that_site_to_its_own_origin(self, native_root):
         payload = run_in_clean_process(
             """
             import json
@@ -83,20 +83,19 @@ class TestSitePathsResolveFromTheLayout:
             from starlette.testclient import TestClient
             import server.app as app_module
             with TestClient(app_module.app, base_url="http://localhost:7777") as client:
-                response = client.get("/wolt/sitewolt/site/")
+                response = client.get("/wolt/sitewolt/site/", follow_redirects=False)
                 listing = client.get("/sites").json()
             print(json.dumps({
                 "status": response.status_code,
-                "body": response.text,
+                "location": response.headers.get("location"),
                 "sites": listing,
             }))
             """,
             {"WOLTSPACE_WOLTS_DIR": str(native_root), "WOLTSPACE_DIR": str(ROOT)},
         )
-        assert payload["status"] == 200
-        assert "native site" in payload["body"]
-        assert "/wolt/sitewolt/site/livereload" in payload["body"]
-        assert {"wolt": "sitewolt", "url": "/wolt/sitewolt/site/"} in payload["sites"]
+        assert payload["status"] == 303
+        assert payload["location"] == "/sites/open?wolt=sitewolt&path=/"
+        assert {"wolt": "sitewolt", "url": "/sites/open?wolt=sitewolt&path=/"} in payload["sites"]
 
     def test_livereload_socket_pushes_on_a_real_edit(self, native_root):
         payload = run_in_clean_process(
