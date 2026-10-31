@@ -136,6 +136,33 @@ def test_a_folder_redirects_to_its_slash_and_serves_its_index(wolts):
     assert client.get("/notes/", headers=OWNER).text.startswith("<p>notes</p>")
 
 
+@pytest.mark.parametrize("path, location", [
+    ("/wolt/{w}/site", "/"),
+    ("/wolt/{w}/site/", "/"),
+    ("/wolt/{w}/site/notes/a%20b.html?x=1", "/notes/a%20b.html?x=1"),
+    ("/wolt/{w}/site//evil.example/", "/evil.example/"),
+    ("/wolt/{w}/site/%5Cevil.example/", "/evil.example/"),
+    ("/wolt/{w}/site/%2F%2Fevil.example/", "/evil.example/"),
+])
+def test_a_sites_old_address_goes_to_the_page_here(wolts, path, location):
+    redirect = _mill(wolts).get(path.format(w="softie"), headers=OWNER, follow_redirects=False)
+    assert redirect.status_code == 308 and redirect.headers["location"] == location
+    assert redirect.headers["cache-control"] == "private, no-store"
+
+
+@pytest.mark.parametrize("path", ["/wolt/other/site/data.txt", "/wolt/{w}/sitely", "/wolt/{w}/sparks/x"])
+def test_other_old_looking_addresses_stay_not_found(wolts, path):
+    response = _mill(wolts).get(path.format(w="softie"), headers=OWNER, follow_redirects=False)
+    assert response.status_code == 404
+
+
+def test_a_real_file_at_an_old_looking_path_is_served(wolts):
+    real = wolts / "softie" / "wolt" / "site" / "wolt" / "softie" / "site"
+    real.mkdir(parents=True)
+    (real / "kept.txt").write_text("kept")
+    assert _mill(wolts).get("/wolt/softie/site/kept.txt", headers=OWNER).text == "kept"
+
+
 def test_ranges_and_head(wolts):
     client = _mill(wolts)
     part = client.get("/data.txt", headers={**OWNER, "range": "bytes=2-4"})

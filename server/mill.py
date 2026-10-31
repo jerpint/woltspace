@@ -26,10 +26,10 @@ import socket
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 from fastapi import WebSocket
-from fastapi.responses import HTMLResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 
 from .config import WOLTS_DIR
 from .content_hosts import anchored_site_root, find_wolt_dir, parse_site_host
@@ -82,6 +82,20 @@ def _origin_is_this_site(headers: dict[str, str]) -> bool:
         and origin_port == request_port
         and origin.path in {"", "/"} and not origin.query and not origin.fragment
     )
+
+
+def _old_address_redirect(scope, wolt: str) -> Response | None:
+    """A page's link to its own site's old address (`/wolt/<wolt>/site/...`) goes
+    to that page here, so pages written before sites had their own origin keep
+    working. The target stays a path on this site, whatever follows the prefix."""
+    prefix = f"/wolt/{wolt}/site"
+    path = scope.get("path", "")
+    if path != prefix and not path.startswith(prefix + "/"):
+        return None
+    target = "/" + quote(path[len(prefix):].lstrip("/\\"), safe="/")
+    if query := scope.get("query_string", b"").decode("latin-1"):
+        target += f"?{query}"
+    return Response(status_code=308, headers={**SITE_HEADERS, "location": target})
 
 
 async def _refuse(scope, receive, send, headers, status: int, reason: str, message: str, **extra):
@@ -148,6 +162,8 @@ class Mill:
         if scope["type"] == "http":
             ctx = SiteContext(wolt_name=wolt_dir.name, wolt_dir=wolt_dir, root=root, owner=True)
             response = serve_site(scope, ctx)
+            if response.status_code == 404:
+                response = _old_address_redirect(scope, wolt_dir.name) or response
             _log(scope, headers, response.status_code, "owner")
             return await response(scope, receive, send)
 
