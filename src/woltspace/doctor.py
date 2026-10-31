@@ -550,13 +550,14 @@ def _remote_apps_check(layout: RuntimeLayout) -> DoctorCheck | None:
         config = json.loads((layout.wolts_dir / "woltspace.json").read_text())
     except (OSError, ValueError):
         config = {}
-    problem = _access_settings_problem(config.get("access") if isinstance(config, dict) else None)
+    ways_in = config.get("ways_in") if isinstance(config, dict) else None
+    problem = _access_settings_problem(ways_in.get("cloudflare") if isinstance(ways_in, dict) else None)
     if not problem:
         return DoctorCheck("remote-apps", "pass", "Access settings for apps through the tunnel")
     return DoctorCheck(
         "remote-apps", "warn",
         f"apps and wolt sites through the tunnel are refused: {problem}",
-        'Set "access" in woltspace.json (team_domain, apps_aud, owner_email), with an '
+        'Set "ways_in": {"cloudflare": {...}} in woltspace.json (team_domain, apps_aud, owner_email), with an '
         "Access application covering *.<your domain>; see container/migrations/v0.6.0.md.",
     )
 

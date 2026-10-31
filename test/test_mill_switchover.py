@@ -247,13 +247,13 @@ def test_doctor_asks_for_access_settings_when_there_is_a_tunnel(tmp_path, monkey
     from woltspace import doctor
     monkeypatch.setenv("CLOUDFLARE_TUNNEL_URL", "https://owner.woltspace.test")
     assert doctor._remote_apps_check(_layout(tmp_path)).status == "warn"
-    (tmp_path / "woltspace.json").write_text(json.dumps({"access": {
+    (tmp_path / "woltspace.json").write_text(json.dumps({"ways_in": {"cloudflare": {
         "team_domain": "t.cloudflareaccess.com", "apps_aud": "",
-        "owner_email": "o@example.com"}}))
+        "owner_email": "o@example.com"}}}))
     assert doctor._remote_apps_check(_layout(tmp_path)).status == "warn"
-    (tmp_path / "woltspace.json").write_text(json.dumps({"access": {
+    (tmp_path / "woltspace.json").write_text(json.dumps({"ways_in": {"cloudflare": {
         "team_domain": "t.cloudflareaccess.com", "apps_aud": "b",
-        "owner_email": "o@example.com"}}))
+        "owner_email": "o@example.com"}}}))
     assert doctor._remote_apps_check(_layout(tmp_path)).status == "pass"
     monkeypatch.delenv("CLOUDFLARE_TUNNEL_URL")
     assert doctor._remote_apps_check(_layout(tmp_path)) is None
@@ -1246,3 +1246,14 @@ def test_a_partial_log_line_never_joins_the_next(tmp_path):
     path.write_text('{"event": "share-req')          # a write that stopped part way
     app_sharing._log(tmp_path, "unshare", "board")
     assert json.loads(path.read_text().splitlines()[-1])["event"] == "unshare"
+
+
+def test_cloudflare_settings_live_under_their_own_name(tmp_path):
+    cloudflare = {"team_domain": "t.cloudflareaccess.com", "apps_aud": "b",
+                  "owner_email": "o@example.com"}
+    for config, found in (({"ways_in": {"cloudflare": cloudflare}}, True),
+                          ({"ways_in": {"another": {"anything": 1}}}, False),
+                          ({}, False)):
+        (tmp_path / "woltspace.json").write_text(json.dumps(config))
+        access._CONFIG_CACHE.clear()
+        assert (access.load_access_settings(tmp_path) is not None) is found

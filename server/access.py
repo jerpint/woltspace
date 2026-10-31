@@ -6,9 +6,10 @@ through the tunnel goes to the Mill; the Mill and the apps never see the token.
 
 Settings live in woltspace.json:
 
-    "access": {"team_domain": "<team>.cloudflareaccess.com",
-               "apps_aud": "<the AUD of the Access app covering *.<domain>>",
-               "owner_email": "<the owner's email>"}
+    "ways_in": {"cloudflare": {
+        "team_domain": "<team>.cloudflareaccess.com",
+        "apps_aud": "<the AUD of the Access app covering *.<domain>>",
+        "owner_email": "<the owner's email>"}}
 
 One Access application can cover both the lodge and its apps, or the lodge can
 have its own. Without settings, nothing through the tunnel reaches an app.
@@ -86,7 +87,12 @@ def load_access_settings(wolts_dir: Path) -> AccessSettings | None:
 
 
 def _load_access_settings_uncached(wolts_dir: Path) -> AccessSettings | None:
-    raw = _read_root(wolts_dir).get("access")
+    ways_in = _read_root(wolts_dir).get("ways_in")
+    if ways_in is None:
+        return None
+    if not isinstance(ways_in, dict):
+        raise RuntimeError("woltspace.json access settings are invalid")
+    raw = ways_in.get("cloudflare")
     if raw in (None, {}):
         return None
     if not isinstance(raw, dict):

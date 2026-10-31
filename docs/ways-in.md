@@ -34,6 +34,7 @@ The lodge does the rest the same way whichever way a request came:
 - **Gate the lodge's own hosts.** Requests to `lodge_hosts()` reach the lodge's routes, which trust lodge auth (keys, paired browsers). With lodge auth off, the way in itself must keep strangers out, as Cloudflare Access does in front of the lodge's tunnel host.
 - **List every identity header in `credential_headers`.** The lodge drops them before an app sees a request, so an app can never be fooled by a forged one.
 - **Don't claim another way's hosts.** The first way in whose `content_host` matches a host wins.
+- **Keep your settings under your own name:** `"ways_in": {"<name>": {...}}` in `woltspace.json`, as Cloudflare does. Nothing outside your way in reads them.
 
 ## Installing one
 
