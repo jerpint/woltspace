@@ -521,23 +521,21 @@ def _access_settings_problem(raw) -> str:
     The same rules as server/access.py validate_access_settings.
     """
     import re
-    keys = {"team_domain", "lodge_aud", "apps_aud", "owner_email"}
+    keys = {"team_domain", "apps_aud", "owner_email"}
     if not isinstance(raw, dict):
         return "no access settings in woltspace.json"
-    if set(raw) != keys:
+    if not keys <= set(raw) <= keys | {"lodge_aud"}:
         missing = sorted(keys - set(raw))
-        extra = sorted(set(raw) - keys)
-        return ("access settings need exactly team_domain, lodge_aud, apps_aud and owner_email"
+        extra = sorted(set(raw) - keys - {"lodge_aud"})
+        return ("access settings need team_domain, apps_aud and owner_email"
                 + (f" (missing: {', '.join(missing)})" if missing else "")
                 + (f" (unexpected: {', '.join(extra)})" if extra else ""))
     team = str(raw["team_domain"]).strip().lower().rstrip(".")
     if not re.fullmatch(r"[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?", team) or "." not in team or ".." in team:
         return "team_domain must be a domain name, like <team>.cloudflareaccess.com"
-    lodge_aud, apps_aud = str(raw["lodge_aud"]).strip(), str(raw["apps_aud"]).strip()
-    if not lodge_aud or not apps_aud or len(lodge_aud) > 512 or len(apps_aud) > 512:
-        return "lodge_aud and apps_aud must both be Access AUD tags"
-    if lodge_aud == apps_aud:
-        return "one Access application for both the lodge and its apps (lodge_aud == apps_aud)"
+    apps_aud = str(raw["apps_aud"]).strip()
+    if not apps_aud or len(apps_aud) > 512:
+        return "apps_aud must be an Access AUD tag"
     if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", str(raw["owner_email"]).strip()):
         return "owner_email must be an email address"
     return ""
@@ -558,8 +556,8 @@ def _remote_apps_check(layout: RuntimeLayout) -> DoctorCheck | None:
     return DoctorCheck(
         "remote-apps", "warn",
         f"apps and wolt sites through the tunnel are refused: {problem}",
-        'Set "access" in woltspace.json (team_domain, lodge_aud, apps_aud, owner_email), with '
-        "a separate Access application for *.<your domain>; see container/migrations/v0.6.0.md.",
+        'Set "access" in woltspace.json (team_domain, apps_aud, owner_email), with an '
+        "Access application covering *.<your domain>; see container/migrations/v0.6.0.md.",
     )
 
 def run_doctor(

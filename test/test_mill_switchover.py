@@ -25,7 +25,7 @@ from server.access import AccessSettings
 
 DOMAIN = "woltspace.test"
 LODGE_HOST = f"owner.{DOMAIN}"
-SETTINGS = AccessSettings("team.cloudflareaccess.com", "lodge-aud", "apps-aud", "owner@example.com")
+SETTINGS = AccessSettings("team.cloudflareaccess.com", "apps-aud", "owner@example.com")
 
 
 class _Seen:
@@ -248,11 +248,11 @@ def test_doctor_asks_for_access_settings_when_there_is_a_tunnel(tmp_path, monkey
     monkeypatch.setenv("CLOUDFLARE_TUNNEL_URL", "https://owner.woltspace.test")
     assert doctor._remote_apps_check(_layout(tmp_path)).status == "warn"
     (tmp_path / "woltspace.json").write_text(json.dumps({"access": {
-        "team_domain": "t.cloudflareaccess.com", "lodge_aud": "a", "apps_aud": "a",
+        "team_domain": "t.cloudflareaccess.com", "apps_aud": "",
         "owner_email": "o@example.com"}}))
-    assert doctor._remote_apps_check(_layout(tmp_path)).status == "warn"  # one Access app for both
+    assert doctor._remote_apps_check(_layout(tmp_path)).status == "warn"
     (tmp_path / "woltspace.json").write_text(json.dumps({"access": {
-        "team_domain": "t.cloudflareaccess.com", "lodge_aud": "a", "apps_aud": "b",
+        "team_domain": "t.cloudflareaccess.com", "apps_aud": "b",
         "owner_email": "o@example.com"}}))
     assert doctor._remote_apps_check(_layout(tmp_path)).status == "pass"
     monkeypatch.delenv("CLOUDFLARE_TUNNEL_URL")
@@ -536,12 +536,30 @@ def test_doctor_names_apps_on_the_reserved_site_prefix(tmp_path):
     assert check.status == "warn" and "site-old" in check.detail and "reserved" in check.detail
 
 
+def test_a_lodge_under_its_own_name_has_its_content_there(monkeypatch):
+    from server import ways_in
+    way = ways_in.CloudflareAccess()
+    tunnel = way._tunnel()
+    monkeypatch.setattr(tunnel, "_tunnel_hostname", "lodge.owner.woltspace.test")
+    monkeypatch.setattr(tunnel, "_tunnel_domain", "owner.woltspace.test")
+    assert way.lodge_hosts() >= {"lodge.owner.woltspace.test"}
+    assert way.content_host("lodge.owner.woltspace.test") is None
+    assert way.content_host("deck.owner.woltspace.test") == ways_in.PublicHost("app", "deck", "deck.owner.woltspace.test")
+    assert way.content_host("site-softie.owner.woltspace.test") == ways_in.PublicHost(
+        "site", "softie", "site-softie.owner.woltspace.test")
+    assert way.content_host("deck.woltspace.test") is None
+    assert way.content_host("a.deck.owner.woltspace.test") is None
+    assert way.public_base("lodge.owner.woltspace.test", "app", "deck") == "https://deck.owner.woltspace.test"
+
+
 @pytest.mark.parametrize("raw", [
-    {"team_domain": "t.cloudflareaccess.com", "lodge_aud": "a", "apps_aud": "b"},          # no owner_email
-    {"team_domain": "t", "lodge_aud": "a", "apps_aud": "b", "owner_email": "o@example.com"},
-    {"team_domain": "t.cloudflareaccess.com", "lodge_aud": "a", "apps_aud": "b", "owner_email": "nope"},
-    {"team_domain": "t.cloudflareaccess.com", "lodge_aud": "a", "apps_aud": "a", "owner_email": "o@example.com"},
+    {"team_domain": "t.cloudflareaccess.com", "apps_aud": "b"},          # no owner_email
+    {"team_domain": "t", "apps_aud": "b", "owner_email": "o@example.com"},
+    {"team_domain": "t.cloudflareaccess.com", "apps_aud": "b", "owner_email": "nope"},
+    {"team_domain": "t.cloudflareaccess.com", "apps_aud": "", "owner_email": "o@example.com"},
+    {"team_domain": "t.cloudflareaccess.com", "apps_aud": "b", "owner_email": "o@example.com"},
     {"team_domain": "t.cloudflareaccess.com", "lodge_aud": "a", "apps_aud": "b", "owner_email": "o@example.com"},
+    {"team_domain": "t.cloudflareaccess.com", "apps_aud": "b", "owner_email": "o@example.com", "other": "x"},
 ])
 def test_doctor_agrees_with_the_lodge_on_access_settings(raw):
     from woltspace import doctor

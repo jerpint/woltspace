@@ -7,12 +7,11 @@ through the tunnel goes to the Mill; the Mill and the apps never see the token.
 Settings live in woltspace.json:
 
     "access": {"team_domain": "<team>.cloudflareaccess.com",
-               "lodge_aud": "<the lodge's Access app AUD>",
-               "apps_aud": "<the apps' Access app AUD>",
+               "apps_aud": "<the AUD of the Access app covering *.<domain>>",
                "owner_email": "<the owner's email>"}
 
-The two audiences must differ, so an app's token can never open the lodge.
-Without settings, nothing through the tunnel reaches an app.
+One Access application can cover both the lodge and its apps, or the lodge can
+have its own. Without settings, nothing through the tunnel reaches an app.
 """
 
 from __future__ import annotations
@@ -39,7 +38,6 @@ _CONFIG_CACHE_LOCK = threading.Lock()
 @dataclass(frozen=True)
 class AccessSettings:
     team_domain: str
-    lodge_aud: str
     apps_aud: str
     owner_email: str
 
@@ -99,27 +97,24 @@ def _load_access_settings_uncached(wolts_dir: Path) -> AccessSettings | None:
         raise RuntimeError("woltspace.json access settings are invalid") from exc
 
 
+# `lodge_aud`, from earlier settings, is accepted and ignored.
+_ACCESS_KEYS = {"team_domain", "apps_aud", "owner_email"}
+
+
 def validate_access_settings(raw: object) -> AccessSettings:
-    if not isinstance(raw, dict) or set(raw) != {
-        "team_domain", "lodge_aud", "apps_aud", "owner_email",
-    }:
-        raise ValueError("team_domain, lodge_aud, apps_aud, and owner_email are required")
+    if not isinstance(raw, dict) or not _ACCESS_KEYS <= set(raw) <= _ACCESS_KEYS | {"lodge_aud"}:
+        raise ValueError("team_domain, apps_aud, and owner_email are required")
     team_domain = str(raw["team_domain"]).strip().lower().rstrip(".")
-    lodge_aud = str(raw["lodge_aud"]).strip()
     apps_aud = str(raw["apps_aud"]).strip()
     owner_email = str(raw["owner_email"]).strip().lower()
     if (not _DOMAIN_RE.fullmatch(team_domain) or "." not in team_domain
             or ".." in team_domain):
         raise ValueError("team_domain must be a domain name without a scheme, path, or port")
-    if not lodge_aud or len(lodge_aud) > 512:
-        raise ValueError("lodge_aud must be a non-empty Access audience")
     if not apps_aud or len(apps_aud) > 512:
         raise ValueError("apps_aud must be a non-empty Access audience")
-    if lodge_aud == apps_aud:
-        raise ValueError("lodge_aud and apps_aud must be different")
     if not _EMAIL_RE.fullmatch(owner_email):
         raise ValueError("owner_email must be an email address")
-    return AccessSettings(team_domain, lodge_aud, apps_aud, owner_email)
+    return AccessSettings(team_domain, apps_aud, owner_email)
 
 
 class AccessTokenVerifier:
