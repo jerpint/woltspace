@@ -1411,10 +1411,14 @@ def build_parser() -> argparse.ArgumentParser:
     restart.add_argument("--json", action="store_true")
     restart.set_defaults(func=_restart)
 
-    update = sub.add_parser("update", help="check or update a uv-managed native install")
+    update = sub.add_parser(
+        "update", help="check or update a uv-managed native install within its release line (X.Y)"
+    )
     update.add_argument("--check", action="store_true", help="check only; change nothing")
-    update.add_argument("--version", default="", metavar="X", help="install this exact release")
-    update.add_argument("--pre", action="store_true", help="allow prerelease targets")
+    update.add_argument(
+        "--version", default="", metavar="X", help="install this exact release, even on another release line"
+    )
+    update.add_argument("--pre", action="store_true", help="allow prerelease targets within the installed line")
     update.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
     update.add_argument("--json", action="store_true")
     update.set_defaults(func=_update)

@@ -34,6 +34,12 @@ class UpdateError(RuntimeError):
 class Target:
     version: Version
     prerelease: bool
+    newer_line: Version | None = None
+
+
+def _line(version: Version) -> tuple[int, ...]:
+    """The release line, X.Y: implicit updates never leave it."""
+    return (version.release + (0,))[:2]
 
 
 def _run(argv: list[str]) -> subprocess.CompletedProcess[str]:
@@ -81,8 +87,23 @@ def _usable_release(files: Any) -> bool:
     return bool(files) and not all(bool(item.get("yanked")) for item in files)
 
 
-def _target(metadata: dict[str, Any], requested: str, allow_pre: bool) -> Target:
+def _target(metadata: dict[str, Any], requested: str, allow_pre: bool, installed: Version) -> Target:
     releases = metadata.get("releases") or {}
+    candidates: list[Version] = [installed]
+    newer: list[Version] = []
+    for raw, files in releases.items():
+        try:
+            version = Version(raw)
+        except InvalidVersion:
+            continue
+        if not _usable_release(files):
+            continue
+        if _line(version) > _line(installed):
+            if not version.is_prerelease:
+                newer.append(version)
+        elif _line(version) == _line(installed) and (allow_pre or not version.is_prerelease):
+            candidates.append(version)
+    newer_line = max(newer, default=None)
     if requested:
         try:
             version = Version(requested)
@@ -93,20 +114,10 @@ def _target(metadata: dict[str, Any], requested: str, allow_pre: bool) -> Target
             raise UpdateError(f"Woltspace {version} is not published on PyPI")
         if not _usable_release(files):
             raise UpdateError(f"Woltspace {version} is yanked on PyPI")
-        return Target(version, version.is_prerelease)
-
-    candidates: list[Version] = []
-    for raw, files in releases.items():
-        try:
-            version = Version(raw)
-        except InvalidVersion:
-            continue
-        if (allow_pre or not version.is_prerelease) and _usable_release(files):
-            candidates.append(version)
-    if not candidates:
-        raise UpdateError("PyPI has no eligible Woltspace release")
+        return Target(version, version.is_prerelease, newer_line)
+    # Only the installed line: a newer line is a migration, chosen with --version.
     version = max(candidates)
-    return Target(version, version.is_prerelease)
+    return Target(version, version.is_prerelease, newer_line)
 
 
 def _command(executable: str, *args: str) -> subprocess.CompletedProcess[str]:
@@ -274,7 +285,7 @@ def update(args: Any) -> int:
         _require_native()
         installed = Version(__version__)
         _uv_manages_exact_registry_install(installed)
-        target = _target(_pypi(), args.version or "", bool(args.pre))
+        target = _target(_pypi(), args.version or "", bool(args.pre), installed)
         if target.version < installed:
             raise UpdateError(f"refusing downgrade from {installed} to {target.version}")
         available = target.version > installed
@@ -284,13 +295,22 @@ def update(args: Any) -> int:
             "target": str(target.version),
             "update_available": available,
             "release_notes": RELEASE_URL.format(version=target.version),
+            "newer_line": str(target.newer_line) if target.newer_line else None,
         }
+        notice = ""
+        if target.newer_line and target.newer_line > target.version:
+            notice = (f"; {target.newer_line} is a new release line: read "
+                      f"{RELEASE_URL.format(version=target.newer_line)} and opt in with --version {target.newer_line}")
         if args.check or not available:
-            emit(summary, f"installed {installed}; target {target.version}; " + ("update available" if available else "up to date"))
+            emit(summary, f"installed {installed}; target {target.version}; "
+                 + ("update available" if available else "up to date") + notice)
             return 0
 
         if not args.yes:
             print(f"Update Woltspace {installed} -> {target.version}", file=sys.stderr)
+            if _line(target.version) != _line(installed):
+                print("This crosses release line {}.{} -> {}.{}: read its migration notes first.".format(
+                    *_line(installed), *_line(target.version)), file=sys.stderr)
             print("The lodge goes offline for the install; tmux sessions survive.", file=sys.stderr)
             print(summary["release_notes"], file=sys.stderr)
             print("Continue? [y/N] ", end="", file=sys.stderr, flush=True)
