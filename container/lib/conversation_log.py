@@ -138,7 +138,8 @@ def _size(record: dict) -> int:
 
 def history(conn, mailbox: int, before: int | None, limit: int, max_bytes: int, capture: bool) -> dict:
     """Rows the mailbox sent or received, newest first, inside the caller's snapshot.
-    Records together stay within max_bytes of compact JSON; a row larger than a whole
+    The records' own compact JSON sizes sum to at most max_bytes (array framing and the
+    envelope are not counted); a row larger than a whole
     page comes as an omission (no text) so the cursor always moves on."""
     rows = conn.execute(
         "SELECT * FROM conversation_log WHERE (sender_mailbox = ?1 OR recipient_mailbox = ?1)"

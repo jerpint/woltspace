@@ -604,7 +604,8 @@ async def _send(
         )
         if attempt is not None:
             # The provider took it (not proof a human read it). Failing to say so leaves the
-            # row unknown and never undoes the send; an error or a cancel leaves it unknown too.
+            # row unknown and never undoes the send. An error or a cancel during the send leaves
+            # it unknown; a cancel here may still end accepted, as the worker thread finishes.
             try:
                 await asyncio.to_thread(conversation_log.set_outcome, WOLTS_DIR, attempt, "accepted")
             except Exception as exc:

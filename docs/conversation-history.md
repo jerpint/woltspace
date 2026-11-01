@@ -23,9 +23,11 @@ notify. Reading history goes through the inbox, so `inbox.enabled` must be on to
   sent. If that record cannot be written, nothing is sent. Speech synthesis
   happens before that point, so a failed record can still have cost one speech
   request. The row starts `unknown` and becomes `accepted` when the provider
-  takes the message; an error, a cancel or a lost update leaves it `unknown`.
-  The lodge never resends. `accepted` means the provider took it, not that a
-  human read it. Files and audio are never kept; text over 1 MiB keeps its
+  takes the message; an error or a cancel during the send, or a lost update,
+  leaves it `unknown`. A cancel while the outcome is being written may still
+  end with the row `accepted`, as that write finishes in its own thread. The
+  lodge never resends, either way. `accepted` means the provider took it,
+  not that a human read it. Files and audio are never kept; text over 1 MiB keeps its
   first 1 MiB and is marked `truncated` with its `original_bytes`.
 
 Acknowledging mail drops its inbox body; the archive keeps its own copy.
@@ -43,8 +45,10 @@ agent mail, once each for mail to itself), newest first, plus notify text
 from sessions whose wolt had an open mailbox. Rows are matched by mailbox id,
 never by name: a recreated wolt sees nothing of its predecessor's, and notify
 text with no mailbox is not shown to anyone. `--max-bytes` bounds the
-records as the lodge sends them (compact JSON, UTF-8, escapes included; at
-most 8 MiB, `--limit` at most 200). A record larger than the whole page comes
+sum of the record objects, each measured as the lodge sends it (compact JSON,
+UTF-8, escapes included; the page's `bytes`), not the array around them or
+the rest of the reply, so the command's whole output is somewhat larger
+(`--max-bytes` at most 8 MiB, `--limit` at most 200). A record larger than the whole page comes
 without its text, marked `omitted`; pass the page's `next` as `--before` to go
 on. Reading claims, acknowledges, prunes and wakes nothing.
 
