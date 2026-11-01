@@ -9,7 +9,9 @@
 --                a small box opens, type the question, <C-s> or <CR> sends
 --   <leader>Wz   zoom: the wolt alone, full screen; again to go back
 --                (<M-z> does the same, also while typing in the wolt)
---   :Wolts pick | toggle | ask | zoom
+--   <leader>Wo   switch between the wolts open in this Neovim, last used first
+--                (<M-w> does the same, also while typing in the wolt)
+--   :Wolts pick | toggle | ask | zoom | switch
 --
 -- Each lodge is reached over its HTTP API with curl. A session is shown with
 -- `tmux attach`, the same way `woltspace tui` does it: directly for a lodge on
@@ -66,6 +68,7 @@ local config = vim.deepcopy(defaults)
 local state = {
   current = nil, -- { lodge = <lodge>, wolt = <name>, session = <slug> }
   bufs = {}, -- [lodge.name .. '/' .. slug] = terminal buffer
+  meta = {}, -- same keys: { key, lodge, wolt, emoji, session, title, used }
 }
 
 local function notify(msg, level) vim.notify(msg, level or vim.log.levels.INFO, { title = 'wolts' }) end
@@ -207,7 +210,22 @@ local function terminal_keys(buf)
   end
   -- Alt+z zooms in / back out while you're typing in the wolt
   vim.keymap.set('t', '<M-z>', function() M.zoom() end, o)
+  -- Alt+w: leave terminal mode, then the switch picker (next tick, so it gets the keys)
+  if config.keys then
+    vim.keymap.set('t', '<M-w>', function()
+      vim.schedule(M.switch)
+      return '<C-\\><C-n>'
+    end, { buffer = buf, expr = true, desc = 'Wolts: switch between open wolts' })
+  end
   vim.api.nvim_create_autocmd('BufEnter', { buffer = buf, command = 'startinsert' })
+end
+
+-- Make session k the current one and the last used (when the switch picker knows it).
+local function make_current(k)
+  local m = state.meta[k]
+  if not m then return end
+  m.used = vim.uv.hrtime()
+  state.current = { lodge = m.lodge, wolt = m.wolt, session = m.session }
 end
 
 ---Show the current wolt in the right split, creating its terminal if needed.
@@ -245,6 +263,7 @@ local function show(focus)
       on_exit = function(_, code)
         -- Session ended (agent quit) or the viewer was closed: forget the buffer
         state.bufs[k] = nil
+        state.meta[k] = nil
         vim.schedule(function()
           if code ~= 0 then notify(('%s: attach exited %d (%s)'):format(k, code, table.concat(cmd, ' ')), vim.log.levels.WARN) end
           if vim.api.nvim_buf_is_valid(buf) then vim.api.nvim_buf_delete(buf, { force = true }) end
@@ -253,7 +272,12 @@ local function show(focus)
     })
     pcall(vim.api.nvim_buf_set_name, buf, 'wolt://' .. k)
     terminal_keys(buf)
+    -- :b, a buffer picker or <C-o> to a wolt: <leader>Wa then asks that wolt
+    vim.api.nvim_create_autocmd('BufEnter', { buffer = buf, callback = function() make_current(k) end })
   end
+  -- entering the split may have fired BufEnter for the wolt it showed before
+  state.current = cur
+  make_current(k)
 
   if focus then
     vim.cmd.startinsert()
@@ -313,7 +337,11 @@ local function ensure_alive(lodge, s, cb)
   end, 120)
 end
 
-local function use(lodge, wolt, slug, then_)
+---@param info? { emoji?: string, title?: string } shown by the switch picker
+local function use(lodge, wolt, slug, then_, info)
+  info = info or {}
+  local k = key(lodge, slug)
+  state.meta[k] = { key = k, lodge = lodge, wolt = wolt, emoji = info.emoji, session = slug, title = info.title, used = vim.uv.hrtime() }
   state.current = { lodge = lodge, wolt = wolt, session = slug }
   if then_ then
     then_()
@@ -358,10 +386,10 @@ local function pick_session(entry, then_)
       api(entry.lodge, 'POST', '/sessions/new/lodge', { wolt = name }, function(err, r)
         if err then return notify('could not start it: ' .. err, vim.log.levels.ERROR) end
         if not (r and r.name) then return notify('lodge returned no session name', vim.log.levels.ERROR) end
-        use(entry.lodge, name, r.name, then_)
+        use(entry.lodge, name, r.name, then_, { emoji = entry.wolt.emoji })
       end, 120)
     else
-      ensure_alive(entry.lodge, s, function() use(entry.lodge, name, s.name, then_) end)
+      ensure_alive(entry.lodge, s, function() use(entry.lodge, name, s.name, then_, { emoji = entry.wolt.emoji, title = s.title }) end)
     end
   end)
 end
@@ -392,6 +420,48 @@ function M.pick(then_)
   end)
 end
 
+-- Wake the session if it went to rest since we picked it, then cb().
+local function wake(cur, cb)
+  api(cur.lodge, 'GET', '/sessions', nil, function(err, sessions)
+    if err then return cb() end
+    for _, s in ipairs(sessions) do
+      if s.name == cur.session then return ensure_alive(cur.lodge, s, cb) end
+    end
+    cb()
+  end, 5)
+end
+
+---Switch between the wolt sessions open in this Neovim, last used first.
+function M.switch()
+  local open = {}
+  for k, m in pairs(state.meta) do
+    local buf = state.bufs[k]
+    if buf and vim.api.nvim_buf_is_valid(buf) then table.insert(open, m) end
+  end
+  if #open == 0 then return M.pick() end
+  table.sort(open, function(a, b) return a.used > b.used end)
+  table.insert(open, { other = true })
+  local cur = state.current and key(state.current.lodge, state.current.session)
+  vim.ui.select(open, {
+    prompt = 'open wolts',
+    format_item = function(m)
+      if m.other then return '+ pick another wolt...' end
+      local label = (m.title ~= nil and m.title ~= '') and m.title or m.session
+      return ('%s  %s %s  %s%s'):format(m.lodge.name, m.emoji or ' ', m.wolt, label, m.key == cur and '  (current)' or '')
+    end,
+  }, function(m)
+    if not m then return end
+    if m.other then return M.pick() end
+    make_current(m.key)
+    -- the chosen one, even if a BufEnter moved state.current while waking it
+    local chosen = state.current
+    wake(chosen, function()
+      state.current = chosen
+      show(true)
+    end)
+  end)
+end
+
 -- Ask box -----------------------------------------------------------------------
 
 local function send(text)
@@ -408,14 +478,7 @@ local function send(text)
       show(false)
     end)
   end
-  -- wake it first if it went to rest since we picked it
-  api(cur.lodge, 'GET', '/sessions', nil, function(err, sessions)
-    if err then return post() end
-    for _, s in ipairs(sessions) do
-      if s.name == cur.session then return ensure_alive(cur.lodge, s, post) end
-    end
-    post()
-  end, 5)
+  wake(cur, post)
 end
 
 -- "@file#L12" or "@file#L12-20" for the current wolt's lodge ('' without a file).
@@ -493,6 +556,8 @@ local function set_keys()
   map('n', '<leader>Ww', M.toggle, { desc = 'Wolts: show / hide the [W]olt split' })
   map('n', '<leader>Wz', function() M.zoom() end, { desc = 'Wolts: [Z]oom the wolt full screen / back' })
   map('n', '<M-z>', function() M.zoom() end, { desc = 'Wolts: zoom the wolt full screen / back' })
+  map('n', '<leader>Wo', function() M.switch() end, { desc = 'Wolts: switch between [O]pen wolts' })
+  map('n', '<M-w>', function() M.switch() end, { desc = 'Wolts: switch between open wolts' })
   map('n', '<leader>Wa', function()
     local l = vim.fn.line '.'
     M.ask(l, l)
@@ -523,14 +588,16 @@ function M.setup(opts)
       M.ask(o.line1, o.line2)
     elseif sub == 'zoom' then
       M.zoom()
+    elseif sub == 'switch' then
+      M.switch()
     else
-      notify('unknown: ' .. sub .. ' (pick, toggle, ask, zoom)', vim.log.levels.ERROR)
+      notify('unknown: ' .. sub .. ' (pick, toggle, ask, zoom, switch)', vim.log.levels.ERROR)
     end
   end, {
     nargs = '?',
     range = true,
-    complete = function() return { 'pick', 'toggle', 'ask', 'zoom' } end,
-    desc = 'Wolts: pick, toggle, ask, zoom',
+    complete = function() return { 'pick', 'toggle', 'ask', 'zoom', 'switch' } end,
+    desc = 'Wolts: pick, toggle, ask, zoom, switch',
   })
 
   -- A saved layout (persistence.nvim) can't restore a terminal: hide wolt splits before it is saved
