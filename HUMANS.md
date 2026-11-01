@@ -292,15 +292,12 @@ rm -f ~/.woltspace/woltspace-backup-<tag>.zip
 
 ## Version checking
 
-The container stamps a version in `.version` at build time (git tag if available, otherwise commit hash).
-
-From inside the container:
 ```bash
-version-check              # prints current vs latest, exit 0 if up to date
-version-check --quiet      # exit code only (0 = current, 1 = update available)
+woltspace --version        # what's installed
+woltspace update --check   # native installs: whether PyPI has a newer stable release; changes nothing
 ```
 
-This polls the GitHub releases API — no git fetch, no local changes. Safe for cron or on-demand checks.
+A container runs the version pinned in its image's `WOLTSPACE_PYPI_VERSION`.
 
 ## Learn more
 

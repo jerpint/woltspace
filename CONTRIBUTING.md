@@ -23,10 +23,12 @@ contributing from a lodge.
   release.
 - **`release/X.Y` is a maintained older line**, for example `release/0.5`
   while 0.6 is being built. It only takes fixes, and only the maintainer
-  creates these branches.
+  creates these branches. It's cut before `main` takes work the older line
+  shouldn't ship, because the next publish from `main` ships everything on it.
 - **Fixes land on `main` first**, with a test, then get backported to
   `release/X.Y` by a cherry-pick PR. The same test decides whether the older
-  line had the bug: if it fails there before the fix, backport it.
+  line had the bug: if it fails there before the fix, backport it. A bug only
+  the older line has goes straight to `release/X.Y`.
 - **Releases are tags**, published from `main` or `release/X.Y` after the
   maintainer approves them. Release candidates (`0.6.0rc1`) are published as
   pre-releases.
@@ -63,11 +65,18 @@ flowchart TB
 
 ### Release candidates
 
-When the next version is feature complete, `main` freezes to fixes only.
-Release candidates are published from `main` until one is good, then the final
-version is published from `main` and `release/X.Y` is cut from its tag. The
-maintainer runs and approves every publish; see
+Each version has a short written list of what it holds. Once everything on it
+has landed, `main` freezes to fixes only and new work waits for the next
+version. Release candidates are published from `main` until one is good, then
+the final version is published from `main` and `release/X.Y` is cut from its
+tag. The maintainer runs and approves every publish; see
 [docs/releasing.md](docs/releasing.md).
+
+Only people who ask get a release candidate, with `woltspace update --pre` or an
+exact version. Ordinary installs and updates take the newest stable version on
+PyPI, so the older line keeps shipping to them from its `release/X.Y` branch, and
+publishing the final version is what moves everyone. `update` refuses downgrades,
+so try a release candidate on a lodge you can afford to lose.
 
 ```mermaid
 flowchart TB
@@ -79,8 +88,8 @@ flowchart TB
   G --> C["release/X.Y cut from the X.Y.0 tag"]
 ```
 
-Older lines get security and critical fixes only, until the new line is
-stable.
+Older lines get only the fixes the maintainer chooses to ship, and are retired
+once the new line is stable.
 
 ## Reporting bugs
 

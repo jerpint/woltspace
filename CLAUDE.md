@@ -219,7 +219,7 @@ Discovery files agents read from `~/.claude/skills/`. Platform skills live under
 Daily digest pipeline (3 phases): fetch (HN, HuggingFace, Lobsters) → select via `claude -p` → render HTML. Writes to `wolt/sparks/`. Optional Spotify playlist curation.
 
 ### `container/cron/check-update.sh`
-No-LLM update checker. Compares stored version (`.state/woltspace-version`) against remote HEAD via `git ls-remote`. Available for on-demand use but not registered as a default wolf cron — wolves are loud, update checking is quiet surveillance.
+No-LLM update checker. Compares stored version (`.space/platform/woltspace-version`) against remote HEAD via `git ls-remote`. Available for on-demand use but not registered as a default wolf cron — wolves are loud, update checking is quiet surveillance.
 
 ### `container/creatures/wolf.py` (Wolf Scheduler 🐺)
 Background cron service, run as the `wolf` connector. Every 30s it reads each wolt's `wolt/wolf.json`, fires due crons by starting a session for the owning wolt, and pings the human on the channel a cron names in `notify` (telegram or slack; none = quiet). Times are the lodge machine's local time. The rules (strict cron parsing, the one due check, next run, locked wolf.json writes) live in `container/lib/wolfcore.py`, shared with the lodge's `/wolf/crons` API. Last-run stamps and the job journal are lodge-global rows of the lodge DB's `wolf_runs` table. See the `/wolf` skill.
@@ -249,7 +249,6 @@ Utility scripts available in container PATH:
 - `notify` — send message back to originating adapter (Telegram/Slack)
 - `session-reg` — CLI for the session registry (`session-reg list`, `session-reg get <name>`, `session-reg reconcile`)
 - `create-creature-wolt <name> <type>` — create a new creature-wolt (wolf, dog, rodent, etc.)
-- `version-check` — check for newer woltspace release (polls GitHub API, no git fetch)
 - `spawn-tool` — register a tool proxy with the server
 - `gh-app-token` — print a short-lived GitHub App installation token to stdout (used by `open_issue` tool and available for `gh` CLI auth). **stdout is a `ghs_` token or it is empty** — diagnostics go to stderr and failures exit non-zero. Callers must assert the `ghs_` prefix, because an empty `GH_TOKEN` makes `gh` fall back to the human's own credentials.
 - `woltspace-python` — the interpreter woltspace is installed on, the one that owns PyJWT and python-dotenv. Scripts here name it in their shebang; the image also provides it as `/usr/local/bin/woltspace-python`, and this shim is what makes those shebangs resolve on a native install too.
@@ -398,7 +397,7 @@ bash test/run-tests.sh -k "pattern" # pass any pytest args
 - `test_wolfcore.py` / `test_wolf_api.py` / `test_wolf_cli.py` — shared cron core (parser, DST, due check, stamp migration, locked writes), the `/wolf/crons` routes, and `woltspace wolf`
 - `test_wolts.py` — wolt discovery, creature-type system, creature-wolt creation, singleton demotion, dog identity loading
 
-**CLI smoke tests** (`test/test-cli.sh`) — full cycle: init → start → stop → rebuild → backup → reconcile → idempotent init → shell → version check. Run from host:
+**CLI smoke tests** (`test/test-cli.sh`) — full cycle: init → start → stop → rebuild → backup → reconcile → idempotent init → shell. Run from host:
 
 ```bash
 bash test/test-cli.sh              # test main branch

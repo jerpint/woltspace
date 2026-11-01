@@ -115,10 +115,10 @@ a maintenance branch is never marked Latest.
 
 If the workflow itself needs fixing, rerunning the old job would run the old
 broken workflow again. Merge a reviewed workflow fix, then dispatch the fixed
-workflow on `main` with **resume_run_id set to the original publishing run ID**.
-Select the remaining registry and confirm the original versions. Recovery
-admits only a completed main publishing run from this repository with successful
-validation and artifact preparation. It downloads that run's retained approved
+workflow on the branch that published with **resume_run_id set to the original
+publishing run ID**. Select the remaining registry and confirm the original
+versions. Recovery admits only a completed publishing run of that branch from
+this repository with successful validation and artifact preparation. It downloads that run's retained approved
 manifest and artifacts instead of rebuilding. The source commit and digests
 remain those originally approved, even when the recovery workflow is newer.
 Artifact verification must still match the current source's shipped contents.

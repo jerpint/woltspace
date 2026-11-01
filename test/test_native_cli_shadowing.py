@@ -440,8 +440,7 @@ def test_build_needs_no_wolts_and_only_builds(tmp_path):
     result = _launch(wolts_dir, "build")
     assert result.returncode == 0, result.stdout
     calls = (tmp_path / "fake-bin" / "docker.log").read_text().splitlines()
-    # Reading the running container's version is fine; nothing else but the build.
-    assert [c.split()[0] for c in calls if not c.endswith(" cat /workspace/woltspace/.version")] == ["build"]
+    assert [c.split()[0] for c in calls] == ["build"]
 
 
 def test_a_bad_node_sudo_stops_rebuild_before_docker_changes_anything(tmp_path):
