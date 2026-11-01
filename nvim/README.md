@@ -49,9 +49,12 @@ These recipes require a revision containing `nvim/`; for an unmerged contributio
 | `<leader>Ww` | Show / hide the current wolt's split |
 | `<leader>Wa` | Ask the current wolt about this line. In visual mode: about the selection. A box opens; type, then `<C-s>` (or `<CR>` in normal mode) sends. `q` / `<Esc>` cancels. |
 | `<leader>Wz` · `<M-z>` | Zoom: the wolt alone, full screen; again to go back. `<M-z>` also works while you type in the wolt. |
+| `<leader>Wo` · `<M-w>` | Switch between the wolts open in this Neovim, last used first (the current one is marked). `+ pick another wolt...` opens the full picker. `<M-w>` also works while you type in the wolt. |
 | `<M-h/j/k/l>` | In the wolt's terminal: leave it and move to the next window |
 
-`:Wolts pick | toggle | ask | zoom` does the same without keys (`:'<,'>Wolts ask` for a range).
+`:Wolts pick | toggle | ask | zoom | switch` does the same without keys (`:'<,'>Wolts ask` for a range).
+
+On macOS, `<M-w>` (Alt+w) needs Option sent as Alt (Meta) in your terminal's settings.
 
 Messages you send are marked as coming from you: `$WOLTSPACE_USER`, else `$HUMAN_NAME`, else `$USER` (the same rule as `woltspace tui`).
 
@@ -114,6 +117,7 @@ wolts.setup { keys = false }
 vim.keymap.set('n', '<leader>aa', wolts.pick)
 vim.keymap.set('n', '<leader>at', wolts.toggle)
 vim.keymap.set('n', '<leader>az', wolts.zoom)
+vim.keymap.set('n', '<leader>ao', wolts.switch)
 vim.keymap.set('n', '<leader>ak', function() local l = vim.fn.line '.'; wolts.ask(l, l) end)
 ```
 

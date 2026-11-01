@@ -37,14 +37,38 @@ vim.ui.select = function(items, opts, cb)
   for _, item in ipairs(items) do if item.name == target or (target == 'fresh' and item.new) then return cb(item) end end
   error('missing picker target')
 end
-local function setup(path, relative)
-  M.setup { keys = false, lodges = { { name = 'home', url = url .. path, key = function() return 'dummy-secret' end, relative_paths = relative } } }
+local function setup(path, relative, keys)
+  M.setup { keys = keys == true, lodges = { { name = 'home', url = url .. path, key = function() return 'dummy-secret' end, relative_paths = relative } } }
 end
 local function pick(path, relative)
   setup(path, relative)
   M.pick()
   wait(function() return vim.b.wolt_session == 'home/' .. target end)
 end
+-- switch with nothing open: straight to the wolt picker
+local pick_real, picked = M.pick, 0
+M.pick = function() picked = picked + 1 end
+M.switch(); assert(picked == 1)
+M.pick = pick_real
+-- the switch picker's lines; choose = index to pick, cmd = go through :Wolts switch
+local function switch_list(choose, cmd)
+  local select, shown = vim.ui.select, nil
+  vim.ui.select = function(items, opts, cb)
+    shown = vim.tbl_map(opts.format_item, items)
+    cb(choose and items[choose] or nil)
+  end
+  if cmd then vim.cmd 'Wolts switch' else M.switch() end
+  vim.ui.select = select
+  return shown
+end
+local function wolt_wins()
+  local wins = {}
+  for _, w in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+    if vim.b[vim.api.nvim_win_get_buf(w)].wolt_session then table.insert(wins, w) end
+  end
+  return wins
+end
+local function line(slug, current) return 'home    alpha  ' .. slug .. (current and '  (current)' or '') end
 local home = vim.env.HOME
 vim.fn.mkdir(home .. '/project/.git', 'p')
 vim.fn.writefile({ 'one', 'two' }, home .. '/project/sample.lua')
@@ -64,6 +88,36 @@ ask('@~/project/sample.lua#L1-2')
 wait(function() return notices[#notices] == 'sent to alpha' end)
 target = 'rest'; pick(''); assert(commands[#commands][#commands[#commands]] == 'rest')
 target = 'fresh'; pick(''); assert(commands[#commands][#commands[#commands]] == 'fresh')
+-- open sessions, last used first, current marked, then the wolt picker
+local list = switch_list(nil, true)
+assert(vim.deep_equal(list, { line('fresh', true), line('rest'), line('live'), '+ pick another wolt...' }), vim.inspect(list))
+-- switch to the first one opened: it is current and the one wolt split shows it
+switch_list(3)
+wait(function() return vim.b.wolt_session == 'home/live' end)
+assert(#wolt_wins() == 1 and vim.api.nvim_win_get_buf(wolt_wins()[1]) == vim.fn.bufnr 'wolt://home/live')
+assert(vim.deep_equal(switch_list(), { line('live', true), line('fresh'), line('rest'), '+ pick another wolt...' }))
+-- :b to another wolt buffer makes it current
+vim.cmd.buffer(vim.fn.bufnr 'wolt://home/rest')
+assert(switch_list()[1] == line('rest', true))
+-- a resting session is woken before it is shown
+switch_list(2)
+wait(function() return vim.b.wolt_session == 'home/live' end)
+local woken = #notices
+switch_list(2)
+wait(function() return #notices > woken and notices[woken + 1] == 'waking rest on home ...' and vim.b.wolt_session == 'home/rest' end)
+-- a session that exits leaves the list
+local rest_buf = vim.fn.bufnr 'wolt://home/rest'
+vim.fn.jobstop(vim.b[rest_buf].terminal_job_id)
+wait(function() return not vim.api.nvim_buf_is_valid(rest_buf) end)
+assert(not vim.tbl_contains(switch_list(), line('rest')) and not vim.tbl_contains(switch_list(), line('rest', true)))
+-- Alt+w: normal mode everywhere, terminal mode only in wolt buffers
+target = 'rest'; setup('', false, true); M.pick()
+wait(function() return vim.b.wolt_session == 'home/rest' end)
+assert(vim.fn.maparg('<M-w>', 'n') ~= '' and vim.fn.maparg('<leader>Wo', 'n') ~= '')
+assert(vim.fn.maparg('<M-w>', 't', false, true).buffer == 1)
+assert(vim.api.nvim_buf_call(vim.api.nvim_create_buf(false, true), function() return vim.fn.maparg('<M-w>', 't') end) == '')
+-- keys = false: a wolt buffer gets no Alt+w either
+assert(vim.api.nvim_buf_call(vim.fn.bufnr 'wolt://home/live', function() return vim.fn.maparg('<M-w>', 't') end) == '')
 target = 'live'; pick('/drop', true); ask('@sample.lua#L1-2')
 wait(function() return notices[#notices]:find('delivery not confirmed', 1, true) end)
 assert(vim.fn.getreg('"'):find('quotes', 1, true))
