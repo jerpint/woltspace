@@ -12,11 +12,11 @@ export function validateWoltName(value) {
   return '';
 }
 
-export function createWoltAction(name, type, capabilities, launchCwd) {
+export function createWoltAction(name, type, capabilities, launchCwd, level = '') {
   const error = validateWoltName(name);
   if (error) throw new Error(error);
   if (!woltTypes.includes(type)) throw new Error(`unsupported wolt type: ${type}`);
-  const target = spawnTarget(capabilities, null, launchCwd);
+  const target = spawnTarget(capabilities, null, launchCwd, level);
   return {
     type: 'create',
     name: name.trim().toLowerCase(),
