@@ -236,10 +236,16 @@ def cmd_inbox(args):
         body = {"seq": args.seq, "claim": args.claim}
     elif args.verb == "status" and args.key is not None:
         body = {"key": args.key}
+    elif args.verb == "history":
+        body = {"limit": args.limit, "max_bytes": args.max_bytes,
+                **({} if args.before is None else {"before": args.before})}
     status, result = _req("POST", f"/inbox/{args.verb}", body, headers={"X-Woltspace-Inbox-Token": token})
     if not result.get("ok"):
         print(f"woltspace inbox {args.verb}: {result.get('error', status)}", file=sys.stderr)
         sys.exit(1)
+    if args.verb == "history":  # as the lodge sent it: compact UTF-8, within max_bytes
+        print(json.dumps(result["result"], ensure_ascii=False, separators=(",", ":")))
+        return
     print(json.dumps(result["result"], indent=2))
 
 
@@ -787,6 +793,11 @@ def main():
         bp.add_argument("seq", type=int)
         bp.add_argument("claim", type=int)
     bsub.add_parser("status", help="a sent message, or this mailbox's counts").add_argument("--key")
+    bh = bsub.add_parser("history", help="archived mail and notify text of this mailbox, newest first "
+                         "(when the lodge keeps conversation history); reads only")
+    bh.add_argument("--before", type=int, help="the previous page's next")
+    bh.add_argument("--limit", type=int, default=20)
+    bh.add_argument("--max-bytes", type=int, default=64 * 1024, help="of the records, as compact JSON")
     for verb_parser in bsub.choices.values():
         verb_parser.set_defaults(func=cmd_inbox)
     rearm = bsub.add_parser("rearm", help="(operator) let the lodge wake an agent for its mail again")

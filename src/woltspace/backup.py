@@ -1222,7 +1222,7 @@ def _columns(conn: sqlite3.Connection, table: str) -> set[str]:
 # never reused); every reader is revoked in the disarm write. No clock here:
 # an acknowledged row past its 30 days still refuses until the lodge's next
 # inbox write prunes it.
-_KNOWN_SCHEMA = 5  # lodge_db's newest migration this check understands
+_KNOWN_SCHEMA = 7  # lodge_db's newest migration this check understands; 7's archive is passive text
 # The inbox tables exactly as lodge_db's migration 5 makes them; any other
 # layout (a table or column more or less) is one this check cannot read.
 _INBOX_COLUMNS = {

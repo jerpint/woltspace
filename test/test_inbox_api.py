@@ -132,6 +132,23 @@ def test_the_cli_sends_fetches_and_acks_through_a_real_server(tmp_path, store, s
     assert "/inbox/fetch" in logged and BODY not in logged and pal not in logged and nunu not in logged
 
 
+def test_the_cli_reads_history_through_a_real_server_within_its_byte_budget(tmp_path, store, server):
+    (tmp_path / "woltspace.json").write_text(json.dumps({"inbox": {"enabled": True},
+                                                         "conversation_log": {"enabled": True}}))
+    store = inbox.Store(tmp_path, limits())
+    pal, nunu = reader(store, "s1"), reader(store, "s2", "nunu")
+    for n in range(3):
+        store.send(pal, "nunu", f"k{n}", f"{BODY} {n} ✓")
+    got = _cli(server, "history", "--limit", "2", "--max-bytes", "4096", token=nunu)
+    page = json.loads(got.stdout)
+    assert [(r["text"], r["direction"]) for r in page["records"]] == [(f"{BODY} 2 ✓", "in"), (f"{BODY} 1 ✓", "in")]
+    assert len(json.dumps(page["records"], ensure_ascii=False, separators=(",", ":")).encode()) <= 4096 + 3
+    rest = json.loads(_cli(server, "history", "--before", str(page["next"]), token=nunu).stdout)
+    assert [r["text"] for r in rest["records"]] == [f"{BODY} 0 ✓"] and rest["next"] is None
+    assert _cli(server, "history", "--max-bytes", "1", token=nunu).stderr.strip() == "woltspace inbox history: invalid"
+    assert rows(tmp_path, "SELECT state FROM inbox_messages") == [("queued",)] * 3
+
+
 def _session_reg(root, *args):
     env = {"PATH": os.environ.get("PATH", ""), "WOLTSPACE_WOLTS_DIR": str(root), "WOLTSPACE_PYTHON": sys.executable}
     return subprocess.run([str(ROOT / "container" / "bin" / "session-reg"), *args], env=env,
