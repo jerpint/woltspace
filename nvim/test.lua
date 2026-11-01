@@ -22,8 +22,13 @@ vim.env.WOLTSPACE_LODGE_KEY = 'override'; assert(M.local_key() == 'override')
 vim.env.WOLTSPACE_LODGE_KEY, vim.env.WOLT_SESSION = nil, nil
 vim.notify = function(msg) table.insert(notices, msg) end
 local system, jobstart = vim.system, vim.fn.jobstart
+local hold, held -- hold = true: keep the next curl result in held() until the test calls it
 vim.system = function(cmd, opts, cb)
   assert(not table.concat(cmd, ' '):find('dummy-secret', 1, true))
+  if hold then
+    hold = false
+    return system(cmd, opts, function(r) held = function() cb(r) end end)
+  end
   return system(cmd, opts, cb)
 end
 vim.fn.jobstart = function(cmd, opts)
@@ -105,6 +110,13 @@ wait(function() return vim.b.wolt_session == 'home/live' end)
 local woken = #notices
 switch_list(2)
 wait(function() return #notices > woken and notices[woken + 1] == 'waking rest on home ...' and vim.b.wolt_session == 'home/rest' end)
+-- moving to other wolt buffers while the wake is pending still shows the one chosen
+hold = true; switch_list(2)
+wait(function() return held ~= nil end)
+vim.cmd.buffer(vim.fn.bufnr 'wolt://home/live'); vim.cmd.buffer(vim.fn.bufnr 'wolt://home/rest')
+held(); held = nil
+wait(function() return vim.b.wolt_session == 'home/live' end)
+assert(switch_list()[1] == line('live', true))
 -- a session that exits leaves the list
 local rest_buf = vim.fn.bufnr 'wolt://home/rest'
 vim.fn.jobstop(vim.b[rest_buf].terminal_job_id)

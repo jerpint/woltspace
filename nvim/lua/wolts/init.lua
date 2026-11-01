@@ -453,7 +453,12 @@ function M.switch()
     if not m then return end
     if m.other then return M.pick() end
     make_current(m.key)
-    wake(state.current, function() show(true) end)
+    -- the chosen one, even if a BufEnter moved state.current while waking it
+    local chosen = state.current
+    wake(chosen, function()
+      state.current = chosen
+      show(true)
+    end)
   end)
 end
 
