@@ -24,6 +24,10 @@
 #   --version <ver>   — build the image on a specific published release
 #   --local           — build the image from this checkout (wheel + local tui)
 #   --branch <name>   — legacy; the image installs published artifacts, not git
+#   --latest          — build the release this checkout's Dockerfile pins
+#
+# Without --version or --local a build keeps the installed release or moves to
+# a final release on the same X.Y line; another line takes an exact --version.
 #
 # All state lives under ~/.woltspace/wolts (overridable via WOLTSPACE_WOLTS_DIR).
 # The container is disposable — ~/wolts is the backup.
@@ -242,7 +246,7 @@ _build_image() {
     else
       echo "  ${_D}🪵 building image (the release the Dockerfile pins)${_R}"
     fi
-    if [ "$BUILD_BRANCH" != "main" ] || [ "${CURRENT_VERSION:-}" = "HEAD" ]; then
+    if [ "$BUILD_BRANCH" != "main" ] || [ "$BUILD_VERSION" = "HEAD" ]; then
       echo "  ${_D}   note: --branch/--nightly build from git, and the image now"
       echo "  ${_D}   installs published artifacts. Use --local for a checkout.${_R}"
     fi
@@ -256,17 +260,77 @@ _build_image() {
   fi
 }
 
-# Shared by build and rebuild, so both build the same image.
-_resolve_build_version() {
-  # Resolve version: --version > --latest (the Dockerfile's pin) > current container version
-  CURRENT_VERSION=""
-  if [ -n "$BUILD_VERSION" ]; then
-    CURRENT_VERSION="$BUILD_VERSION"
-  elif [ "$BUILD_LATEST" = true ]; then
-    CURRENT_VERSION=""  # empty = the Dockerfile's pinned version
-  elif [ "$LOCAL_BUILD" != true ] && [ "$BUILD_BRANCH" = "main" ]; then
-    CURRENT_VERSION=$(docker exec "$CONTAINER_NAME" cat /workspace/woltspace/.version 2>/dev/null || echo "")
+# The release in this lodge's image, read from the .version file its build
+# wrote, without running it: a stopped throwaway container is created and
+# removed. The container's own image when there is one (a build can move the
+# tag ahead of it), else the tag. Prints nothing when there is no image, "?"
+# when its version cannot be read.
+_image_version() {
+  local img tmp dir v=""
+  img=$(docker container inspect -f '{{.Image}}' "$CONTAINER_NAME" 2>/dev/null) || img=""
+  if [ -z "$img" ]; then
+    docker image inspect "$IMAGE" >/dev/null 2>&1 || return 0
+    img="$IMAGE"
   fi
+  dir=$(mktemp -d)
+  if tmp=$(docker create --entrypoint true "$img" 2>/dev/null) && [ -n "$tmp" ]; then
+    docker cp -L "$tmp:/workspace/woltspace/.version" "$dir/version" >/dev/null 2>&1 \
+      && v=$(tr -d '[:space:]' < "$dir/version")
+    docker rm "$tmp" >/dev/null 2>&1 || true
+  fi
+  rm -rf "$dir"
+  case "$v" in
+    [0-9]*.[0-9]*.[0-9]*) case "$v" in *[!0-9a-z.]*) v="?" ;; esac ;;
+    *) v="?" ;;
+  esac
+  echo "$v"
+}
+
+_version_refused() {
+  echo "error: $1" >&2
+  echo "  name the release to build: woltspace $cmd --version X (read its release notes first)" >&2
+  exit 1
+}
+
+# Shared by every registry build (init, start, build, rebuild), before anything
+# is removed. Only --version and --local choose freely. Otherwise the target is
+# the installed release (plain build/rebuild) or the Dockerfile's pin (--latest,
+# --nightly, --branch), and it must be the installed release itself or a final
+# release on the same X.Y line. A fresh install ("fresh") takes a final pin.
+_resolve_build_version() {
+  CURRENT_VERSION=""
+  INSTALLED_VERSION=""
+  [ "$LOCAL_BUILD" = true ] && return 0
+  if [ -n "$BUILD_VERSION" ] && [ "$BUILD_VERSION" != "HEAD" ]; then
+    CURRENT_VERSION="$BUILD_VERSION"
+    return 0
+  fi
+  local pin target
+  pin=$(sed -n 's/^ARG WOLTSPACE_PYPI_VERSION=//p' "$WOLTSPACE_DIR/container/Dockerfile" | head -n 1)
+  [ "${1:-}" = fresh ] || INSTALLED_VERSION=$(_image_version)
+  if [ -z "$INSTALLED_VERSION" ]; then
+    [ "${1:-}" = fresh ] || [ ! -d "$WOLTS_DIR" ] || [ "$(_count_wolts)" -eq 0 ] \
+      || _version_refused "this lodge has wolts but no image, so its installed release is unknown"
+    case "$pin" in
+      [0-9]*.[0-9]*.[0-9]*) case "$pin" in *[!0-9.]*) _version_refused "this checkout pins prerelease ${pin}; a new lodge takes a final release" ;; esac ;;
+      *) _version_refused "cannot read the release this checkout's Dockerfile pins" ;;
+    esac
+    CURRENT_VERSION="$pin"
+    return 0
+  fi
+  [ "$INSTALLED_VERSION" = "?" ] && _version_refused "cannot read the release installed in image $IMAGE"
+  target="$INSTALLED_VERSION"
+  if [ "$BUILD_LATEST" = true ] || [ "$BUILD_VERSION" = "HEAD" ] || [ "$BUILD_BRANCH" != "main" ]; then
+    target="$pin"
+  fi
+  if [ "$target" != "$INSTALLED_VERSION" ]; then
+    case "$target" in
+      *[!0-9.]*|'') _version_refused "${target:-the pin} is not a final release; installed is $INSTALLED_VERSION" ;;
+    esac
+    [ "$(printf '%s' "$target" | cut -d. -f1,2)" = "$(printf '%s' "$INSTALLED_VERSION" | sed -E 's/^([0-9]+\.[0-9]+).*/\1/')" ] \
+      || _version_refused "$target is on another release line than installed $INSTALLED_VERSION"
+  fi
+  CURRENT_VERSION="$target"
 }
 
 _start_container() {
@@ -477,6 +541,7 @@ if [ "$cmd" = "init" ]; then
     fi
     echo ""
     if ! docker image inspect "$IMAGE" &>/dev/null; then
+      _resolve_build_version
       _build_image
     fi
     _start_container
@@ -526,6 +591,8 @@ if [ "$cmd" = "init" ]; then
     read -r _tunnel </dev/tty
     _tunnel="${_tunnel:-Y}"
   fi
+
+  _resolve_build_version fresh
 
   # Create wolts dir + .env from template
   mkdir -p "$WOLTS_DIR"
@@ -806,17 +873,11 @@ RESTORE
     if [ "$LOCAL_BUILD" = true ]; then
       echo "  ${_D}🪵 rebuilding from local — $WOLTSPACE_DIR${_R}"
       echo "  ${_L}   felling local timber...${_R}"
-    elif [ "${CURRENT_VERSION:-}" = "HEAD" ]; then
-      echo "  ${_D}🪵 rebuilding from main branch tip (nightly)${_R}"
-      echo "  ${_L}   living on the edge...${_R}"
-    elif [ -n "${CURRENT_VERSION:-}" ]; then
+    elif [ "$CURRENT_VERSION" = "$INSTALLED_VERSION" ]; then
       echo "  ${_D}🪵 rebuilding at $CURRENT_VERSION${_R}"
       echo "  ${_L}   same version, fresh timber${_R}"
-    elif [ "$BUILD_BRANCH" != "main" ]; then
-      echo "  ${_D}🪵 rebuilding from branch $BUILD_BRANCH${_R}"
-      echo "  ${_L}   felling branch timber...${_R}"
     else
-      echo "  ${_D}🪵 rebuilding at this checkout's pinned release${_R}"
+      echo "  ${_D}🪵 rebuilding at $CURRENT_VERSION${_R}"
       echo "  ${_L}   upgrading the lodge...${_R}"
     fi
     docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
@@ -846,6 +907,7 @@ RESTORE
       _show_url
     else
       if ! docker image inspect "$IMAGE" &>/dev/null; then
+        _resolve_build_version
         _build_image
       fi
       _start_container
