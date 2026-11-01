@@ -521,7 +521,7 @@ class FakeSessionRuntime:
     def agent_age(self, handle, process_names) -> int | None:
         return self._age
 
-    def last_keys(self) -> dict[str, int]:
+    def last_keys(self, timeout=None) -> dict[str, int]:
         return dict(self.last_key_at)
 
     def stop(self, handle) -> bool:

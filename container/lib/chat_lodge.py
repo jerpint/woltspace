@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import json
 import logging
 import random
@@ -29,6 +30,7 @@ from bot.core import (
     start_claude_session, transcribe_audio,
 )
 import chat_state
+import inbox
 import lodge_commands as commands
 import lodge_messages as messages
 import outbox
@@ -68,6 +70,12 @@ REPLY_FOOTER_MARKER = "↩️ reply to this message to talk to this session dire
 
 # What each kind of attachment is called in the message a session reads.
 _MEDIA_LABEL = {"image": "image received", "video": "video received", "file": "file received"}
+
+
+def notify_admitted(wolts_dir, status) -> None:
+    """The wake for a wolt with new mail (inbox_wake, the runtime's): quick, never raises."""
+    import inbox_wake
+    inbox_wake.notify_admitted(wolts_dir, status)
 
 
 def wolts_dir() -> Path:
@@ -183,11 +191,11 @@ class ChatLodge:
             if outcome.edit is not None:
                 await out.edit(outcome.edit)
         elif kind == "message":
-            await self.on_message(route, body, out)
+            await self.on_message(route, body, out, event.get("id"))
         elif kind == "attachment":
-            await self.on_attachment(route, body, out)
+            await self.on_attachment(route, body, out, event.get("id"))
 
-    async def on_message(self, route: dict, body: dict, out) -> None:
+    async def on_message(self, route: dict, body: dict, out, event_id: str | None = None) -> None:
         chat = self.chat(route)
         text = body.get("text") or ""
         _bot_log("message_received", {"chat_id": chat, "text": text[:100],
@@ -201,9 +209,9 @@ class ChatLodge:
         if body.get("mention") and dog_available():
             await self._handle_dog(route, out, text)
             return
-        await self._route(route, out, text, body.get("reply_to"))
+        await self._route(route, out, text, body.get("reply_to"), event_id=event_id)
 
-    async def on_attachment(self, route: dict, body: dict, out) -> None:
+    async def on_attachment(self, route: dict, body: dict, out, event_id: str | None = None) -> None:
         media, path = body["media"], body["path"]
         if not self._inside_uploads(path):
             logger.error(f"{self.name}: attachment outside its uploads dir refused: {path}")
@@ -218,7 +226,7 @@ class ChatLodge:
                 await out.say(Reply("Couldn't transcribe that voice message."))
                 return
             logger.info(f"Transcribed: {text[:100]}")
-            await self._route(route, out, f"[voice message] {text}", body.get("reply_to"))
+            await self._route(route, out, f"[voice message] {text}", body.get("reply_to"), event_id=event_id)
             return
         file_msg = (f"[{_MEDIA_LABEL[media]}] {body['name']} ({body['mime']}, {body['size']} bytes)"
                     f" saved at {path}")
@@ -231,7 +239,7 @@ class ChatLodge:
                 "message": f"[image] {caption}" if caption else "[image]",
                 "content": photo_content(self._read_upload(path), body["mime"], caption),
             }
-        await self._route(route, out, file_msg, body.get("reply_to"), dog_content)
+        await self._route(route, out, file_msg, body.get("reply_to"), dog_content, event_id)
 
     # --- chats ----------------------------------------------------------------------
 
@@ -424,8 +432,11 @@ class ChatLodge:
 
     # --- routing ----------------------------------------------------------------------
 
-    def _message_ports(self, route: dict, out, wrapped: bool = True) -> messages.MessagePorts:
+    def _message_ports(self, route: dict, out, wrapped: bool = True,
+                       event_id: str | None = None) -> messages.MessagePorts:
         chat = self.chat(route)
+        # With the inbox on, an owner's event is queued for its wolt instead of pasted.
+        queue = event_id is not None and inbox.enabled(self.wolts_dir)
         return messages.MessagePorts(
             lodge=self.ports(route),
             say=lambda reply: out.say(reply),
@@ -442,6 +453,8 @@ class ChatLodge:
                 "role": "assistant", "content": f"[delivered to session {name}]"}),
             deliver=(lambda name, wolt, text: self._route_to_session(route, out, name, wolt, text))
             if wrapped else None,
+            admit=(lambda wolt, text, session: self._admit(route, out, event_id, wolt, text, session))
+            if queue else None,
             log=lambda event, data: _bot_log(f"{self.name}_{event}", data),
             log_error=lambda message: logger.error(message),
         )
@@ -466,11 +479,58 @@ class ChatLodge:
         file_name = outbox.display_name(file_name) if file_name else None
         return session, quote_reply(body, file_name, text, bool(reply_to.get("voice")))
 
+    async def _admit(self, route: dict, out, event_id: str, wolt: str, text: str,
+                     session: str | None = None) -> None:
+        """Queue an owner message in the wolt's inbox at human priority.
+
+        Only handle reaches this, after its owner check: agent mail never says
+        human. The key is the connector's event id, and the reply instruction's
+        delimiter comes from it, so a resent event builds the same body and
+        gets the message already queued. Anything else under the key is a
+        conflict. Custody starts when admit commits; a failure is told to the
+        owner, never pasted instead. Otherwise the owner hears once, when the
+        wake has decided (inbox_notice.outcome); `session`, the one they meant,
+        is only the wake's first choice: any session of the wolt may fetch.
+        """
+        chat = self.chat(route)
+        key = f"{self.name}:{event_id}"
+        delimiter = "WOLTSPACE_NOTIFY_" + hashlib.sha256(key.encode()).hexdigest()[:16].upper()
+        store = inbox.Store(self.wolts_dir, inbox.LIMITS)
+        try:
+            if delimiter in text.splitlines():
+                raise inbox.Invalid("delimiter")
+            reply = notify_reply_instruction(*self.spec.reply_args(self.route_of(chat)), delimiter=delimiter)
+            body = f"{self._session_message(text, chat)}\n{reply}"
+            # the session they meant (the wake's first choice) and this chat, recorded with the message
+            route = {"session": session if session and messages.wolt_from_session_name(session) == wolt else None,
+                     "chat": {"adapter": self.name, "chat": chat}}
+            status = await asyncio.to_thread(
+                store.admit, f"connector:{self.name}", key, wolt, body, human=True, route=route)
+        except inbox.InboxError as e:
+            code = getattr(e, "code", "invalid")
+            _bot_log(f"{self.name}_inbox_refused", {"wolt": wolt, "key": key, "code": code})
+            await out.say(Reply(f"🪵 not queued for {self._shown(wolt)}: {code}"))
+            return
+        _bot_log(f"{self.name}_inbox_admitted", {"wolt": wolt, "seq": status.seq, "key": key})
+        self._append_history(chat, "user", text)
+        # The next plain message goes to the wolt last written to; its session is kept
+        # while it is that wolt's, as the conversation the owner is in.
+        state = self._load_chat_state(chat)
+        if state.get("active_wolt") != wolt:
+            state.pop("active_session", None)
+        state["active_wolt"] = wolt
+        self._save_chat_state(chat, state)
+        try:
+            await asyncio.to_thread(notify_admitted, self.wolts_dir, status)
+        except Exception as e:
+            # The mail is in custody either way; a lost wake leaves it pending.
+            logger.error(f"{self.name}: wake for {wolt} failed: {type(e).__name__}")
+
     async def _route(self, route: dict, out, text: str, reply_to: dict | None = None,
-                     dog_content=None) -> None:
+                     dog_content=None, event_id: str | None = None) -> None:
         reply_session, reply_text = self._reply_target(reply_to, text)
         await messages.route_message(
-            self._message_ports(route, out), self.chat(route), text,
+            self._message_ports(route, out, event_id=event_id), self.chat(route), text,
             reply_session=reply_session, reply_text=reply_text, dog_content=dog_content,
         )
 
