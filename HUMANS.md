@@ -66,7 +66,7 @@ woltspace start
 | Flag | What it does |
 |------|-------------|
 | `--local` | Build image from local repo instead of git clone |
-| `--branch <name>` | Build image from a specific branch (default: main) |
+| `--branch <name>` | No longer installs that branch: the image installs the pinned release. To test a branch, check it out and use `--local` |
 
 ## Where things live
 
@@ -117,15 +117,15 @@ Then `woltspace stop && woltspace start` to apply.
 
 ## Updates
 
-Updates happen inside the container. Ask your wolt:
+On a native lodge, ask your wolt:
 
 > "can you update woltspace?"
 
-Or rebuild from the host:
+A container updates from the host, by rebuilding:
 
 ```bash
 woltspace rebuild --latest            # the version pinned in your checkout
-woltspace rebuild --branch staging    # latest staging (may be rough)
+woltspace rebuild --version X         # a specific release
 ```
 
 ## How it works
@@ -231,14 +231,11 @@ woltspace start                 # shows "⚙ local dev mode"
 
 # Or per-command
 woltspace rebuild --local       # same thing, explicit
-woltspace rebuild --branch staging  # build from a remote branch
 ```
 
-**How `--local` works:** Instead of `git clone` inside the Docker image, the local repo is `COPY`'d in. The image is fully self-contained — no mounts, no hot-reload. Change code → `woltspace rebuild` → see changes.
+**How `--local` works:** The image builds a wheel from your local repo instead of installing from PyPI. The image is fully self-contained — no mounts, no hot-reload. Change code → `woltspace rebuild` → see changes.
 
-**How `--branch` works:** The Docker image does `git clone --branch <name>` from GitHub. No local repo needed at all.
-
-Both produce the same image structure. The only mount is `~/.woltspace/wolts/`.
+The only mount is `~/.woltspace/wolts/`.
 
 ## Backup & recovery
 

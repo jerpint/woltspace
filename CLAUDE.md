@@ -113,8 +113,8 @@ Commands:
 - `woltspace shell/chat/logs` — interact with running container
 
 Flags:
-- `--local` — build image from local repo (COPY) instead of git clone
-- `--branch <name>` — build image from a specific branch (default: main)
+- `--local` — build image from the local repo instead of installing from PyPI
+- `--branch <name>` — no longer installs that branch; check it out and use `--local`
 
 Env vars:
 - `WOLTSPACE_WOLTS_DIR` — override wolts directory (default: `~/.woltspace/wolts`)
@@ -445,10 +445,7 @@ woltspace start                 # shows "⚙ local dev mode"
 
 No mounts, no hot-reload. Change code → `woltspace rebuild` → see changes. Same image structure as production.
 
-To test a remote branch without checking it out locally:
-```bash
-woltspace rebuild --branch staging
-```
+To test a branch, check it out and use `--local`.
 
 ### PR style — use the lore
 
