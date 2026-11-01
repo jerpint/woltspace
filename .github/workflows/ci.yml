@@ -84,7 +84,6 @@ jobs:
           test/test_session_target_api.py
           test/test_execution_policy.py
           test/test_auto_grants_cli.py
-          test/test_iwcl_cli.py
           test/test_native_cli_shadowing.py
           test/test_cli_lore.py
           test/test_wolf_cli.py
@@ -149,7 +148,7 @@ jobs:
         # has the test install's dependencies.
         run: >-
           PATH="$PWD/container/bin:$PATH" WOLTSPACE_PYTHON="$(command -v python)"
-          python -m pytest -q test/test_notify_cli.py
+          python -m pytest -q test/test_notify_cli.py test/test_iwcl_cli.py
       - name: Node suite
         run: npm test
 
