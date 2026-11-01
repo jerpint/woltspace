@@ -8,8 +8,8 @@
 #         container/lib, container/bin, skills, templates)
 #   npm   @woltspace/tui@<WOLTSPACE_TUI_VERSION>            → the optional
 #         terminal cockpit. The browser PTY bridge lives in the Python wheel.
-#         Defaults to `latest`: the tui declares the minimum woltspace it needs
-#         and checks it at startup, so the wheel never pins a tui version
+#         The tui declares the minimum woltspace it needs and checks it at
+#         startup, so the wheel never pins a tui version
 #
 # So what is left here is what a container is actually for: the OS, the harness
 # CLIs, tmux, the tunnel binary, a non-root user, and one mount point. The
@@ -124,8 +124,8 @@ ENV WORKTUI_DIR="/workspace/wolts/.worktui"
 
 # --- The woltspace runtime, from the registries ---
 ARG WOLTSPACE_PYPI_VERSION=0.5.25
-# `latest`, not a pin — the two artifacts are versioned independently. Pass an
-# explicit version to reproduce an older image.
+# Both pins match this checkout's release (scripts/verify-packages.py). The two
+# artifacts are versioned independently. Pass a version to build another one.
 ARG WOLTSPACE_TUI_VERSION=0.5.4
 # --build-arg USE_LOCAL=true installs a wheel built from the build context
 # instead of PyPI (and the context's tui/ instead of npm). Same install shape,

@@ -74,6 +74,16 @@ def check_environments():
     print('Both publishing environments require jerpint approval, main or release branches only, no bypass.')
 
 
+# The Python versions this workflow publishes, spelled the one way the build names
+# its files. Anything else stops at planning, before is_prerelease has to judge it.
+PYTHON_VERSION = re.compile(r'[0-9]+\.[0-9]+\.[0-9]+((a|b|rc)[0-9]+)?(\.post[0-9]+)?(\.dev[0-9]+)?')
+
+
+def is_prerelease(version):
+    """rc, beta, alpha and dev versions (0.6.0rc1, 0.6.0-rc.1) are pre-releases."""
+    return re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+(\.post[0-9]+)?', version) is None
+
+
 def publishing_branch():
     """The branch this run publishes from: main, or a release/X.Y maintenance branch."""
     branch = os.environ.get('GITHUB_REF_NAME', '')
@@ -138,6 +148,8 @@ def prepare():
     }
     require(versions['python'] == os.environ['EXPECTED_PYTHON'], 'Confirm the Python version from this commit')
     require(versions['npm'] == os.environ['EXPECTED_TUI'], 'Confirm the TUI version from this commit')
+    require(PYTHON_VERSION.fullmatch(versions['python']) is not None,
+            f'Unsupported Python version {versions["python"]}: use X.Y.Z, X.Y.ZrcN, X.Y.Z.postN or X.Y.Z.devN')
     files = [f'woltspace-{versions["python"]}-py3-none-any.whl',
              f'woltspace-{versions["python"]}.tar.gz',
              f'woltspace-tui-{versions["npm"]}.tgz']
@@ -154,6 +166,9 @@ def prepare():
     target = os.environ.get('REGISTRY_TARGET', 'both')
     require(target in ('python', 'npm', 'both'), 'Choose python, npm or both')
     manifest['targets'] = ['python', 'npm'] if target == 'both' else [target]
+    # npm publish has no dist-tag yet, so a pre-release TUI would become 'latest' there.
+    require('npm' not in manifest['targets'] or not is_prerelease(versions['npm']),
+            'Pre-release TUI versions are not supported yet; publish the Python package only')
     manifest['release_targets'] = [registry for registry in ('python', 'npm')
                                    if registry in manifest['targets'] or registry in previous_release_targets]
     manifest['verify_targets'] = manifest['release_targets']
@@ -237,6 +252,29 @@ def gh(*args):
     return subprocess.check_output(['gh', *args], text=True).strip()
 
 
+def latest_tag():
+    """The tag GitHub calls Latest; None only when GitHub says it has none."""
+    done = subprocess.run(['gh', 'api', f'repos/{REPO}/releases/latest'], capture_output=True, text=True)
+    if done.returncode and 'HTTP 404' in done.stderr:
+        return None
+    if done.returncode:
+        raise subprocess.CalledProcessError(done.returncode, done.args, done.stdout, done.stderr)
+    return json.loads(done.stdout)['tag_name']
+
+
+def require_prerelease_settled(tag):
+    """The Releases page must not present an rc as current; GitHub gets a moment to catch up."""
+    for attempt in range(6):
+        if attempt:
+            time.sleep(5)
+        marked = json.loads(gh('release', 'view', tag, '--repo', REPO, '--json', 'isPrerelease'))['isPrerelease']
+        latest = latest_tag() == tag
+        if marked and not latest:
+            return
+    require(marked, f'{tag}: still not marked as a pre-release')
+    require(not latest, f'{tag}: a pre-release is still GitHub Latest')
+
+
 def tag_commit(tag):
     refs = json.loads(gh('api', f'repos/{REPO}/git/matching-refs/tags/{tag}'))
     exact = [ref for ref in refs if ref['ref'] == f'refs/tags/{tag}']
@@ -271,7 +309,7 @@ def finalize():
                '--draft', '--latest=false', '--title', tag, '--notes-file', str(notes))
         wanted = {name: sha for name, sha in manifest['files'].items()
                   if name.endswith('.tgz') == (registry == 'npm')}
-        release = json.loads(gh('release', 'view', tag, '--repo', REPO, '--json', 'assets,isDraft,targetCommitish'))
+        release = json.loads(gh('release', 'view', tag, '--repo', REPO, '--json', 'assets,isDraft,isPrerelease,targetCommitish'))
         assets = {asset['name'] for asset in release['assets']}
         require(assets <= set(wanted), f'{tag}: unexpected release assets')
         for name, sha in wanted.items():
@@ -288,9 +326,16 @@ def finalize():
             gh('api', f'repos/{REPO}/git/refs', '-f', f'ref=refs/tags/{tag}',
                '-f', f'sha={manifest["commit"]}')
         require(tag_commit(tag) == (existing_commit or manifest['commit']), f'{tag}: tag commit mismatch')
+        pre = is_prerelease(manifest['versions'][registry])
         if release['isDraft']:
-            gh('release', 'edit', tag, '--repo', REPO, '--draft=false',
-               f'--latest={"true" if registry == "python" and publishing_branch() == "main" else "false"}')
+            latest = registry == 'python' and publishing_branch() == 'main' and not pre
+            gh('release', 'edit', tag, '--repo', REPO, '--draft=false', f'--prerelease={str(pre).lower()}',
+               f'--latest={str(latest).lower()}')
+        elif pre and not release['isPrerelease']:
+            # Already public as an ordinary release: only ever corrected towards pre-release.
+            gh('release', 'edit', tag, '--repo', REPO, '--prerelease=true', '--latest=false')
+        if pre:
+            require_prerelease_settled(tag)
         print(f'Verified GitHub release {tag} at {existing_commit or manifest["commit"]}.')
 
 

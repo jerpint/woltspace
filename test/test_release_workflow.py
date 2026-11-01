@@ -1,6 +1,7 @@
 """Release admission and immutable-artifact recovery, without registry writes."""
 import importlib.util
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -200,7 +201,7 @@ def fake_releases(monkeypatch, artifacts, existing=None):
             releases[tag] = {'draft': True, 'commit': artifacts['commit'], 'assets': []}
         elif action == 'view':
             value = releases[tag]
-            return json.dumps({'isDraft': value['draft'], 'targetCommitish': value['commit'], 'assets': [{'name': n} for n in value['assets']]})
+            return json.dumps({'isDraft': value['draft'], 'isPrerelease': value.get('prerelease', False), 'targetCommitish': value['commit'], 'assets': [{'name': n} for n in value['assets']]})
         elif action == 'upload':
             releases[tag]['assets'].append(Path(args[3]).name)
         elif action == 'download':
@@ -209,8 +210,12 @@ def fake_releases(monkeypatch, artifacts, existing=None):
             target.write_bytes((release.ROOT / 'dist' / name).read_bytes())
         elif action == 'edit':
             releases[tag]['draft'] = False
+            if '--prerelease=true' in args and not releases[tag].get('stuck'):
+                releases[tag].update(prerelease=True, latest=False)
         return ''
     monkeypatch.setattr(release, 'gh', fake_gh)
+    monkeypatch.setattr(release, 'latest_tag', lambda: next((tag for tag, value in releases.items() if value.get('latest')), None))
+    monkeypatch.setattr(release.time, 'sleep', lambda seconds: None)
     monkeypatch.setattr(release, 'tag_commit', lambda tag: tags.get(tag))
     monkeypatch.setattr(release, 'registry_state', lambda registry, manifest: [])
     (release.ROOT / 'docs').mkdir()
@@ -237,6 +242,111 @@ def test_release_branch_publication_is_never_marked_latest(artifacts, monkeypatc
     assert edited and all('--latest=false' in call for call in edited)
     assert all(call[call.index('--target') + 1] == artifacts['commit']
                for call in calls if call[:2] == ('release', 'create'))
+
+
+@pytest.mark.parametrize('version', ['0.6.0rc1', '0.6.0b2', '0.6.0a1', '0.6.0.dev3'])
+def test_python_pre_release_from_main_is_never_marked_latest(artifacts, monkeypatch, version):
+    artifacts['versions']['python'] = version
+    (release.ROOT / 'release-manifest.json').write_text(json.dumps(artifacts))
+    calls, _ = fake_releases(monkeypatch, artifacts)
+    release.finalize()
+    python_edit = [call for call in calls if call[:3] == ('release', 'edit', f'v{version}')]
+    assert python_edit and '--latest=false' in python_edit[0] and '--prerelease=true' in python_edit[0]
+
+
+def _public_rc(artifacts, **state):
+    artifacts['versions']['python'] = '0.6.0rc1'
+    (release.ROOT / 'release-manifest.json').write_text(json.dumps(artifacts))
+    return {'v0.6.0rc1': {'draft': False, 'commit': artifacts['commit'], **state,
+                          'assets': ['woltspace-0.5.5-py3-none-any.whl', 'woltspace-0.5.5.tar.gz']},
+            'tui-v0.5.2': {'draft': False, 'commit': artifacts['commit'], 'assets': ['woltspace-tui-0.5.2.tgz']}}
+
+
+def test_a_retry_corrects_an_rc_already_public_as_an_ordinary_release(artifacts, monkeypatch):
+    existing = _public_rc(artifacts, latest=True)
+    calls, _ = fake_releases(monkeypatch, artifacts, existing)
+    release.finalize()
+    edit = next(call for call in calls if call[:3] == ('release', 'edit', 'v0.6.0rc1'))
+    assert '--prerelease=true' in edit and '--latest=false' in edit
+    assert existing['v0.6.0rc1']['prerelease'] and not existing['v0.6.0rc1']['latest']
+
+
+def test_a_retry_leaves_a_correct_public_rc_alone(artifacts, monkeypatch):
+    calls, _ = fake_releases(monkeypatch, artifacts, _public_rc(artifacts, prerelease=True))
+    release.finalize()
+    assert not [call for call in calls if call[:3] == ('release', 'edit', 'v0.6.0rc1')]
+
+
+def test_finalize_fails_when_an_rc_stays_latest(artifacts, monkeypatch):
+    fake_releases(monkeypatch, artifacts, _public_rc(artifacts, latest=True, stuck=True))
+    with pytest.raises(RuntimeError, match='still not marked'):
+        release.finalize()
+
+
+def test_finalize_fails_when_a_marked_rc_is_still_latest(artifacts, monkeypatch):
+    fake_releases(monkeypatch, artifacts, _public_rc(artifacts, prerelease=True, latest=True))
+    with pytest.raises(RuntimeError, match='still GitHub Latest'):
+        release.finalize()
+
+
+def test_finalize_waits_for_github_to_catch_up(artifacts, monkeypatch):
+    existing = _public_rc(artifacts, prerelease=True, latest=True)
+    fake_releases(monkeypatch, artifacts, existing)
+    answers = iter(['v0.6.0rc1', 'v0.6.0rc1', 'v0.5.25'])
+    monkeypatch.setattr(release, 'latest_tag', lambda: next(answers))
+    release.finalize()
+
+
+@pytest.mark.parametrize('returncode, stdout, stderr, expected', [
+    (0, '{"tag_name": "v0.5.25"}', '', 'v0.5.25'),
+    (1, '', 'gh: Not Found (HTTP 404)', None),
+])
+def test_latest_tag(monkeypatch, returncode, stdout, stderr, expected):
+    monkeypatch.setattr(release.subprocess, 'run', lambda *a, **k: subprocess.CompletedProcess(a[0], returncode, stdout, stderr))
+    assert release.latest_tag() == expected
+
+
+def test_latest_tag_never_swallows_other_errors(monkeypatch):
+    monkeypatch.setattr(release.subprocess, 'run', lambda *a, **k: subprocess.CompletedProcess(a[0], 1, '', 'gh: Server Error (HTTP 500)'))
+    with pytest.raises(subprocess.CalledProcessError):
+        release.latest_tag()
+
+
+def test_a_public_final_release_is_never_edited_on_retry(artifacts, monkeypatch):
+    existing = {'v0.5.5': {'draft': False, 'commit': artifacts['commit'],
+                           'assets': ['woltspace-0.5.5-py3-none-any.whl', 'woltspace-0.5.5.tar.gz']},
+                'tui-v0.5.2': {'draft': False, 'commit': artifacts['commit'], 'assets': ['woltspace-tui-0.5.2.tgz']}}
+    calls, _ = fake_releases(monkeypatch, artifacts, existing)
+    release.finalize()
+    assert not [call for call in calls if call[:2] == ('release', 'edit')]
+
+
+@pytest.mark.parametrize('version', ['0.6', '0.6.0.1', '1!0.6.0', '0.6.0-rc.1', '0.6.0.post', '0.6.0rev2', 'v0.6.0'])
+def test_planning_refuses_python_versions_outside_the_supported_forms(artifacts, monkeypatch, version):
+    configure_prepare(monkeypatch)
+    (release.ROOT / 'pyproject.toml').write_text(f'[project]\nversion="{version}"\n')
+    monkeypatch.setenv('EXPECTED_PYTHON', version)
+    monkeypatch.setenv('REGISTRY_TARGET', 'python')
+    with pytest.raises(RuntimeError, match='Unsupported Python version'):
+        release.prepare()
+
+
+@pytest.mark.parametrize('version', ['0.6.0', '0.6.0rc1', '0.6.0b2', '0.6.0a1', '0.6.0.dev3', '1.0.0.post1'])
+def test_supported_python_version_forms(version):
+    assert release.PYTHON_VERSION.fullmatch(version)
+
+
+def test_final_python_release_from_main_is_latest_and_not_pre_release(artifacts, monkeypatch):
+    calls, _ = fake_releases(monkeypatch, artifacts)
+    release.finalize()
+    python_edit = [call for call in calls if call[:3] == ('release', 'edit', 'v0.5.5')]
+    assert '--latest=true' in python_edit[0] and '--prerelease=false' in python_edit[0]
+
+
+@pytest.mark.parametrize('version, pre', [('0.6.0', False), ('0.5.21', False), ('1.0.0.post1', False),
+                                          ('0.6.0rc1', True), ('0.6.0-rc.1', True), ('0.6.0.dev0', True)])
+def test_pre_release_detection(version, pre):
+    assert release.is_prerelease(version) is pre
 
 
 def test_draft_retry_keeps_already_uploaded_assets(artifacts, monkeypatch):
@@ -327,6 +437,23 @@ def test_plan_requires_approval_only_for_missing_selected_registry(artifacts, mo
     release.prepare()
     assert release.load_manifest()['targets'] == selected
     assert outputs == {f'publish_{registry}': str(registry in selected).lower() for registry in ('python', 'npm')}
+
+
+@pytest.mark.parametrize('target, refused', [('npm', True), ('both', True), ('python', False)])
+def test_pre_release_tui_is_never_sent_to_npm(artifacts, monkeypatch, target, refused):
+    configure_prepare(monkeypatch)
+    (release.ROOT / 'tui/package.json').write_text('{"version":"0.6.0-rc.1"}')
+    (release.ROOT / 'dist/woltspace-tui-0.5.2.tgz').rename(release.ROOT / 'dist/woltspace-tui-0.6.0-rc.1.tgz')
+    monkeypatch.setenv('EXPECTED_TUI', '0.6.0-rc.1')
+    monkeypatch.setenv('REGISTRY_TARGET', target)
+    selected = ['python', 'npm'] if target == 'both' else [target]
+    monkeypatch.setattr(release, 'registry_state', lambda registry, manifest: ['missing'] if registry in selected else [])
+    monkeypatch.setattr(release, 'output', lambda key, value: None)
+    if refused:
+        with pytest.raises(RuntimeError, match='Pre-release TUI'):
+            release.prepare()
+    else:
+        release.prepare()
 
 
 def test_plan_skips_both_approvals_when_artifacts_already_exist(artifacts, monkeypatch):

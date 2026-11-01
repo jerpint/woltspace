@@ -5,12 +5,12 @@ Woltspace follows semantic versioning: **vMAJOR.MINOR.PATCH**
 ## Version digits
 
 ### PATCH (v0.0.X) — safe updates
-Non-breaking changes. New features, bug fixes, UI tweaks, new creature behaviors. `/update` pulls these with a quick sanity check. No migration needed.
+Non-breaking changes. New features, bug fixes, UI tweaks, new creature behaviors. The update skill installs these with a quick sanity check. No migration needed.
 
 Examples: new dog acks, favicon change, wolf catch-up logic, skill improvements.
 
 ### MINOR (v0.X.0) — breaking changes, migration required
-Changes that require user action. New env vars, renamed files, changed config formats, removed features. `/update` detects these and walks the user through the migration before pulling.
+Changes that require user action. New env vars, renamed files, changed config formats, removed features. The update skill walks the user through the migration.
 
 Each minor bump ships a migration document at `container/migrations/vX.Y.0.md` — prose a wolt performs with consent. It rides inside the wheel, so it arrives with the code it migrates to and the update skill reads it *after* the install.
 
@@ -23,23 +23,14 @@ Examples: new container architecture, complete rewrite of session system, breaki
 
 ## Files
 
-- `.version` — current version string (e.g. `v0.0.2`), stamped on release and by `/update`
-- `CHANGELOG.md` — human-readable change log per version
+- `pyproject.toml`, `tui/package.json` — the Python and TUI versions; `container/Dockerfile` pins the same two
+- `.version` — not tracked: the image build writes the installed version into the image, and `woltspace rebuild` reads it from the running container
 - `container/migrations/` — migration docs for minor/major bumps, shipped in the wheel
 
 ## Release workflow
 
-1. Merge PRs to main
-2. When ready to cut a release:
-   - Update `.version`
-   - Update `CHANGELOG.md`
-   - If minor/major: add a migration document to `container/migrations/`
-   - Tag: `git tag vX.Y.Z && git push origin vX.Y.Z`
-   - Create GitHub release from the tag
-3. Users run `/update` to pull the new version
+Releases publish from `main` or `release/X.Y` through a workflow the maintainer runs and approves: see [docs/releasing.md](docs/releasing.md). Release candidates use `X.Y.ZrcN`, and the tags and GitHub releases are created by that workflow.
 
-## How /update uses versions
+## How updates use versions
 
-- Reads current `.version` from the running container
-- Fetches latest tag from origin
-- Compares: patch bump → safe pull with sanity check. Minor/major bump → flag it, show migration notes, require explicit confirmation.
+`woltspace update` reads PyPI and takes the newest stable version, or a pre-release with `--pre`: see [docs/updates.md](docs/updates.md). The update skill reviews the release notes and migrations it crosses and asks for consent where needed.

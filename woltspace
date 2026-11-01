@@ -258,12 +258,12 @@ _build_image() {
 
 # Shared by build and rebuild, so both build the same image.
 _resolve_build_version() {
-  # Resolve version: --version > --latest > current container version
+  # Resolve version: --version > --latest (the Dockerfile's pin) > current container version
   CURRENT_VERSION=""
   if [ -n "$BUILD_VERSION" ]; then
     CURRENT_VERSION="$BUILD_VERSION"
   elif [ "$BUILD_LATEST" = true ]; then
-    CURRENT_VERSION=""  # empty = Dockerfile picks latest tag
+    CURRENT_VERSION=""  # empty = the Dockerfile's pinned version
   elif [ "$LOCAL_BUILD" != true ] && [ "$BUILD_BRANCH" = "main" ]; then
     CURRENT_VERSION=$(docker exec "$CONTAINER_NAME" cat /workspace/woltspace/.version 2>/dev/null || echo "")
   fi
@@ -816,7 +816,7 @@ RESTORE
       echo "  ${_D}🪵 rebuilding from branch $BUILD_BRANCH${_R}"
       echo "  ${_L}   felling branch timber...${_R}"
     else
-      echo "  ${_D}🪵 rebuilding to latest release${_R}"
+      echo "  ${_D}🪵 rebuilding at this checkout's pinned release${_R}"
       echo "  ${_L}   upgrading the lodge...${_R}"
     fi
     docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
