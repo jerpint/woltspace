@@ -7,6 +7,7 @@ Usage: uv run pytest test/test_wolf.py -v
 """
 
 import json
+import subprocess
 import os
 import sys
 from datetime import datetime
@@ -521,6 +522,24 @@ class TestFireWolfTool:
 # ---------------------------------------------------------------------------
 # check_update tool (from core.py)
 # ---------------------------------------------------------------------------
+
+def test_check_update_script_never_announces_a_release_candidate(tmp_path):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "git").write_text("#!/bin/sh\nprintf 'a\\trefs/tags/v0.5.25\\nb\\trefs/tags/v0.6.0rc1\\nc\\trefs/tags/tui-v0.9.0\\n'\n")
+    (bin_dir / "notify").write_text(f'#!/bin/sh\ncat > "{tmp_path}/notified"\n')
+    for tool in bin_dir.iterdir():
+        tool.chmod(0o755)
+    version_file = tmp_path / ".space" / "platform" / "woltspace-version"
+    version_file.parent.mkdir(parents=True)
+    version_file.write_text("v0.5.25")
+    script = Path(__file__).resolve().parents[1] / "container" / "cron" / "check-update.sh"
+    env = {"PATH": f"{bin_dir}:/usr/bin:/bin", "WOLTSPACE_WOLTS_DIR": str(tmp_path)}
+    result = subprocess.run(["bash", str(script)], env=env, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert "up to date (v0.5.25)" in result.stdout
+    assert not (tmp_path / "notified").exists()
+
 
 class TestCheckUpdateTool:
     """Unit: the check_update tool exposed to the dog."""

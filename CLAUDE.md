@@ -219,7 +219,7 @@ Discovery files agents read from `~/.claude/skills/`. Platform skills live under
 Daily digest pipeline (3 phases): fetch (HN, HuggingFace, Lobsters) → select via `claude -p` → render HTML. Writes to `wolt/sparks/`. Optional Spotify playlist curation.
 
 ### `container/cron/check-update.sh`
-No-LLM update checker. Compares stored version (`.space/platform/woltspace-version`) against remote HEAD via `git ls-remote`. Available for on-demand use but not registered as a default wolf cron — wolves are loud, update checking is quiet surveillance.
+No-LLM update checker. Compares stored version (`.space/platform/woltspace-version`) against the newest final version tag via `git ls-remote`. Available for on-demand use but not registered as a default wolf cron — wolves are loud, update checking is quiet surveillance.
 
 ### `container/creatures/wolf.py` (Wolf Scheduler 🐺)
 Background cron service, run as the `wolf` connector. Every 30s it reads each wolt's `wolt/wolf.json`, fires due crons by starting a session for the owning wolt, and pings the human on the channel a cron names in `notify` (telegram or slack; none = quiet). Times are the lodge machine's local time. The rules (strict cron parsing, the one due check, next run, locked wolf.json writes) live in `container/lib/wolfcore.py`, shared with the lodge's `/wolf/crons` API. Last-run stamps and the job journal are lodge-global rows of the lodge DB's `wolf_runs` table. See the `/wolf` skill.
@@ -397,7 +397,7 @@ bash test/run-tests.sh -k "pattern" # pass any pytest args
 - `test_wolfcore.py` / `test_wolf_api.py` / `test_wolf_cli.py` — shared cron core (parser, DST, due check, stamp migration, locked writes), the `/wolf/crons` routes, and `woltspace wolf`
 - `test_wolts.py` — wolt discovery, creature-type system, creature-wolt creation, singleton demotion, dog identity loading
 
-**CLI smoke tests** (`test/test-cli.sh`) — full cycle: init → start → stop → rebuild → backup → reconcile → idempotent init → shell. Run from host:
+**CLI smoke tests** (`test/test-cli.sh`) — full cycle: init → start → stop → rebuild → backup → reconcile → idempotent init → shell → version stamp. Run from host:
 
 ```bash
 bash test/test-cli.sh              # test main branch

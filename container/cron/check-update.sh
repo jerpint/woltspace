@@ -21,8 +21,9 @@ if [ -f "$BRANCH_FILE" ]; then
   BUILD_BRANCH=$(cat "$BRANCH_FILE")
 fi
 
-# Get the latest tag from the remote (semver-sorted)
-REMOTE_TAGS=$(git ls-remote --tags "$WOLTSPACE_REPO" 2>/dev/null | grep -v '\^{}' | awk '{print $2}' | sed 's|refs/tags/||' | sort -V)
+# Get the newest final version tag from the remote (semver-sorted). Release
+# candidates and the TUI's tags are never announced as an update.
+REMOTE_TAGS=$(git ls-remote --tags "$WOLTSPACE_REPO" 2>/dev/null | grep -v '\^{}' | awk '{print $2}' | sed 's|refs/tags/||' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V || true)
 
 if [ -z "$REMOTE_TAGS" ]; then
   echo "[update-check] no tags found on remote — nothing to compare"

@@ -160,6 +160,13 @@ rm -rf /tmp/test-woltspace-cli/wolts-backup-test-snapshot
 rm -rf /tmp/test-woltspace-cli/wolts-backup-test-bundle
 rm -f /tmp/test-woltspace-cli/woltspace-backup-test-bundle.zip
 
+# ── version stamp ──
+echo ""
+echo "  --- version ---"
+step "checking version stamp..."
+VERSION=$(docker exec "$CONTAINER_NAME" cat /workspace/woltspace/.version 2>/dev/null || echo "")
+[ -n "$VERSION" ] && pass "version stamped: $VERSION" || fail "no version stamp found"
+
 # ── init with existing wolts (idempotent) ──
 echo ""
 echo "  --- init (idempotent) ---"

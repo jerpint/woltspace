@@ -258,12 +258,14 @@ _build_image() {
 
 # Shared by build and rebuild, so both build the same image.
 _resolve_build_version() {
-  # Resolve version: --version, else the version pinned in the Dockerfile
+  # Resolve version: --version > --latest (the Dockerfile's pin) > current container version
   CURRENT_VERSION=""
   if [ -n "$BUILD_VERSION" ]; then
     CURRENT_VERSION="$BUILD_VERSION"
   elif [ "$BUILD_LATEST" = true ]; then
     CURRENT_VERSION=""  # empty = the Dockerfile's pinned version
+  elif [ "$LOCAL_BUILD" != true ] && [ "$BUILD_BRANCH" = "main" ]; then
+    CURRENT_VERSION=$(docker exec "$CONTAINER_NAME" cat /workspace/woltspace/.version 2>/dev/null || echo "")
   fi
 }
 

@@ -73,10 +73,12 @@ tag. The maintainer runs and approves every publish; see
 [docs/releasing.md](docs/releasing.md).
 
 Only people who ask get a release candidate, with `woltspace update --pre` or an
-exact version. Ordinary installs and updates take the newest stable version on
-PyPI, so the older line keeps shipping to them from its `release/X.Y` branch, and
-publishing the final version is what moves everyone. `update` refuses downgrades,
-so try a release candidate on a lodge you can afford to lose.
+exact version. `woltspace update` and a plain `uv tool install woltspace` take the
+newest stable version on PyPI, so the older line keeps shipping to them from its
+`release/X.Y` branch. Publishing the final version makes it the one they get.
+Nothing updates by itself, and a container stays on the version its image was
+built with. `update` refuses downgrades, so try a release candidate on a lodge
+you can afford to lose.
 
 ```mermaid
 flowchart TB

@@ -56,7 +56,7 @@ woltspace start
 | `woltspace backup [tag]` | Snapshot container + wolts (tag defaults to datetime) |
 | `woltspace backup [tag] --bundle` | Same, but zipped into one portable file |
 | `woltspace build` | Build the image only; the running container keeps the old one until `woltspace stop` + `start` |
-| `woltspace rebuild` | Rebuild image from `main` + restart |
+| `woltspace rebuild` | Rebuild the image at the container's current version + restart |
 | `woltspace shell` | Shell into running container |
 | `woltspace chat` | Open Claude directly in container |
 | `woltspace logs` | Stream container logs |
@@ -124,7 +124,7 @@ Updates happen inside the container. Ask your wolt:
 Or rebuild from the host:
 
 ```bash
-woltspace rebuild                     # latest main
+woltspace rebuild --latest            # the version pinned in your checkout
 woltspace rebuild --branch staging    # latest staging (may be rough)
 ```
 
@@ -297,7 +297,9 @@ woltspace --version        # what's installed
 woltspace update --check   # native installs: whether PyPI has a newer stable release; changes nothing
 ```
 
-A container runs the version pinned in its image's `WOLTSPACE_PYPI_VERSION`.
+A container stays on the version its image was built with, stamped in
+`/workspace/woltspace/.version`. `woltspace rebuild` keeps that version;
+`--latest` moves to the version pinned in your checkout, and `--version X` to X.
 
 ## Learn more
 
