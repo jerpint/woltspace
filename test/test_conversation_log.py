@@ -1,20 +1,25 @@
 """Conversation history (conversation_log.py): what inbox admission and notify archive,
 the bounds, the reader-scoped pages, and how backup and restore treat it."""
 
+import asyncio
 import json
 import sys
+import threading
 import time
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 
-from inbox_support import acked, failing, limits, reader, rows
+from inbox_support import acked, failing, limits, reader, rows, session
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import conversation_log  # noqa: E402
 import inbox  # noqa: E402
 import lodge_db  # noqa: E402
+from server import notify  # noqa: E402
+from server.notification_types import Plugin  # noqa: E402
 from woltspace import backup  # noqa: E402
 
 SECRET = "dummy-secret-7f3a"
@@ -159,6 +164,90 @@ def test_pages_stay_within_max_bytes_and_a_huge_row_is_skipped_not_stuck(tmp_pat
         with pytest.raises(inbox.Invalid):
             store.history(token, **bad)
     assert rows(tmp_path, "SELECT state FROM inbox_messages") == [("queued",)] * 4  # reading took nothing
+
+
+# -- notify -------------------------------------------------------------------
+
+def _notify_lodge(tmp_path, monkeypatch, send):
+    store = lodge(tmp_path)
+    reader(store, "s1", "pal")
+    monkeypatch.setattr(notify, "WOLTS_DIR", tmp_path)
+    monkeypatch.setattr(notify, "_connector_up", lambda name: True)
+    monkeypatch.setattr(notify, "append_chat_history", Mock())
+    monkeypatch.setitem(notify.SENDERS, "telegram", Plugin("telegram", send))
+    threads = []
+    real = conversation_log.record_attempt
+
+    def record_attempt(*args):
+        threads.append(threading.current_thread() is threading.main_thread())
+        return real(*args)
+    monkeypatch.setattr(conversation_log, "record_attempt", record_attempt)
+    return threads
+
+
+def _send(text, session="s1"):
+    return notify._send("telegram", session, text, "42", session_record={"name": "s1", "wolt": "pal"})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("route_session", ["s1", ""])  # "": an explicit route outside the session's thread
+async def test_notify_records_the_attempt_off_the_loop_then_accepted(tmp_path, monkeypatch, route_session):
+    sent = []
+
+    async def send(message, destination, context):
+        sent.append(archived(tmp_path)[-1][-1])  # the attempt is on disk before the send
+    threads = _notify_lodge(tmp_path, monkeypatch, send)
+    await _send("done", route_session)
+    assert sent == ["unknown"] and threads == [False]
+    assert archived(tmp_path) == [("notify", 1, "pal", None, "telegram", 1, "done", "accepted")]
+
+
+@pytest.mark.asyncio
+async def test_notify_refuses_to_send_what_it_cannot_record(tmp_path, monkeypatch):
+    send = Mock()
+    _notify_lodge(tmp_path, monkeypatch, send)
+    lodge_db.connect(tmp_path).close()
+    with failing(tmp_path, "conversation_log"):
+        with pytest.raises(conversation_log.Unavailable) as error:
+            await _send(SECRET)
+    assert not send.called and SECRET not in str(error.value) and error.value.__cause__ is None
+
+
+@pytest.mark.asyncio
+async def test_a_lost_outcome_keeps_the_providers_success_and_never_resends(tmp_path, monkeypatch, caplog):
+    calls = []
+
+    async def send(message, destination, context):
+        calls.append(message.text)
+    _notify_lodge(tmp_path, monkeypatch, send)
+    monkeypatch.setattr(conversation_log, "set_outcome", Mock(side_effect=OSError(SECRET)))
+    result = await _send(SECRET)
+    assert result["adapter"] == "telegram" and calls == [SECRET]
+    assert archived(tmp_path)[-1][-1] == "unknown" and SECRET not in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fault", [RuntimeError("provider down"), asyncio.CancelledError()])
+async def test_an_error_or_cancel_leaves_the_attempt_unknown_and_unsent_again(tmp_path, monkeypatch, fault):
+    calls = []
+
+    async def send(message, destination, context):
+        calls.append(1)
+        raise fault
+    _notify_lodge(tmp_path, monkeypatch, send)
+    with pytest.raises(type(fault)):
+        await _send("maybe")
+    assert calls == [1] and archived(tmp_path)[-1][-2:] == ("maybe", "unknown")
+
+
+def test_an_evicted_attempt_is_not_brought_back_by_its_outcome(tmp_path):
+    lodge_db.connect(tmp_path).close()
+    session(tmp_path, "s1")
+    attempt = conversation_log.record_attempt(tmp_path, "s1", "telegram", "x", time.time())
+    with lodge_db.write(tmp_path) as conn:
+        conn.execute("DELETE FROM conversation_log")
+    conversation_log.set_outcome(tmp_path, attempt, "accepted")
+    assert archived(tmp_path) == []
 
 
 # -- backup and restore ----------------------------------------------------------
