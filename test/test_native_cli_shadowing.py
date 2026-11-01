@@ -519,6 +519,20 @@ def test_a_lodge_with_wolts_but_no_image_needs_a_named_release(tmp_path, verb):
     assert _built(calls) == ["WOLTSPACE_PYPI_VERSION=9.9.9"]
 
 
+@pytest.mark.parametrize("verb", ["init", "start", "build"])
+@pytest.mark.parametrize("scaffold", [".env", ".space/lodge.db"])
+def test_a_set_up_data_root_without_wolts_or_image_is_not_fresh(tmp_path, verb, scaffold):
+    wolts_dir = tmp_path / "wolts"
+    (wolts_dir / scaffold).parent.mkdir(parents=True, exist_ok=True)
+    (wolts_dir / scaffold).write_text("WOLTSPACE_PUBLIC_TUNNEL=false\n")
+    result = _launch(wolts_dir, verb, FAKE_NO_IMAGE="1", WOLTSPACE_NONINTERACTIVE="true")
+    log = tmp_path / "fake-bin" / "docker.log"
+    calls = [c.split() for c in log.read_text().splitlines()] if log.exists() else []
+    assert result.returncode == 1, result.stdout
+    assert "installed release is unknown" in result.stderr
+    assert not [c for c in calls if c[0] in ("build", "run", "rm")]
+
+
 def _checkout_pinning(tmp_path, pin):
     checkout = tmp_path / "checkout"
     (checkout / "container").mkdir(parents=True)

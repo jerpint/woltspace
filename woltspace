@@ -309,8 +309,10 @@ _resolve_build_version() {
   pin=$(sed -n 's/^ARG WOLTSPACE_PYPI_VERSION=//p' "$WOLTSPACE_DIR/container/Dockerfile" | head -n 1)
   [ "${1:-}" = fresh ] || INSTALLED_VERSION=$(_image_version)
   if [ -z "$INSTALLED_VERSION" ]; then
-    [ "${1:-}" = fresh ] || [ ! -d "$WOLTS_DIR" ] || [ "$(_count_wolts)" -eq 0 ] \
-      || _version_refused "this lodge has wolts but no image, so its installed release is unknown"
+    if [ -d "$WOLTS_DIR" ] && { [ "$(_count_wolts)" -gt 0 ] \
+      || [ -f "$WOLTS_DIR/.env" ] || [ -e "$WOLTS_DIR/.space/lodge.db" ]; }; then
+      _version_refused "this lodge has data but no image, so its installed release is unknown"
+    fi
     case "$pin" in
       [0-9]*.[0-9]*.[0-9]*) case "$pin" in *[!0-9.]*) _version_refused "this checkout pins prerelease ${pin}; a new lodge takes a final release" ;; esac ;;
       *) _version_refused "cannot read the release this checkout's Dockerfile pins" ;;
