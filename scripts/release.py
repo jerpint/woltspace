@@ -263,7 +263,7 @@ def latest_tag():
 
 
 def require_prerelease_settled(tag):
-    """Lodges read releases/latest, so this is checked rather than assumed; GitHub gets a moment to catch up."""
+    """The Releases page must not present an rc as current; GitHub gets a moment to catch up."""
     for attempt in range(6):
         if attempt:
             time.sleep(5)

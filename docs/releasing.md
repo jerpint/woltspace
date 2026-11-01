@@ -10,7 +10,8 @@ The workflow uses OIDC Trusted Publishing, without persistent upload secrets.
 Tags and GitHub releases are created only after both pinned registry versions
 are available and their downloads verify.
 The TUI release is created first without becoming Latest; the primary Python
-release becomes Latest last, because lodge update checks read releases/latest.
+release becomes Latest last. Latest only sets what GitHub's Releases page shows
+as current: `woltspace update` and `uv tool install` choose from PyPI.
 Pre-release versions (`0.6.0rc1`, `0.6.0b1`, `0.6.0.dev0`) are published as
 GitHub pre-releases and never become Latest, even from `main`. A retry corrects
 one already public as an ordinary release, and the run fails if it is still
