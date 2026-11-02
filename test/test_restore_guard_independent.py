@@ -16,16 +16,16 @@ import lodge_db
 from woltspace import backup
 
 PRIVATE = "NEUTRAL_" + "PRIVATE_PATH"
-METADATA = {  # inbox bookkeeping without mail: restores, every reader revoked
+METADATA = {  # inbox state this restore reads: restores as it is, every reader revoked
     "mailbox": "INSERT INTO inbox_mailboxes(wolt,state,created_at) VALUES('pal','open',1)",
     "event": "INSERT INTO inbox_events(seq,state) VALUES(999,'queued')",
     "usage": "INSERT INTO inbox_usage VALUES('',0,0,0)",
     "sequence": "INSERT INTO sqlite_sequence VALUES('inbox_messages',7)",
     "reader": "INSERT INTO inbox_mailboxes(wolt,state,created_at) VALUES('pal','open',1);"
               "INSERT INTO inbox_readers(hash,mailbox,session,created_at) VALUES(x'00',1,'s1',1)",
+    "counter": "INSERT INTO meta VALUES('inbox:enrollments','0')",
 }
 NATIVE = {
-    "counter": "INSERT INTO meta VALUES('inbox:enrollments','0')",
     "usage-drift": "INSERT INTO inbox_usage VALUES('7',0,0,1)",  # a charge with no mail
     "binding-column": "ALTER TABLE sessions ADD COLUMN inbox_revision INTEGER",
     "extra-column": "ALTER TABLE inbox_messages ADD COLUMN future_field TEXT",
@@ -106,7 +106,7 @@ def scratch(monkeypatch):
 
 
 @pytest.mark.parametrize("entry", ["disarm", "helper"])
-@pytest.mark.parametrize("kind", [*NATIVE, "acknowledged", "wal-only", "invalid-db", "orphan-shm", "orphan-journal"])
+@pytest.mark.parametrize("kind", [*NATIVE, "invalid-db", "orphan-shm", "orphan-journal"])
 def test_native_unknown_and_wal_custody_refuse_before_any_mutation(tmp_path, monkeypatch, request, scratch, entry, kind):
     target, root = tmp_path / "target", tmp_path / "target/copy"
     offline(root, kind, tmp_path)
@@ -117,11 +117,7 @@ def test_native_unknown_and_wal_custody_refuse_before_any_mutation(tmp_path, mon
     try:
         with pytest.raises(backup.RestoreRefused) as caught:
             call(entry, target, root, report)
-        assert caught.value.code in ("safe_state_present", "safe_state_unknown")
-        if kind in ("acknowledged", "wal-only", "counter"):
-            assert caught.value.code == "safe_state_present"
-        if kind == "usage-drift":
-            assert caught.value.code == "safe_state_unknown"
+        assert caught.value.code == "safe_state_unknown"
     finally:
         after = fingerprint(target)
         request.node.user_properties.extend([("tree_before", json.dumps(before)), ("tree_after", json.dumps(after)),
@@ -195,22 +191,23 @@ def test_raw_helper_rechecks_predicate_in_its_actual_write_transaction(tmp_path,
     def inspected_then_changed(*args):
         inspect(*args)
         with closing(sqlite3.connect(lodge_db.path(root))) as conn:
-            conn.execute("INSERT INTO meta VALUES('inbox:late','1')")
+            conn.execute("INSERT INTO inbox_usage VALUES('7',0,0,1)")  # a charge with no mail
             conn.commit()
         after_injection.append(fingerprint(target))
     monkeypatch.setattr(backup, "_refuse_native_state", inspected_then_changed)
     report = {"untouched": "sentinel"}
-    with pytest.raises(backup.RestoreRefused, match="safe_state_present"):
+    with pytest.raises(backup.RestoreRefused, match="safe_state_unknown"):
         call("helper", target, root, report)
     assert fingerprint(target) == after_injection[0] and report == {"untouched": "sentinel"}
 
 
-@pytest.mark.parametrize("kind", METADATA)
-def test_inbox_metadata_without_mail_restores_with_every_reader_revoked(tmp_path, kind):
+@pytest.mark.parametrize("kind", [*METADATA, "acknowledged", "wal-only"])
+def test_readable_inbox_state_restores_as_it_is_with_every_reader_revoked(tmp_path, kind):
     target, root = tmp_path / "target", tmp_path / "target/copy"
     offline(root, kind, tmp_path)
     kept = lambda: [rows(root, f"SELECT * FROM {t}") for t in (
-        "inbox_mailboxes", "inbox_events", "inbox_usage", "sqlite_sequence WHERE name LIKE 'inbox%'")]
+        "inbox_messages", "inbox_events", "inbox_usage", "sqlite_sequence WHERE name LIKE 'inbox%'",
+        "meta WHERE key LIKE 'inbox:%'")] + [rows(root, "SELECT id, wolt, state FROM inbox_mailboxes")]
     before = kept()
     assert any(before)
     backup.disarm(root, "/dummy-source", target)

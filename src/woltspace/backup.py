@@ -1213,15 +1213,14 @@ def _columns(conn: sqlite3.Connection, table: str) -> set[str]:
     return {row[1] for row in conn.execute(f'PRAGMA table_info("{table}")')}
 
 
-# --- Inbox mail refuses a restore ---
-# Disarming rewrites sessions and drops runtime records; a copy holding inbox
-# mail, acknowledged keys included, would come back with that custody silently
-# changed. Such a copy is refused before anything in it is touched, and stays
-# as extracted for a person to reconcile. Only an offline copy is supported.
-# Mailboxes, usage, events and sequences alone restore as they are (ids are
-# never reused); every reader is revoked in the disarm write. No clock here:
-# an acknowledged row past its 30 days still refuses until the lodge's next
-# inbox write prunes it.
+# --- The inbox restores as it is ---
+# Mail, acknowledged keys (dedupe), mailboxes, usage, events and sequences come
+# back as they were (ids are never reused). The disarm write revokes every
+# reader, puts mail claimed by the old lodge's readers back in the queue and
+# drops each mailbox's wake state (the old lodge's sessions and chat routes).
+# Pending mail may then run a second time: the old lodge must stay stopped.
+# Only an offline copy is supported. A layout this check cannot read, or usage
+# charged without mail, is refused before anything in the copy is touched.
 _KNOWN_SCHEMA = 5  # lodge_db's newest migration this check understands
 # The inbox tables exactly as lodge_db's migration 5 makes them; any other
 # layout (a table or column more or less) is one this check cannot read.
@@ -1234,15 +1233,14 @@ _INBOX_COLUMNS = {
     "inbox_usage": {"scope", "pending", "bytes", "keys"},
 }
 _REFUSED = {
-    "safe_state_present": "it holds inbox mail",
-    "safe_state_unknown": "its lodge.db could not be read as one without inbox state",
+    "safe_state_unknown": "its lodge.db holds inbox state in a layout this restore cannot read",
     "inspect_path_unsafe": "a path to inspect runs through a symlink or out of the copy",
 }
 
 
 class RestoreRefused(ValueError):
-    """The copy holds inbox state, or could not be inspected safely (`code`:
-    safe_state_present, safe_state_unknown, inspect_path_unsafe). Nothing in
+    """The copy holds inbox state it cannot read, or could not be inspected
+    safely (`code`: safe_state_unknown, inspect_path_unsafe). Nothing in
     it was changed, and it is not a usable restore."""
 
     def __init__(self, code: str):
@@ -1289,13 +1287,11 @@ def _refuse_inbox_state(conn: sqlite3.Connection) -> None:
         raise RestoreRefused("safe_state_unknown")
     if inbox and "meta" not in tables:  # the schema floor went with it
         raise RestoreRefused("safe_state_unknown")
-    if inbox and conn.execute("SELECT 1 FROM inbox_messages LIMIT 1").fetchone():
-        raise RestoreRefused("safe_state_present")  # acknowledged too: its key is still custody
-    if inbox and conn.execute("SELECT 1 FROM inbox_usage WHERE pending OR bytes OR keys LIMIT 1").fetchone():
+    mail = inbox and conn.execute("SELECT 1 FROM inbox_messages LIMIT 1").fetchone()
+    if inbox and not mail and conn.execute(
+            "SELECT 1 FROM inbox_usage WHERE pending OR bytes OR keys LIMIT 1").fetchone():
         raise RestoreRefused("safe_state_unknown")  # charges without mail: drift, not restored
     if "meta" in tables:
-        if conn.execute("SELECT 1 FROM meta WHERE key LIKE 'inbox:%' LIMIT 1").fetchone():
-            raise RestoreRefused("safe_state_present")
         floor = conn.execute("SELECT value FROM meta WHERE key='min_schema'").fetchone()
         if floor is not None and not (str(floor[0]).isdigit() and int(floor[0]) <= _KNOWN_SCHEMA):
             raise RestoreRefused("safe_state_unknown")
@@ -1338,8 +1334,9 @@ def _disarm_lodge_db(wolts_dir: Path, source: str, target: Path, report: dict) -
     quarantine, written the way a pre-lodge.db release kept it
     (`<wolt>/.state/sessions/<name>.json`): moved back into the copy, the next
     boot imports it. A table without the columns the lodge reads is one no
-    lodge acts on, and is left as it is. A copy with inbox state is refused
-    before anything is opened for writing (_refuse_native_state).
+    lodge acts on, and is left as it is. A copy with inbox state this restore
+    cannot read is refused before anything is opened for writing
+    (_refuse_native_state); readable inbox state restores as it is.
     """
     _refuse_native_state(target, wolts_dir)
     db = _guard(wolts_dir, wolts_dir / LODGE_DB)
@@ -1356,6 +1353,17 @@ def _disarm_lodge_db(wolts_dir: Path, source: str, target: Path, report: dict) -
         tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         if "inbox_readers" in tables:  # no reader of the old lodge reads here
             conn.execute("UPDATE inbox_readers SET revoked=1")
+        if "inbox_messages" in tables:
+            # Its claims would be held forever by revoked readers: queued again,
+            # as a release does. Wake state named the old lodge's sessions.
+            claimed = [row[0] for row in conn.execute("SELECT seq FROM inbox_messages WHERE state='claimed'")]
+            conn.execute("UPDATE inbox_messages SET state='queued', reader=NULL WHERE state='claimed'")
+            conn.executemany("INSERT INTO inbox_events(seq, state, reason) VALUES (?, 'queued', 'restored')",
+                             [(seq,) for seq in claimed])
+            conn.execute("UPDATE inbox_mailboxes SET wake=NULL")
+            counts = dict(conn.execute("SELECT state, count(*) FROM inbox_messages GROUP BY state").fetchall())
+            report["inbox"] = {"queued": counts.get("queued", 0), "requeued": len(claimed),
+                               "acknowledged": counts.get("acknowledged", 0)}
         if "apps_running" in tables and {"name", "record"} <= _columns(conn, "apps_running"):
             # On the machine a backup lands on, an old pid may be any live
             # process: the lodge would take the app as running, and stopping
@@ -1488,7 +1496,7 @@ def disarm(wolts_dir: Path, source: str, target: Path) -> dict:
     report = {
         "source": source, "runtime_records": [], "apps": [], "sessions_stopped": 0,
         "sessions_rebased": 0, "sessions_set_aside": [], "grants_rebased": 0,
-        "grants_dropped": [],
+        "grants_dropped": [], "inbox": None,
     }
     _refuse_native_state(target, wolts_dir)  # first: before any other check or removal
     _guard(wolts_dir, wolts_dir)
@@ -1786,5 +1794,13 @@ def disarm_lines(result: RestoreResult) -> list[str]:
         lines.append(
             f"approvals dropped: {len(done['grants_dropped'])} for folders outside the lodge; "
             "auto mode asks again"
+        )
+    mail = done.get("inbox")
+    if mail and (mail["queued"] or mail["acknowledged"]):
+        lines.append(
+            f"inbox restored: {mail['queued']} queued ({mail['requeued']} re-queued from claims), "
+            f"{mail['acknowledged']} acknowledged. Restored pending mail may run again; reconcile "
+            "effects since the backup. Keep the old lodge stopped. Replies to restored human "
+            "messages go to the default chat, not the original thread."
         )
     return lines
