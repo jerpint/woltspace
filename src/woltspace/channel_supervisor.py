@@ -164,6 +164,54 @@ class ConnectorState:
         return record
 
 
+# What an isolated connector inherits from the control plane: how to run a
+# process, find certificates and reach the network. Never a secret.
+CHILD_ENV_ALLOWLIST = (
+    "PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "LANGUAGE", "LC_ALL",
+    "LC_CTYPE", "TZ", "TMPDIR", "TERM", "SYSTEMROOT", "PYTHONIOENCODING",
+    "SSL_CERT_FILE", "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE",
+    "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy",
+)
+
+
+def child_environment(plan, parent=None) -> dict:
+    """The environment a connector's process starts with.
+
+    A built-in connector with its own class inherits the control plane's
+    environment, as it always has. A declared connector (`isolated_env`) gets
+    the allowlist above plus its plan's own env: only its declared secrets.
+    """
+    parent = os.environ if parent is None else parent
+    if getattr(plan, "isolated_env", False):
+        env = {key: parent[key] for key in CHILD_ENV_ALLOWLIST if key in parent}
+    else:
+        env = dict(parent)
+    env.update(plan.env)
+    return env
+
+
+def _connector_token(layout: RuntimeLayout, plan) -> str:
+    from .channels import _registry
+
+    _registry(layout)  # puts the runtime library on sys.path
+    import connector_broker
+
+    return connector_broker.new_token(Path(plan.socket_dir), plan.name)
+
+
+def publish_socket_connectors(layout: RuntimeLayout, plans) -> None:
+    """Tell the lodge's server which folder connectors to serve, and their owners."""
+    from .channels import _registry
+
+    _registry(layout)
+    import connector_host
+
+    connector_host.write_lodge_file(layout.wolts_dir, [
+        {"name": plan.name, "owners": list(plan.owners)}
+        for plan in plans if plan.enabled and plan.socket_dir
+    ])
+
+
 class ChannelSupervisor:
     """Start, watch, bounded-restart, and stop connector child processes."""
 
@@ -301,8 +349,11 @@ class ChannelSupervisor:
         plan = state.plan
         log_path = self._log_path(name)
         state.log = str(log_path)
-        env = dict(os.environ)
-        env.update(plan.env)
+        env = child_environment(plan)
+        if plan.socket_dir:
+            # A fresh token for every launch: a process left from an earlier
+            # one is turned away by the lodge's socket.
+            env["WOLTSPACE_CONNECTOR_TOKEN"] = _connector_token(self.layout, plan)
         try:
             handle = log_path.open("a")
             # The adapter may log a request URL, and a request URL carries the

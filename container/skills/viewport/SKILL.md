@@ -21,6 +21,10 @@ Wolt sites are served at `/wolt/<name>/site/`:
 - `wolt/site/hello.html` → `/wolt/<name>/site/hello.html`
 - `wolt/site/index.html` → `/wolt/<name>/site/` (index is served at the directory root)
 
+A bare `page.html` (or `wolt/site/page.html`, or the file's path on disk) is turned into your
+site's path for you. `push-view` checks the page loads first: if it says "not found", the file
+isn't there yet, and nothing was shown.
+
 The server runs on **port 7777**. You never need to curl it directly — `push-view` handles everything.
 
 ## Live reload

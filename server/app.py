@@ -1,16 +1,15 @@
 """Woltspace server — FastAPI replacement for server.js."""
 
 import asyncio
-import hashlib
 import json
 import os
 import re
+import sqlite3
 import subprocess
 import threading
 import time
 import contextlib
 import unicodedata
-from collections import deque
 from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -50,7 +49,8 @@ from .config import (
     load_dotenv,
 )
 from . import tunnel as tunnel_mgr
-from .notify import NoNotificationTarget, send_notification
+from .notify import AttachmentError, NoNotificationTarget, send_notification
+from .speech import SpeechError
 from .sparks import get_spark_with_chain, list_sparks
 from .pty_bridge import (
     PtyBridgeError,
@@ -61,14 +61,18 @@ from .pty_bridge import (
 # Session spawning — shared with bot
 import sys as _sys
 _sys.path.insert(0, str(WOLTSPACE_DIR / "container" / "lib"))
+from creature_types import base_type, creature_emoji, custom_creature_models
+from settings_files import settings_lock, write_json_atomic, write_text_atomic
 from sessions import (
     resume_session, start_session, stop_session,
     deliver_message, resolve_active_session, format_attributed_message,
     format_spawned_prompt,
-    wolt_harness, ResumeUnavailable, ResumeFailed,
+    wolt_harness, ResumeUnavailable, ResumeFailed, HarnessNotInstalled,
     stored_resume_id, recover_resume_id, taken_resume_ids, claim_resume_id,
 )
-from session_expiry import get_idle_timeout, get_pane_activity, set_idle_timeout
+from session_expiry import (
+    HOLD_MAX_SECONDS, get_idle_timeout, hold_active, last_use, public_hold, set_idle_timeout,
+)
 from session_runtime import RuntimeHandle, get_runtime
 from session_targets import SessionTarget
 from execution_policy import AutoGrantStore, POLICY_VERSION
@@ -81,10 +85,12 @@ from harnesses import (
     set_default_harness,
     set_tier_defaults,
     resolve_harness,
+    harness_install_problem,
     platform_skill_invoke,
     is_valid_model,
     model_catalog,
     tier_default_model,
+    creature_model,
     HARNESSES,
     refresh_model_catalogs,
 )
@@ -106,6 +112,7 @@ from apps import (
 )
 from sites import ensure_site, site_dir
 import wolfcore
+import wolt_archive
 from site_shell import inject_shell, load_site_config, memory_payload, shell_manifest, shell_tags, shell_wanted
 from .state import (
     bot_log,
@@ -238,6 +245,11 @@ async def lifespan(app: FastAPI):
     _start_file_watcher()
     _start_tool_gc()
     tunnel_mgr.start_tunnel()
+    try:
+        import connector_host
+        await connector_host.start(WOLTS_DIR)
+    except Exception as exc:  # a connector must never keep the lodge from starting
+        print(f"[connectors] socket broker not started: {type(exc).__name__}: {exc}")
     print(f"""
   woltspace server (python) · http://localhost:{PORT}
   wolt: {WOLT_NAME}
@@ -247,6 +259,11 @@ async def lifespan(app: FastAPI):
     yield
     # Watchers first: they are what used to outlive the shutdown window.
     stop_file_watchers()
+    try:
+        import connector_host
+        await connector_host.stop()
+    except Exception as exc:
+        print(f"[connectors] socket broker did not stop cleanly: {exc}")
     tunnel_mgr.stop_tunnel()
 
 
@@ -261,6 +278,7 @@ async def health():
     from woltspace.layout import RuntimeLayout
 
     layout = RuntimeLayout.from_env()
+    adoption = read_adoption_report(layout)
     return {
         "ok": True,
         # The lodge's own version. The tui reads it to check the minimum
@@ -270,9 +288,28 @@ async def health():
         "pid": os.getpid(),
         "wolts_dir": str(WOLTS_DIR),
         "isolation": os.environ.get("WOLTSPACE_ISOLATION", "external"),
-        "adoption": read_adoption_report(layout),
+        "adoption": adoption,
         "connectors": read_connector_report(layout).get("connectors", []),
+        "db": _db_health(adoption),
     }
+
+
+def _db_health(adoption: dict) -> dict:
+    """Where lodge.db is, which migrations it has, what was imported into it."""
+    import lodge_db
+    db = {"path": str(lodge_db.path(WOLTS_DIR)), "schema": [], "imported": {}}
+    try:
+        conn = lodge_db.connect(WOLTS_DIR, readonly=True)
+        try:
+            db["schema"] = lodge_db.applied_migrations(conn)
+            db["imported"] = lodge_db.imports(conn)
+        finally:
+            conn.close()
+    except sqlite3.Error as exc:
+        db["error"] = f"{type(exc).__name__}: {exc}"
+    if adoption.get("import_errors"):
+        db["import_error"] = adoption["import_errors"]
+    return db
 
 # --- Templates & Static ---
 
@@ -662,7 +699,9 @@ async def post_current(request: Request):
     body = await request.json()
     url = body.get("url")
     if url:
-        set_current_url(url, session, body.get("port", 7777))
+        # set_viewport writes the record under the session's flock, which a rest
+        # holds while it stops tmux: never wait for it on the event loop.
+        await asyncio.to_thread(set_current_url, url, session, body.get("port", 7777))
         log_view(url, body.get("title"))
     return {"url": get_current_url(session)}
 
@@ -754,6 +793,23 @@ async def views_history():
 
 # --- Notify ---
 
+def _touch_origin(name: str) -> None:
+    """A session that talks is in use: its own notify, message or spawn stamps it.
+
+    Only last_activity, only on a running record, through the locked touch();
+    never the status, so a resting sender stays resting. The name comes from
+    the caller, on the same trust as /notify's session and /current.
+    """
+    if not name or sanitize_session(name) != name or name == "main":
+        return
+    from sessions import SessionRegistry
+    try:
+        SessionRegistry(WOLTS_DIR).touch(name)
+    except Exception as exc:
+        # Stamping use never fails the send it rides on.
+        print(f"[sessions] could not stamp use on {name}: {exc}")
+
+
 @app.post("/notify")
 async def post_notify(request: Request):
     body = await request.json()
@@ -770,10 +826,22 @@ async def post_notify(request: Request):
             explicit["thread_ts"] = body.get("thread_ts")
         elif body["adapter"] == "telegram":
             explicit["chat_id"] = body.get("chat_id", "")
+        else:
+            # A connector declared in the registry: its own route text (notify --to).
+            explicit["route"] = body.get("route", "")
+    # Outbox entries `notify --file` staged: [{"id", "name"}]. Never a path.
+    attachments = body.get("attachments") or []
+    # `notify --speak`: {"text"}, the words the lodge is to say. Passed on only
+    # when the request has it, so every other call is the one it always was.
+    speak = body.get("speak")
     try:
-        result = await send_notification(session, message, explicit=explicit or None)
+        result = await send_notification(
+            session, message, explicit=explicit or None, attachments=attachments,
+            **({} if speak is None else {"speak": speak}),
+        )
         print(f"[notify] → {result.get('adapter')} | {message[:80]}")
         bot_log("notify_sent", {"session": session, **result, "message": message})
+        await asyncio.to_thread(_touch_origin, session)
         return {"ok": True, **result}
     except NoNotificationTarget as e:
         # Not a server fault: no chat has been connected yet. 409 so a caller
@@ -786,9 +854,26 @@ async def post_notify(request: Request):
             "remedy": "Set TELEGRAM_BOT_TOKEN + TELEGRAM_ALLOWED_USERS in the data "
                       "root's .env, or run the /telegram skill to connect a chat.",
         }, status_code=409)
+    except AttachmentError as e:
+        # The file cannot go, and `reason` tells the caller which rule it met.
+        print(f"[notify] attachment refused: {e}")
+        return JSONResponse(
+            {"ok": False, "error": str(e), "reason": e.reason},
+            status_code=413 if e.reason == "attachment_too_large" else 400,
+        )
+    except SpeechError as e:
+        # The words could not be made into audio; nothing was sent.
+        print(f"[notify] {time.strftime('%Y-%m-%dT%H:%M:%S%z')} speech failed: "
+              f"session={session or '-'}: {e}")
+        return JSONResponse(
+            {"ok": False, "error": str(e), "reason": e.reason},
+            status_code=502 if e.reason == "speech_failed" else 400,
+        )
     except Exception as e:
-        print(f"[notify] error: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+        # Some errors carry no text (an httpx timeout, say); name them instead.
+        error = str(e) or type(e).__name__
+        print(f"[notify] error: {error}")
+        return JSONResponse({"error": error}, status_code=500)
 
 
 # --- Memory ---
@@ -823,8 +908,10 @@ async def _deliver_or_resume(safe: str, text: str, body: dict):
         from_session=body.get("from_session", "") or "",
     )
     status = result.get("status")
+    sender = body.get("from_session", "") or ""
     if status == "delivered":
         print(f"[message] → {safe}: {text[:80]}")
+        await asyncio.to_thread(_touch_origin, sender)
         return {"ok": True, **result}
     if status in {"session-dead", "agent-gone"}:
         from sessions import SessionRegistry
@@ -839,6 +926,7 @@ async def _deliver_or_resume(safe: str, text: str, body: dict):
         try:
             resumed = await asyncio.to_thread(resume_session, safe, prompt)
             print(f"[message] resumed → {safe}: {text[:80]}")
+            await asyncio.to_thread(_touch_origin, sender)
             return {"ok": True, **resumed, "status": "resumed", "session": safe}
         except (ValueError, ResumeUnavailable, ResumeFailed, subprocess.CalledProcessError) as exc:
             return JSONResponse(
@@ -887,6 +975,80 @@ async def session_describe(session_id: str, request: Request):
     return described
 
 
+_HOLD_REASON_MAX = 200
+
+
+def _hold_reason(value) -> str:
+    """One line, no control characters, like a session description."""
+    if not isinstance(value, str):
+        return ""
+    text = " ".join(value.split())
+    text = "".join(c for c in text if not unicodedata.category(c).startswith("C"))
+    return " ".join(text.split())
+
+
+def _hold_locked(safe: str, seconds: int | None, reason: str):
+    from sessions import SessionRegistry
+    with SessionRegistry(WOLTS_DIR).edit(safe) as data:
+        if data is None:
+            return JSONResponse({"error": "session not found"}, status_code=404)
+        if data.get("status") != "running":
+            return JSONResponse({"error": f"session is {data.get('status') or 'not running'}; only a running session can hold"},
+                                status_code=409)
+        now = int(time.time())
+        data["hold"] = {"until": None if seconds is None else now + seconds, "reason": reason, "since": now}
+        data["last_activity"] = now  # taking a hold is use
+    return {"ok": True, "session": safe, "hold": data["hold"]}
+
+
+def _release_hold_locked(safe: str):
+    from sessions import SessionRegistry
+    with SessionRegistry(WOLTS_DIR).edit(safe) as data:
+        if data is None:
+            return JSONResponse({"error": "session not found"}, status_code=404)
+        # A raw write: releasing is not use, so an idle session rests on the next sweep.
+        data.pop("hold", None)
+    return {"ok": True, "session": safe, "hold": None}
+
+
+@app.post("/sessions/{session_id}/hold")
+async def hold_session(session_id: str, request: Request):
+    """Keep a running session from resting while a background task runs in it.
+
+    Body: {"seconds": N | null, "reason": "..."}; null holds until released.
+    """
+    safe = sanitize_session(session_id)
+    if not safe or safe != session_id:
+        return JSONResponse({"error": "invalid session id"}, status_code=400)
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return JSONResponse({"error": "JSON object body required"}, status_code=400)
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "JSON object body required"}, status_code=400)
+    if "seconds" not in body:
+        return JSONResponse({"error": "seconds required: a whole number of seconds, or null for forever"}, status_code=400)
+    seconds = body["seconds"]
+    if seconds is not None and (not isinstance(seconds, int) or isinstance(seconds, bool)
+                                or not 0 < seconds <= HOLD_MAX_SECONDS):
+        return JSONResponse({"error": "seconds must be a positive whole number, or null for forever"}, status_code=400)
+    reason = _hold_reason(body.get("reason"))
+    if not reason:
+        return JSONResponse({"error": "reason required: name the task that is running"}, status_code=400)
+    if len(reason) > _HOLD_REASON_MAX:
+        return JSONResponse({"error": f"reason must be {_HOLD_REASON_MAX} characters or fewer"}, status_code=400)
+    return await asyncio.to_thread(_hold_locked, safe, seconds, reason)
+
+
+@app.delete("/sessions/{session_id}/hold")
+async def release_hold(session_id: str):
+    """Drop a session's hold. It rests at the next sweep only if nobody is using it."""
+    safe = sanitize_session(session_id)
+    if not safe or safe != session_id:
+        return JSONResponse({"error": "invalid session id"}, status_code=400)
+    return await asyncio.to_thread(_release_hold_locked, safe)
+
+
 @app.post("/sessions/{session_id}/message")
 async def session_message(session_id: str, request: Request):
     """Deliver to a running session, or resume a resting one on contact."""
@@ -898,37 +1060,60 @@ async def session_message(session_id: str, request: Request):
     return await _deliver_or_resume(safe, text, body)
 
 
-def _rest_session_locked(safe: str, expected_digest: str):
-    """Verify and stop one session without blocking the server event loop."""
-    from sessions import SessionRegistry
+def _rest_session_locked(safe: str, idle_since: int):
+    """Verify and stop one idle session without blocking the server event loop.
+
+    The authority judges the rule itself: the session is running, can come
+    back, holds nothing, and nobody has used it since idle_since or for the
+    whole window. stop_and_settle then claims it `stopping` only if no use, hold
+    or resume came after the judgment, and stops tmux outside any write.
+    """
+    from sessions import SessionRegistry, stamp_resume_id, stop_and_settle
     registry = SessionRegistry(WOLTS_DIR)
     data = registry.get(safe, check_alive=False)
     if data is None:
         return JSONResponse({"error": "session not found"}, status_code=404)
     wolt = data.get("wolt", "")
-    with registry._lock(wolt, safe):
-        data = registry.get(safe, wolt=wolt, check_alive=False)
-        if data is None:
-            return JSONResponse({"error": "session not found"}, status_code=404)
-        if data.get("status") != "running":
-            return {"ok": True, "status": data.get("status"), "session": safe}
-        # Resting must be reversible: stamp a recoverable id, or refuse.
-        # (we already hold this session's lock, so persist with the raw write)
-        if not claim_resume_id(registry, data, lambda d: registry._write(wolt, safe, d)):
-            return JSONResponse({"error": "session has no conversation to resume; not resting it"}, status_code=409)
-        try:
-            pane = get_runtime().capture(RuntimeHandle.from_record(data), start=None)
-        except Exception:
-            return JSONResponse({"error": "session activity could not be verified"}, status_code=409)
-        current_digest = hashlib.sha256(pane.encode("utf-8")).hexdigest()
-        if current_digest != expected_digest:
-            return JSONResponse({"error": "session became active; rest aborted"}, status_code=409)
-        get_runtime().stop(RuntimeHandle.from_record(data))
-        now = int(time.time())
-        data["status"] = "resting"
-        data["rested_at"] = now
-        registry._write(wolt, safe, data)
-        return {"ok": True, "status": "resting", "session": safe, "rested_at": now}
+    # Resting must be reversible: recover a missing id first, outside the write
+    # below (recovery reads the engine's files).
+    if data.get("status") == "running" and not stored_resume_id(data):
+        claim_resume_id(registry, data, lambda d: stamp_resume_id(
+            registry, wolt, safe, d["harness_session_id"]))
+    data = registry.get(safe, wolt=wolt, check_alive=False)
+    if data is None:
+        return JSONResponse({"error": "session not found"}, status_code=404)
+    if data.get("status") != "running":
+        return {"ok": True, "status": data.get("status"), "session": safe}
+    if not stored_resume_id(data):
+        return JSONResponse({"error": "session has no conversation to resume; not resting it"}, status_code=409)
+    now = int(time.time())
+    if hold_active(data, now):
+        return JSONResponse({"error": "session is held; not resting it"}, status_code=409)
+    try:
+        used = last_use(data, get_runtime().last_keys())
+    except Exception:
+        used = None
+    if used is None:
+        return JSONResponse({"error": "session activity could not be verified"}, status_code=409)
+    if used > idle_since:
+        return JSONResponse({"error": "session was used since; rest aborted"}, status_code=409)
+    # The authority judges the quiet window itself, never the caller. This
+    # also closes the same-second gap: use in the second the vulture
+    # looked is "now", far inside any window.
+    timeout = get_idle_timeout()
+    if timeout is None or now - used < timeout:
+        return JSONResponse({"error": "session is not idle long enough; rest aborted"}, status_code=409)
+    stopped = stop_and_settle(
+        registry, safe, data,
+        lambda seen: get_runtime().stop(RuntimeHandle.from_record(seen)),
+        lambda record: record.update(status="resting", rested_at=now, rest_reason="idle"),
+        wolt=wolt,
+    )
+    if stopped is None:
+        return JSONResponse({"error": "session was used since; rest aborted"}, status_code=409)
+    if not stopped:
+        return JSONResponse({"error": "session could not be stopped; still running"}, status_code=409)
+    return {"ok": True, "status": "resting", "session": safe, "rested_at": now}
 
 
 @app.post("/sessions/{session_id}/rest")
@@ -941,10 +1126,12 @@ async def rest_session(session_id: str, request: Request):
         body = await request.json()
     except Exception:
         return JSONResponse({"error": "JSON object body required"}, status_code=400)
-    expected_digest = body.get("pane_digest") if isinstance(body, dict) else None
-    if not isinstance(expected_digest, str) or len(expected_digest) != 64:
-        return JSONResponse({"error": "pane_digest required"}, status_code=400)
-    return await asyncio.to_thread(_rest_session_locked, safe, expected_digest)
+    # The last use the caller judged idle; a newer one aborts.
+    idle_since = body.get("idle_since") if isinstance(body, dict) else None
+    if (not isinstance(idle_since, int) or isinstance(idle_since, bool)
+            or not 0 < idle_since <= time.time()):
+        return JSONResponse({"error": "idle_since required"}, status_code=400)
+    return await asyncio.to_thread(_rest_session_locked, safe, idle_since)
 
 
 @app.post("/wolts/{name}/message")
@@ -959,7 +1146,7 @@ async def wolt_message(name: str, request: Request):
     registry = SessionRegistry(WOLTS_DIR)
     session_id = resolve_active_session(safe_wolt, registry=registry)
     if not session_id:
-        resting = [s for s in registry.list(wolt=safe_wolt) if s.get("status") == "resting"]
+        resting = [s for s in registry.list(wolt=safe_wolt) if s.get("status") in ("resting", "stopping")]
         resting.sort(key=lambda s: (s.get("last_activity") or 0, s.get("created_at") or 0), reverse=True)
         session_id = resting[0]["name"] if resting else None
     if not session_id:
@@ -988,7 +1175,8 @@ async def session_new_create(request: Request):
 
     Expects JSON body with:
       - name: wolt name (required, lowercase alphanumeric + hyphens)
-      - type: creature type (required, one of: otter, beaver, raccoon)
+      - type: creature type (required: otter, beaver, raccoon, or one of the
+        lodge's custom creatures)
       - harness: engine for this wolt (optional, lodge default otherwise)
       - model: model for this wolt (optional, the tier default otherwise)
 
@@ -1021,9 +1209,12 @@ async def session_new_create(request: Request):
             {"detail": f"a wolt named {wolt_name} already exists"}, status_code=409,
         )
 
-    # Validate type — only rodent types can be created from the lodge
-    if wolt_type not in ("otter", "beaver", "raccoon"):
-        return JSONResponse({"detail": "type must be otter, beaver, or raccoon"}, status_code=400)
+    # Validate type — only rodent types can be created from the lodge: the
+    # three sizes, or a custom creature (which is one of them underneath).
+    from creature_types import is_custom
+    if wolt_type not in ("otter", "beaver", "raccoon") and not is_custom(wolt_type):
+        return JSONResponse(
+            {"detail": "type must be otter, beaver, raccoon, or a custom creature"}, status_code=400)
     if selected_harness not in HARNESSES:
         return JSONResponse({"detail": f"unknown harness: {selected_harness}"}, status_code=400)
     requested_model = body.get("model") or ""
@@ -1035,6 +1226,13 @@ async def session_new_create(request: Request):
             {"detail": f"unknown model for {selected_harness}: {requested_model}"},
             status_code=400,
         )
+    # Refuse before scaffolding: a wolt whose engine is missing would only get
+    # a session that exits 127, with the reason buried in the boot log.
+    problem = harness_install_problem(
+        selected_harness, isolation=RuntimeContext.from_env().isolation,
+    )
+    if problem:
+        return JSONResponse({"detail": problem}, status_code=400)
 
     try:
         # Step 1: Scaffold the wolt with environment-appropriate harness config.
@@ -1105,9 +1303,12 @@ async def session_new_lodge(request: Request):
         )
         # Site auto-start + viewport URL handled by start_session()
         print(f"[sessions/lodge] spawned {result['name']} for {wolt}")
+        await asyncio.to_thread(_touch_origin, body.get("from_session", "") or "")
         return result
     except PermissionError as e:
         return JSONResponse({"error": str(e)}, status_code=403)
+    except HarnessNotInstalled as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=404)
     except Exception as e:
@@ -1181,6 +1382,24 @@ async def session_new_slack(request: Request):
 
 # --- Sessions list ---
 
+def _show_hold(session: dict, now: int) -> bool:
+    """Leave only a hold in force on a session row; one that has ended waits
+    for the next write to drop it. Returns whether the session holds."""
+    held = hold_active(session, now)
+    hold = session.pop("hold", None)
+    if held:
+        session["hold"] = public_hold(hold)
+    return held
+
+
+def _last_keys() -> dict[str, int]:
+    """tmux's last client input per session; empty when tmux cannot say."""
+    try:
+        return get_runtime().last_keys()
+    except Exception:
+        return {}
+
+
 @app.get("/sessions")
 async def list_sessions(view: str = ""):
     from sessions import SessionRegistry
@@ -1191,14 +1410,19 @@ async def list_sessions(view: str = ""):
     else:
         sessions = reg.list()
     timeout = get_idle_timeout()
-    observations = get_pane_activity() if timeout is not None else {}
+    keys = await asyncio.to_thread(_last_keys) if timeout is not None else {}
     now = int(time.time())
     for session in sessions:
         session["idle_timeout_seconds"] = timeout
-        observed = observations.get(session.get("name", ""), {}).get("unchanged_since")
-        if timeout is not None and isinstance(observed, int) and session.get("status") == "running":
-            session["idle_seconds"] = max(0, now - observed)
-            session["closes_in_seconds"] = max(0, timeout - session["idle_seconds"])
+        held = _show_hold(session, now)
+        if session.get("status") != "running":
+            continue
+        used = last_use(session, keys)
+        if timeout is not None and used is not None:
+            session["idle_seconds"] = max(0, now - used)
+            # A held session does not close; it rests only after its hold ends.
+            if not held:
+                session["closes_in_seconds"] = max(0, timeout - session["idle_seconds"])
     sessions.sort(key=lambda s: (0 if s.get("status") == "running" else 1, -(s.get("created_at") or 0)))
     return payload if view == "lodge" else sessions
 
@@ -1215,6 +1439,7 @@ async def get_session(name: str):
     )
     if session is None:
         return JSONResponse({"error": "not found"}, status_code=404)
+    _show_hold(session, int(time.time()))
     return session
 
 
@@ -1274,6 +1499,14 @@ def _configured_wolts() -> list[dict]:
                     "dir": entry.name,
                     "home": str(entry.resolve()),
                     **config,
+                    # How every surface shows this wolt; a custom creature's
+                    # own emoji included (creature_types).
+                    "emoji": creature_emoji(config.get("type") or "rodent"),
+                    # What it behaves like: a custom creature's size, else its type.
+                    "base_type": base_type(config.get("type") or "rodent"),
+                    # A custom creature's own model per engine, so pages show
+                    # the model a session would really get (see woltDefaultModel).
+                    "creature_models": custom_creature_models(config.get("type")),
                 })
             except Exception:
                 pass
@@ -1301,27 +1534,6 @@ async def list_wolts():
 # work, and they are deliberately not in the response.
 
 _WOLF_FIRES_MAX = 500
-# Enough of the journal's tail to satisfy the largest allowed page even when
-# every line is filtered out; the file is append-only and never rewritten.
-_WOLF_JOURNAL_TAIL = 5000
-
-
-def _wolf_state_dir() -> Path:
-    from paths import space_wolf_dir
-
-    return space_wolf_dir(WOLTS_DIR)
-
-
-def _wolf_last_run(state_dir: Path, wolt: str, cron_name: str) -> str | None:
-    """The `YYYY-MM-DD-HH:MM` stamp the scheduler writes after each fire.
-
-    A cron name comes from a wolt's own `wolf.json`, which is a file a wolt can
-    write — so it is untrusted input on the way to a path join. `../../secret`
-    reads outside the state dir otherwise. `wolfcore.stamp_path` holds both
-    gates: wolt and name must look like plain identifiers, and the resolved
-    path must still be inside the state dir.
-    """
-    return wolfcore.read_last_run(state_dir, wolt, cron_name)
 
 
 @app.get("/wolf/schedules")
@@ -1332,7 +1544,6 @@ def wolf_schedules():
     A plain `def`: this walks the filesystem, and doing that on the event loop
     blocks every other request while it runs.
     """
-    state_dir = _wolf_state_dir()
     schedules = []
     for wolf_json in sorted(WOLTS_DIR.glob("*/wolt/wolf.json")):
         wolt = wolf_json.parent.parent.name
@@ -1348,7 +1559,7 @@ def wolf_schedules():
                 # recurring crons carry `schedule`, one-offs carry `at`
                 "schedule": cron.get("schedule", ""),
                 "at": cron.get("at", ""),
-                "last_run": _wolf_last_run(state_dir, wolt, cron.get("name", "")),
+                "last_run": wolfcore.read_last_run(WOLTS_DIR, wolt, cron.get("name", "")),
             } for cron in crons],
         })
     return {"wolts_dir": str(WOLTS_DIR), "schedules": schedules}
@@ -1358,35 +1569,12 @@ def wolf_schedules():
 def wolf_fires(limit: int = 50, cron: str = "", wolt: str = ""):
     """Recent cron fires, newest first, from the scheduler's job journal.
 
-    `limit` caps the response; `cron` and `wolt` narrow it. A journal that does
-    not exist yet is an empty list, not an error — a colony whose wolf has never
-    fired is a normal colony. Only the journal's tail is parsed: this answers
-    "what happened lately", and a colony that has been firing crons for a year
-    should not pay for all of it to serve `limit=1`.
+    `limit` caps the response; `cron` and `wolt` narrow it. A colony whose wolf
+    has never fired has an empty list, not an error.
     """
     limit = max(0, min(limit, _WOLF_FIRES_MAX))
-    journal = _wolf_state_dir() / "jobs.jsonl"
-    fires = []
-    try:
-        with journal.open() as handle:
-            tail = deque(handle, maxlen=_WOLF_JOURNAL_TAIL)
-    except OSError:
-        tail = ()
-    for line in tail:
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            entry = json.loads(line)
-        except json.JSONDecodeError:
-            continue  # a torn last line while the wolf is mid-append
-        if cron and entry.get("cron") != cron:
-            continue
-        if wolt and entry.get("owner") != wolt:
-            continue
-        fires.append(entry)
-    fires.reverse()
-    return {"count": len(fires), "fires": fires[:limit]}
+    fires = wolfcore.read_journal(WOLTS_DIR, limit=limit, cron=cron, wolt=wolt)
+    return {"count": len(fires), "fires": fires}
 
 
 # --- Wolf crons: the management API ---
@@ -1463,9 +1651,8 @@ def wolf_crons():
     wolf fires on the clock of the machine the lodge runs on.
     """
     now = wolfcore.now_local()
-    state_dir = _wolf_state_dir()
     crons, errors = wolfcore.load_all(WOLTS_DIR)
-    out = [wolfcore.describe(c, c["_owner"], state_dir, now) for c in crons]
+    out = [wolfcore.describe(c, c["_owner"], WOLTS_DIR, now) for c in crons]
     far = datetime.max.replace(tzinfo=timezone.utc)
     out.sort(key=lambda c: datetime.fromisoformat(c["next_run"]) if c["next_run"] else far)
     return {
@@ -1511,7 +1698,7 @@ def wolf_cron_add(payload: dict | None = Body(None), dry_run: bool = False):
         wolfcore.atomic_write(path, after)
     print(f"[wolf] added {wolt}/{entry['name']}")
     return JSONResponse(
-        wolfcore.describe(entry, wolt, _wolf_state_dir(), now), status_code=201)
+        wolfcore.describe(entry, wolt, WOLTS_DIR, now), status_code=201)
 
 
 def _wolf_find(wolt: str, name: str):
@@ -1581,9 +1768,9 @@ def wolf_cron_update(wolt: str, name: str, payload: dict | None = Body(None)):
             wolfcore.atomic_write(target_path, wolfcore.dump_wolf_json(target_data))
             del data["crons"][index]
             wolfcore.atomic_write(path, wolfcore.dump_wolf_json(data))
-            wolfcore.move_last_run(_wolf_state_dir(), wolt, name, target, name)
+            wolfcore.move_last_run(WOLTS_DIR, wolt, name, target, name)
     print(f"[wolf] updated {wolt}/{name}" + (f" → {target}" if target != wolt else ""))
-    return wolfcore.describe(entry, target, _wolf_state_dir(), wolfcore.now_local())
+    return wolfcore.describe(entry, target, WOLTS_DIR, wolfcore.now_local())
 
 
 @app.delete("/wolf/crons/{wolt}/{name}")
@@ -1597,9 +1784,7 @@ def wolf_cron_delete(wolt: str, name: str):
             return data
         del data["crons"][index]
         wolfcore.atomic_write(path, wolfcore.dump_wolf_json(data))
-    stamp = wolfcore.stamp_path(_wolf_state_dir(), wolt, name)
-    if stamp is not None:
-        stamp.unlink(missing_ok=True)
+    wolfcore.forget_last_run(WOLTS_DIR, wolt, name)
     print(f"[wolf] deleted {wolt}/{name}")
     return {"deleted": True, "wolt": wolt, "name": name}
 
@@ -1613,7 +1798,6 @@ def wolf_cron_fire(wolt: str, name: str):
     if path is None:
         return data
     entry = data["crons"][index]
-    state_dir = _wolf_state_dir()
     try:
         result = start_session(
             wolt=wolt,
@@ -1621,13 +1805,11 @@ def wolf_cron_fire(wolt: str, name: str):
             routing={"adapter": "lodge"},
         )
     except Exception as exc:
-        wolfcore.append_journal(state_dir, name, "session", event="manual",
-                                owner=wolt, error=str(exc))
+        wolfcore.append_journal(WOLTS_DIR, name, "manual", owner=wolt, error=str(exc))
         status = 403 if isinstance(exc, PermissionError) else 500
         return _wolf_error(status, str(exc))
     session, url = result.get("name"), result.get("url")
-    wolfcore.append_journal(state_dir, name, "session", event="manual",
-                            owner=wolt, session=session, link=url)
+    wolfcore.append_journal(WOLTS_DIR, name, "manual", owner=wolt, session=session, link=url)
     print(f"[wolf] manual run {wolt}/{name} → {session}")
     return {"session": session, "url": url}
 
@@ -1741,7 +1923,7 @@ def _wolt_settings_response(safe: str, cfg: dict) -> dict:
     harness = cfg.get("harness") or get_default_harness()
     creature = cfg.get("type") or "raccoon"
     pinned_model = cfg.get("model") or ""
-    model = pinned_model if is_valid_model(harness, pinned_model) else tier_default_model(harness, creature)
+    model = pinned_model if is_valid_model(harness, pinned_model) else creature_model(harness, creature)
     return {
         "wolt": safe,
         "harness": harness,
@@ -1754,9 +1936,8 @@ def _wolt_settings_response(safe: str, cfg: dict) -> dict:
 
 
 def _write_wolt_settings(wolt_json: Path, cfg: dict) -> None:
-    tmp = wolt_json.with_suffix(".tmp")
-    tmp.write_text(json.dumps(cfg, indent=2) + "\n")
-    tmp.replace(wolt_json)
+    """Callers hold settings_lock(wolt_json) from their read to this write."""
+    write_json_atomic(wolt_json, cfg)
 
 
 def _apply_display_name(cfg: dict, safe: str, value: object) -> None:
@@ -1777,6 +1958,12 @@ def _apply_display_name(cfg: dict, safe: str, value: object) -> None:
 def _update_wolt_settings(name: str, body: dict) -> dict:
     if not body or not set(body).issubset({"harness", "model", "display_name"}):
         raise ValueError("body must contain harness, model and/or display_name only")
+    _safe, path = _wolt_settings_path(name)
+    with settings_lock(path):
+        return _update_wolt_settings_locked(name, body)
+
+
+def _update_wolt_settings_locked(name: str, body: dict) -> dict:
     safe, wolt_json, cfg = _load_wolt_settings(name)
     # Validate everything before the single write below.
     if "display_name" in body:
@@ -1797,7 +1984,7 @@ def _update_wolt_settings(name: str, body: dict) -> dict:
         raise ValueError(f"unknown harness: {requested_harness}")
     creature = cfg.get("type") or "raccoon"
     harness_changed = "harness" in body and chosen_harness != (cfg.get("harness") or get_default_harness())
-    tier_model = tier_default_model(chosen_harness, creature)
+    tier_model = creature_model(chosen_harness, creature)
     if "model" in body:
         requested_model = body.get("model")
         model_is_tier_default = requested_model in (None, "")
@@ -1833,6 +2020,121 @@ def _update_wolt_settings(name: str, body: dict) -> dict:
     result = _wolt_settings_response(safe, cfg)
     result.update({"ok": True, "harness": chosen_harness, "model": chosen_model})
     return result
+
+
+# --- Creatures ---
+# The lodge's custom creatures (creature_types). Every write goes through
+# these routes, so the woltspace CLI and the creatures skill share one
+# validated path, the same way the wolf's crons do.
+
+def _creatures_payload() -> dict:
+    from creature_types import SIZES, custom_creatures, wolts_using
+
+    custom = custom_creatures()
+    return {
+        "sizes": [{"id": size, "emoji": creature_emoji(size)} for size in SIZES],
+        "custom": [
+            {"id": cid, **entry, "wolts": wolts_using(cid, WOLTS_DIR)}
+            for cid, entry in sorted(custom.items())
+        ],
+    }
+
+
+@app.get("/creatures")
+def list_creatures():
+    return _creatures_payload()
+
+
+@app.post("/creatures")
+async def add_creature(request: Request):
+    from creature_types import add_custom
+
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "JSON object body required"}, status_code=400)
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "JSON object body required"}, status_code=400)
+    entry = dict(body)
+    cid = entry.pop("id", None)
+    try:
+        clean = await asyncio.to_thread(add_custom, cid, entry)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    return {"ok": True, "id": cid, **clean}
+
+
+@app.delete("/creatures/{cid}")
+async def remove_creature(cid: str):
+    from creature_types import remove_custom
+
+    try:
+        await asyncio.to_thread(remove_custom, cid)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    return {"ok": True, "id": cid}
+
+
+def _assign_creature(name: str, new_type: object) -> dict:
+    """Change only a wolt's creature type. Its own harness, model and role pins
+    are kept and reported, and the change applies from its next session: a
+    running session keeps the model it was spawned with (see resume_session)."""
+    from creature_types import SIZES, is_custom
+    from wolts import SINGLETON_TYPES
+
+    _safe, path = _wolt_settings_path(name)
+    # Lodge lock first: removing a creature checks no wolt is one under it.
+    with settings_lock(WOLTS_DIR / "woltspace.json"), settings_lock(path):
+        safe, wolt_json, cfg = _load_wolt_settings(name)
+        old_type = cfg.get("type") or "rodent"
+        if not isinstance(new_type, str) or not new_type:
+            raise ValueError("type is required")
+        if old_type in SINGLETON_TYPES:
+            raise ValueError(f"{safe} is the lodge's {old_type}; its creature does not change here")
+        if new_type not in SIZES and not is_custom(new_type):
+            raise ValueError("type must be otter, beaver, raccoon, or a custom creature")
+        cfg["type"] = new_type
+        _write_wolt_settings(wolt_json, cfg)
+        # Under the same locks: two assignments must leave the site with the
+        # emoji of the one that wrote wolt.json last.
+        site_emoji = _follow_site_emoji(safe, old_type, new_type)
+    kept = {k: cfg[k] for k in ("harness", "model", "role") if cfg.get(k)}
+    result = _wolt_settings_response(safe, cfg)
+    result.update({
+        "ok": True, "type": new_type, "previous_type": old_type,
+        "emoji": creature_emoji(new_type), "kept": kept, "site_emoji_updated": site_emoji,
+    })
+    return result
+
+
+def _follow_site_emoji(wolt: str, old_type: str, new_type: str) -> bool:
+    """A starter site.json carries a copy of the creature's emoji. When it is
+    still that copy, it follows the new creature; a wolt's own choice stays."""
+    site_json = WOLTS_DIR / wolt / "wolt" / "site" / "site.json"
+    try:
+        site = json.loads(site_json.read_text())
+        tokens = site.get("tokens")
+        if not isinstance(tokens, dict) or tokens.get("emoji") != creature_emoji(old_type):
+            return False
+        tokens["emoji"] = creature_emoji(new_type)
+        write_text_atomic(site_json, json.dumps(site, ensure_ascii=False) + "\n")
+        return True
+    except (OSError, json.JSONDecodeError, AttributeError):
+        return False
+
+
+@app.post("/wolts/{name}/creature")
+async def assign_creature(name: str, request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "JSON object body required"}, status_code=400)
+    if not isinstance(body, dict) or set(body) != {"type"}:
+        return JSONResponse({"error": "body must be {\"type\": ...}"}, status_code=400)
+    try:
+        return await asyncio.to_thread(_assign_creature, name, body["type"])
+    except (ValueError, FileNotFoundError, RuntimeError) as exc:
+        return _wolt_settings_error(exc)
 
 
 def _wolt_settings_error(exc: Exception) -> JSONResponse:
@@ -1881,6 +2183,37 @@ async def set_wolt_harness(name: str, request: Request):
         return result
     except (ValueError, FileNotFoundError, RuntimeError) as exc:
         return _wolt_settings_error(exc)
+
+
+# --- Archive, unarchive and delete a wolt ---
+# The file work is wolt_archive's. These routes only call it, off the event
+# loop: deleting a big folder takes a while.
+
+async def _archive_call(action, name: str):
+    try:
+        return await asyncio.to_thread(action, name, wolts_dir=WOLTS_DIR)
+    except wolt_archive.ArchiveError as exc:
+        return JSONResponse({"error": exc.message, **exc.extra}, status_code=exc.status)
+
+
+@app.get("/wolts/archived")
+async def archived_wolts():
+    return await asyncio.to_thread(wolt_archive.list_archived_wolts, wolts_dir=WOLTS_DIR)
+
+
+@app.post("/wolts/{name}/archive")
+async def archive_wolt(name: str):
+    return await _archive_call(wolt_archive.archive_wolt, name)
+
+
+@app.post("/wolts/archived/{name}/unarchive")
+async def unarchive_wolt(name: str):
+    return await _archive_call(wolt_archive.unarchive_wolt, name)
+
+
+@app.delete("/wolts/archived/{name}")
+async def delete_archived_wolt(name: str):
+    return await _archive_call(wolt_archive.delete_archived_wolt, name)
 
 
 # --- Runtime capabilities and repository-scoped Auto consent ---
@@ -2736,7 +3069,7 @@ async def wolves_page(request: Request):
     the /wolf/crons API, the same one `woltspace wolf` drives.
     """
     wolts = [
-        {"name": wolt["dir"], "type": wolt.get("type", "rodent")}
+        {"name": wolt["dir"], "type": wolt.get("type", "rodent"), "emoji": wolt["emoji"]}
         for wolt in _configured_wolts()
     ]
     return templates.TemplateResponse(request, "wolves.html", context={

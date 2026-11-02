@@ -4,28 +4,113 @@ A woltspace backup is a snapshot of the **data plane**: one `tar.gz` holding the
 wolts directory and a manifest describing it. No container, no image, no caches.
 
 ```bash
-woltspace backup                       # → woltspace-backup-<UTC timestamp>.tar.gz
+woltspace backup                       # slim → woltspace-backup-<UTC timestamp>.tar.gz
 woltspace backup --tag pre-rc5         # name it yourself
 woltspace backup --out ~/snapshots     # somewhere other than beside the wolts dir
+woltspace backup --full --out /Volumes/drive   # also keep media and other large files
 woltspace restore ~/snapshots/woltspace-backup-pre-rc5.tar.gz
 ```
 
 Both commands work the same natively and inside the container — they only ever
 touch files. Take one before an upgrade.
 
-## What goes in
+A backup is **slim** unless you pass `--full`: all context and code, with
+media and other large files listed rather than archived (below). Either way
+`.space/lodge.db`, the lodge's state, goes in whole. With
+`WOLTSPACE_BACKUP_AGE_RECIPIENT` set, the backup is one
+`woltspace-backup-<tag>.tar.gz.age` instead: the same tar, slim or full,
+secrets included, encrypted to that key, and restored with `--identity` (see
+"Encrypted backups"). A restore disarms the copy it makes, so it cannot act on
+the lodge it came from (see "A copy keeps its hands off its source").
 
-Everything under `WOLTSPACE_WOLTS_DIR` that is data:
+## Slim by default
+
+A backup is meant to bring the whole story back: every wolt with its identity,
+memory and session context, every app with its code, the lodge with its config.
+Images, videos and build output can be rebuilt or kept elsewhere. So by default
+a backup is **slim**:
+
+- **Context is kept at any size, in any format:** `wolt/memory/`, `wolt.json`,
+  `CLAUDE.md`, `AGENTS.md`, skills, Claude transcripts, file history and todos
+  (`.claude/projects`, `.claude/file-history`, `.claude/todos`), Codex sessions
+  and state databases, opencode's session store, every file inside a `.git`
+  directory, and the lodge's `.space/` (without `.space/logs/`, and with
+  `lodge.db` always, see "The lodge database"), `.state/` and
+  `woltspace.json`. This applies at any depth, so a lodge nested inside a wolt
+  keeps its context too.
+- **Everything else is kept when it is text or code** (Markdown, HTML, CSS,
+  JS/TS, JSON/JSONL, notebooks, Python, shell, config, SVG, …) **up to 5 MB**,
+  or has no suffix (LICENSE, a git ref) and is up to 1 MB. Build recipes
+  (`Makefile`, `Dockerfile`, `Procfile`, `Justfile`, …) are kept at any size.
+- **Databases are left out unless their owner opts in.** An app's database is
+  state, not media, but it can grow without bound, so slim lists it rather than
+  archiving it. An app opts a path back in from its `woltspace.json`, a wolt
+  from its `wolt/wolt.json`:
+
+  ```json
+  "backup": {"keep": ["data/app.db"]}
+  ```
+
+  Paths are relative to the app's directory, or to the wolt's own directory
+  (the one holding `wolt/`), globs allowed, and never reach outside it. An
+  opt-in cannot reach inside a directory slim drops whole (`cache`,
+  `node_modules`, …, below): keep the database somewhere else in the app. A kept path is kept at any size, with its SQLite
+  `-wal`, `-shm` and `-journal` files. The agents' own session databases
+  (opencode's store, Codex state) are context and are always kept; Codex's
+  debug logs (`.codex/logs_*`) are not.
+- **On top of the excludes below, these directories go**, below the top level:
+  `worktrees` at any depth (not only `wolt/worktrees`; git's own `.git/worktrees`
+  stays), `node_modules*`, `cache`, `_cacache`, `npm-cache`, `.uv-cache`,
+  `uv-cache`, `archive-v0`, `.uv-python`, `site-packages`, `lib/python3*`,
+  `ms-playwright`, `browsers`, `.bun`, `.tmp`. A wolt is never dropped.
+- **Every session transcript is kept, wherever it is.** Reproducibility is the
+  point: a Claude, Codex or opencode transcript inside a directory slim would
+  otherwise drop (a checkout, a cache, a scratch lodge under `.tmp`) is still
+  archived. Such a directory is entered for its transcripts only, and the rest
+  of it is listed as left out.
+- **Nothing left out is forgotten.** `backup-left-out.tsv`, beside the manifest
+  at the archive root, lists every file (and every dropped directory, with its
+  file count) by path and size. The manifest's `left_out` section has the totals
+  and the rules. `woltspace restore` says how many files the backup did not
+  hold.
+
+An app's images usually come back anyway: its `.git` is kept whole, so
+`git restore .` in the restored app brings back every tracked file.
+
+`--full` keeps the wider rule instead (next section): media, binaries, app
+databases and logs too, minus the named caches. Use it for a media backup,
+ideally `--out` on another drive: on a lived-in lodge it can be tens of gigabytes where slim is under a gigabyte.
+
+## What goes in (`--full`)
+
+With `--full`, everything under `WOLTSPACE_WOLTS_DIR` that is data goes in (a
+slim backup keeps only the part described above):
 
 - each wolt's `wolt/` tree — `memory/`, `site/`, `sparks/`, `drafts/`, `apps/`
 - `CLAUDE.md` and `wolt.json` per wolt
-- `woltspace.json` (but not `.env` — see "Secrets are not backed up")
+- `woltspace.json` (but not `.env`, unless the backup is encrypted — see
+  "Secrets are not backed up")
 - `.state/` (session registry, wolf state) and `.space/` (platform metadata)
+- `.space/lodge.db` (see "The lodge database"); any other SQLite file (an
+  app's own) is archived as it lies, `-wal` included, because that is where
+  its newest rows are
+- logs, chat history, spools and the `.imported` copies lodge.db's importers
+  leave behind, minus the junk (below) and the withheld credential files
 - `.git` directories — a wolt's history is data, so it is archived in full
 
 Symlinks are archived **as symlinks** and never followed. The skill-delivery
 links point into the installed wheel; following them would swallow the platform
 a backup is not supposed to be backing up.
+
+## The lodge database
+
+`.space/lodge.db` holds the lodge's state: sessions, Auto and dig consents,
+the wolf's runs, chat routing, the Slack queue, running apps. It is always in
+the backup, slim or full, as a snapshot taken with SQLite's backup API into
+memory (never a temporary file): consistent even while the lodge writes to
+it, every row included. Its live `lodge.db-wal` and `lodge.db-shm` stay out.
+A restore disarms its copy of it (see "A copy keeps its hands off its
+source").
 
 ## What is excluded, and why
 
@@ -58,6 +143,12 @@ own directory called `claude` is data, the rest of `.local` is data, and
 `.local/share/opencode` (session state, easily 150MB) is kept. Conversation
 transcripts live in `.claude/projects`, which is also kept.
 
+A restored lodge comes back with its consents. An Auto grant names a wolt
+and an absolute working folder, so it applies again only where that path
+exists the same way; a dig re-checks its host, user and port with `ssh -G`
+before every connection. `restore` says to review them (`woltspace auto
+list`, `woltspace dig list`) and revoke what the new machine should not have.
+
 **By file** — `.DS_Store`, `*.pyc`, `*.sock`, and anything that is not a
 regular file, a directory, or a symlink (sockets, fifos, devices): noise, or
 meaningless once restored.
@@ -72,6 +163,7 @@ handed back to you as a checklist.
 | `.env`, `.env.local`, `.env.production`, … | `.env` or `.env.*` at any depth (apps carry their own), except `.example` and `.sample` templates |
 | `.claude/.credentials.json`, `…json.expired-*.bak`, `…json.stale-*.bak` | `.credentials.json*` directly inside a `.claude` directory |
 | `.codex/auth.json` | `auth.json` directly inside a `.codex` directory |
+| `.space/platform/config.json` | the lodge's own (bot tokens), at the top of the data root only |
 
 **Why, and it is not just tidiness.** A rotating OAuth chain has exactly one
 live owner. Restoring a *stale* credentials file replays a refresh token that
@@ -87,7 +179,35 @@ secrets, and one that guesses wrong drops data. Templates and lookalikes —
 `.env.example`, `.env.sample`, `env.example`, `credentials.md` — are ordinary
 files and are backed up.
 
-There is no `--with-secrets`. The safe default is the only default.
+There is no `--with-secrets` flag. The `.env` files and `config.json` can
+travel **encrypted**, inside an encrypted archive, never in the clear: see the
+next section. The OAuth credential files never travel at all.
+
+### Encrypted backups
+
+Set `WOLTSPACE_BACKUP_AGE_RECIPIENT` to an [age](https://age-encryption.org)
+public key and have `age` on `PATH`, and the backup becomes **one file**,
+`woltspace-backup-<tag>.tar.gz.age`: the whole tar, with the `.env` files and
+`.space/platform/config.json` inside it, streamed through `age -r` into a file
+created owner-only before age writes a byte. No plaintext copy of anything is
+written to disk, not even a temporary one. The manifest is inside the
+ciphertext too; nothing about the lodge sits beside it in the clear.
+
+```bash
+age-keygen -o ~/lodge-backup-key.txt     # on a machine of yours, then keep it OFF the lodge
+export WOLTSPACE_BACKUP_AGE_RECIPIENT=age1...   # the public key it printed
+```
+
+The lodge only ever holds the public key, so it can write backups and never
+read them. Lose the private key and every encrypted backup is lost with it:
+keep it in a password manager. A recipient set without `age` on `PATH` fails
+the backup rather than fall back to a plaintext archive of the whole lodge; a
+recipient `age` rejects fails it too. Without a recipient the backup is the
+plain `.tar.gz` described above, with the secrets withheld and the manifest
+saying why.
+
+A `.env` that is a symlink is never read through: it is listed as skipped and
+stays on the restore checklist.
 
 **What this does not do:** session transcripts (`.claude/projects`,
 `.codex/sessions`) are kept, and a transcript can contain a secret somebody
@@ -150,12 +270,20 @@ It also carries a `withheld` section naming every credential path the backup
 left behind. Paths only: no credential is in the archive, and nothing reads a
 secret's **value** into the manifest or the printed summary.
 
+Two more sections: `lodge_db` (when there is a `lodge.db`) counts the rows of
+each table in the snapshot, `{"tables": {"sessions": 159, ...}}`; `secrets`
+says whether the `.env` files and bot tokens are inside, `{"present": true,
+"recipient"}` for an encrypted backup, and if not, the `reason`.
+
 ## Trust but verify
 
 A backup nobody has opened is a rumour. Every run re-opens the archive it just
 wrote, parses the manifest back out of it, checks the member count against what
 the manifest claims, and spot-reads one `wolt.json`. A mismatch is an error, not
-a warning.
+a warning. An encrypted backup cannot be re-opened on the lodge, which has no
+key: the run checks that `age` exited cleanly and the file starts with the age
+header, and a restore with the key is the real check (see "The restore
+checks").
 
 Unreadable files are the opposite: they warn, they are listed in the summary and
 recorded in the manifest, and the backup still completes.
@@ -164,6 +292,8 @@ recorded in the manifest, and the backup still completes.
 
 ```bash
 woltspace restore woltspace-backup-pre-rc5.tar.gz [--to DIR]
+woltspace restore woltspace-backup-<tag>.tar.gz.age --identity ~/lodge-backup-key.txt [--to DIR]
+pass show lodge-age | woltspace restore woltspace-backup-<tag>.tar.gz.age --identity -
 ```
 
 Restore extracts into a **new** directory — by default
@@ -178,6 +308,74 @@ boot from it with:
 
 Pointing a colony at a restored directory is the human's explicit act, never a
 side effect of unpacking a file.
+
+`lodge.db` comes back in place with the rest of `.space/`, and from an
+encrypted backup so do the `.env` files and `config.json`. The key is read
+once, from the file or stdin, and handed to `age -d` on its stdin; it is never
+written anywhere. The archive is decrypted twice, never to disk: once to audit
+every member (below), then again to extract, and the second pass must see
+exactly the members the first one audited.
+
+Every live session comes back stopped (below), with its conversation id, so
+it can be resumed; a resting or finished one keeps its status. Re-authenticate the harnesses, as the checklist says.
+
+### A copy keeps its hands off its source
+
+A restore on the machine that made the backup shares that machine's processes,
+its tmux server and its paths. Left as archived, the copy would adopt the
+source's running apps and sessions when it boots, and stopping one in the copy
+would stop the original. So a restore disarms the copy before it returns. It
+opens only the copy: its own `lodge.db` under the restore target, never the
+live lodge's.
+
+- **Runtime records go:** the `.space/platform/` `control-plane`, `tunnel`,
+  `connectors` and `adoption` records. The control plane rewrites them on boot.
+- **Apps forget their pids:** each `apps_running` row keeps the owner's wish to
+  run the app, but its pid, tunnel pid and tunnel URL are blanked. On the
+  machine the copy lands on an old pid can be any live process: the copy's
+  lodge starts its own app instead of taking someone else's as running, or
+  signalling it.
+- **Live sessions come back stopped** (running, starting, stopping, orphaned);
+  resting and finished ones keep their status. None keeps its tmux name or
+  pane, so boot adopts none of them. Transcripts and resume ids are untouched: every session
+  can be resumed in the copy.
+- **Paths are re-pointed:** a session's `workdir`, `dir` and
+  `canonical_workdir`, and every Auto approval, that pointed inside the
+  old wolts directory now points inside the copy. So does `/workspace/wolts`,
+  where the container era saw the same lodge.
+- **What pointed outside is set aside, not re-pointed:** a session that worked
+  in a directory outside the lodge leaves the copy's database for
+  `restore-quarantine/<wolt>/.state/sessions/<name>.json` beside the copy, the
+  file shape the importer reads: moved into the copy's
+  `<wolt>/.state/sessions/`, it is imported on the next boot. An Auto approval
+  for such a directory is dropped, so Auto asks again. Dig consents name
+  other machines and stay; `restore` says to review them.
+- **Older state files get the same treatment.** An archive from before
+  `lodge.db` holds `<wolt>/.state/sessions/*.json`, `.space/auto-grants.json`
+  and `.space/apps/*.json`, which the copy's first boot imports; the
+  `.imported` copies a newer lodge left behind are what a downgrade puts back.
+  Both are disarmed in place by the rules above.
+
+- **The copy gets its own tmux server.** A session's tmux name is its own
+  name, so a copy on the machine's shared tmux server could stop its source's
+  sessions. Restore writes `.space/platform/restored.json`, and while it is
+  there the platform runs the copy on `<target>/tmux`, whatever `TMUX_TMPDIR`
+  or `$TMUX` the copy was started with. Delete the file when the copy becomes
+  the machine's lodge.
+
+Beside a running lodge, also give the copy its own port and no tunnel, as
+`restore` prints:
+
+```bash
+WOLTSPACE_PORT=7788 WOLTSPACE_PUBLIC_TUNNEL=false \
+  WOLTSPACE_WOLTS_DIR=<target>/wolts woltspace start
+```
+
+Disarming rewrites and deletes files, so it never does that through a
+symlink: an archive with a link at the data root, in `.space` (`lodge.db`
+and its companions included), or in a wolt's `.state` is refused before
+extraction (a top-level link pointing inside the
+lodge is fine), and disarm itself fails closed if it meets one.
 
 ### What a restore refuses
 
@@ -205,13 +403,268 @@ and the archive is refused outright if it contains:
   the other's name is corruption.
 
 A refusal happens before extraction starts, so nothing is half-written, and
-nothing is ever created outside the target directory.
+nothing is ever created outside the target directory. An encrypted archive goes
+through the same audit.
+
+## First boot on the lodge DB, and how to go back
+
+Take a backup before upgrading to a release with `lodge.db`, with the release
+you are leaving: `woltspace backup --tag pre-upgrade`.
+
+The first boot imports the old state files into `.space/lodge.db` and renames
+each one it read to `<name>.imported`: `<wolt>/.state/sessions/` (a folder),
+`.space/auto-grants.json`, `.space/digs/grants.json`, `.space/wolf/` stamps
+and `jobs.jsonl`, `.space/telegram/chats/*.json`, the slack files under
+`<wolt>/.state/chat/slack/`, `.space/apps/*.json`. The app logs stay. A store
+that fails to import keeps its files, and the next boot tries it again. A
+single session or app file that isn't valid JSON is skipped and logged, not
+retried: it stays only in the renamed `.imported` folder or file, to fix by
+hand.
+
+The lodge answers `/health` with 200 either way, so read readiness from the
+body: `db.error` (the file cannot be opened) and `db.import_error` (one entry
+per store that failed) must both be absent, and `db.imported` names the
+stores that were imported.
+
+To go back to the older release:
+
+```bash
+woltspace stop
+# install the older release, then put the old files back:
+cd "${WOLTSPACE_WOLTS_DIR:?set it to the lodge data root}"
+find . -maxdepth 5 \( -path './*/.state/*' -o -path './.space/*' -o -path './.archive/*' \) \
+     \( -name '*.imported' -o -name '*.imported.[0-9]*' \) -prune -print | sort -rV |
+while read -r p; do b=${p%.imported*}; [ -e "$b" ] || mv "$p" "$b"; done
+# set lodge.db aside, so a later upgrade imports the files as they are then:
+t=$(date +%Y%m%d-%H%M%S)
+for f in .space/lodge.db .space/lodge.db-wal .space/lodge.db-shm; do
+  if [ -e "$f" ]; then mv "$f" "$f.rolled-back-$t"; fi
+done
+woltspace start
+```
+
+A file imported more than once (upgrade, downgrade, upgrade again) left
+`<name>.imported.2`, `.3`, ...; the newest one is put back.
+
+The older release reads the files and never `lodge.db`, so everything written
+after the import (new sessions, grants, cron runs, chat routing) is lost on
+the way back; restore the `pre-upgrade` backup instead if the lodge ran for a
+while.
+
+Set `lodge.db` aside as above, every time. If it stays, upgrading again keeps
+its rows and only adds new ones from the files: a grant revoked on the older
+release would come back, and a session's newer status would be ignored.
+
+Cron runs made on the newer release are recorded only in `lodge.db`. When the
+older release starts, its catch-up looks back 24 hours, so a recurring cron
+with catch-up on that ran in that window can run once more.
 
 ## Running colonies
 
-No locks are taken, so a backup of a live lodge is safe. A quiescent colony —
-sessions finished, nothing mid-write — gives a tidier registry snapshot, but
-nothing breaks if you do not wait.
+No locks are taken, so a backup of a live lodge is safe, and `lodge.db` is
+snapshotted read-only. A quiescent colony — sessions finished, nothing
+mid-write — gives a tidier snapshot, but nothing breaks if you do not wait.
+
+On Docker Desktop (macOS, Windows) the wolts folder is a bind mount across a
+VM boundary, and SQLite's WAL is not safe across it: never open `lodge.db`
+from the host, not even to read it. Read it inside the container, as the
+lodge's user: `docker exec -u node <container> woltspace db show <table>`.
+Back up inside it too and copy the archive out: `docker exec -u node
+<container> woltspace backup --tag <tag>` writes to `/workspace`, which is not
+the mount, so `docker cp <container>:/workspace/woltspace-backup-<tag>.tar.gz .`;
+for an encrypted one the container needs `-e WOLTSPACE_BACKUP_AGE_RECIPIENT`.
+
+## Off the machine: a bucket (Cloudflare R2)
+
+`woltspace backup` writes files; getting them off the machine is `rclone`'s
+job. No upload code in woltspace, no new setting. One bucket per owner, one
+prefix per lodge:
+
+```
+<bucket>/lodges/<lodge>/latest.json                               a hint: tag, sha256, version, time
+<bucket>/lodges/<lodge>/snapshots/woltspace-backup-<tag>.tar.gz.age
+```
+
+Only encrypted backups go to the bucket: the upload script below refuses
+anything else. The guided setup is the `setup-backup` platform skill.
+
+**Two tokens.** R2 has no write-only token, so "the lodge cannot erase its own
+history" comes from a token scoped to one bucket plus a bucket lock:
+
+1. Create the bucket. Then, in R2 → API tokens, create two tokens, both scoped
+   to that bucket only: **Object Read & Write** for the lodge, **Object Read
+   only** for restores. Keep the read-only one off the lodge.
+2. Lock the snapshots, not `latest.json` (it is rewritten every day):
+
+   ```bash
+   npx wrangler r2 bucket lock add <bucket> keep-snapshots lodges/<lodge>/snapshots/ --retention-days 90
+   ```
+
+   Inside the retention window nothing can overwrite or delete a snapshot, with
+   any token, so a compromised lodge cannot eat its backups.
+3. On the lodge, an `rclone` remote with the read & write token
+   (`rclone config file` shows where it lives; the token stays in rclone's
+   config, not in `.env`):
+
+   ```ini
+   [r2]
+   type = s3
+   provider = Cloudflare
+   access_key_id = <read & write key id>
+   secret_access_key = <read & write secret>
+   endpoint = https://<account id>.r2.cloudflarestorage.com
+   acl = private
+   no_check_bucket = true
+   ```
+
+**The daily upload.** A small script, say `~/bin/backup-to-r2.sh`:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+umask 077   # owner-only, like everything woltspace backup writes
+: "${WOLTSPACE_BACKUP_AGE_RECIPIENT:?is not set: nothing leaves this machine unencrypted}"
+out=~/.woltspace/backups
+dest="r2:<bucket>/lodges/<lodge>"
+tag=$(date -u +%Y%m%d-%H%M%S)
+woltspace backup --tag "$tag" --out "$out"
+file=woltspace-backup-$tag.tar.gz.age
+if [ ! -f "$out/$file" ]; then
+  echo "no $file: refusing to upload an unencrypted backup" >&2; exit 1
+fi
+rclone copyto "$out/$file" "$dest/snapshots/$file" --immutable
+sum=$(sha256sum "$out/$file" | cut -d' ' -f1)
+printf '{"tag":"%s","sha256":"%s","version":"%s","taken_at":"%s"}\n' \
+  "$tag" "$sum" "$(woltspace --version | awk '{print $NF}')" "$(date -u +%FT%TZ)" > "$out/latest.json"
+rclone copyto "$out/latest.json" "$dest/latest.json"
+echo "backup $tag uploaded"
+```
+
+The two refusals are the point: without a recipient, or if the file is not a
+`.tar.gz.age`, nothing is uploaded. It is run by the machine's own scheduler: no agent, no tokens. A crontab line
+(`crontab -e`; cron has a bare `PATH`, so name the directory `woltspace`,
+`rclone` and `age` live in):
+
+```
+30 3 * * * PATH=$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin WOLTSPACE_BACKUP_AGE_RECIPIENT=age1... bash $HOME/bin/backup-to-r2.sh >> $HOME/.woltspace/backups/upload.log 2>&1
+```
+
+or a systemd user timer:
+
+```ini
+# ~/.config/systemd/user/lodge-backup.service
+[Service]
+Type=oneshot
+Environment=WOLTSPACE_BACKUP_AGE_RECIPIENT=age1...
+ExecStart=/bin/bash %h/bin/backup-to-r2.sh
+
+# ~/.config/systemd/user/lodge-backup.timer
+[Timer]
+OnCalendar=*-*-* 03:30
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+
+then `systemctl --user enable --now lodge-backup.timer`. If you would rather
+see the backup on the lodge's wolves page, a wolf cron can run the same script
+instead, at the price of an agent session (and its tokens) every night:
+`woltspace wolf add --cron '30 3 * * *' --message 'Run bash ~/bin/backup-to-r2.sh and reply with its last line.'`.
+
+`--immutable` refuses to replace a snapshot that is already there. `woltspace
+backup` itself creates the archive owner-only (0600) whatever the umask; the
+`umask` line covers `latest.json` and the folder. Old local copies in
+`~/.woltspace/backups` are yours to prune.
+
+**Restore from the bucket**, on a machine where your age key is, with the
+read-only token in an `rclone` remote of its own:
+
+```bash
+src="r2-ro:<bucket>/lodges/<lodge>"
+# The newest snapshot by its own name. Tags are UTC timestamps, so they sort.
+newest=$(rclone lsf "$src/snapshots" --include 'woltspace-backup-*.tar.gz.age' | sort | tail -1)
+# latest.json is only a hint: it sits outside the lock and the lodge rewrites it.
+rclone cat "$src/latest.json"; echo "restoring $newest"
+rclone copyto "$src/snapshots/$newest" "$newest"
+woltspace restore "$newest" --identity ~/lodge-backup-key.txt --to ~/lodge-restored
+python3 -c 'import json,sys; m=json.load(open(sys.argv[1])); print(m["tag"], m["created_at"], m["woltspace_version"])' \
+  ~/lodge-restored/backup-manifest.json
+WOLTSPACE_WOLTS_DIR=~/lodge-restored/wolts woltspace start
+```
+
+Pick the snapshot from the `snapshots/` listing, not from `latest.json`: the
+lock covers `snapshots/` only, so a lodge that went wrong can rewrite
+`latest.json` to point at an old snapshot (or at a new one it uploaded; the
+lock stops overwrites, not new objects). Before you boot, check that the
+manifest's `tag`, `created_at` and `woltspace_version` are the snapshot you
+meant: a date far older than the tag, or a version you never ran, means stop.
+
+### The restore checks
+
+A backup nobody has restored is a rumour too. The lodge cannot restore its own
+backups (it has no key, by design), so the check comes in two halves.
+
+**Weekly, on the lodge, no key.** A script beside the upload, scheduled the
+same way. It downloads the newest snapshot and checks everything that needs no
+key: `latest.json` is less than 48 hours old (a nightly upload that silently
+stopped is the likeliest real failure), the newest name in `snapshots/` is the
+one `latest.json` names, the sha256 matches, the file is an age file, and its
+size is sane.
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+umask 077
+src="r2:<bucket>/lodges/<lodge>"
+min_bytes=1000000   # about half your usual snapshot size
+work=$(mktemp -d); trap 'rm -rf "$work"' EXIT
+rclone copyto "$src/latest.json" "$work/latest.json"
+field() { python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[sys.argv[2]])' "$work/latest.json" "$1"; }
+tag=$(field tag); sum=$(field sha256)
+fail() { echo "backup check FAILED: $*" >&2; exit 1; }
+hours=$(python3 -c 'import datetime as d,sys; t=d.datetime.fromisoformat(sys.argv[1].replace("Z","+00:00")); print(int((d.datetime.now(d.timezone.utc)-t).total_seconds()//3600))' "$(field taken_at)")
+[ "$hours" -lt 48 ] || fail "the newest upload is $hours hours old: is the nightly upload still running?"
+newest=$(rclone lsf "$src/snapshots" --include 'woltspace-backup-*.tar.gz.age' | sort | tail -1)
+[ "$newest" = "woltspace-backup-$tag.tar.gz.age" ] || fail "latest.json names $tag, the newest snapshot is $newest"
+rclone copyto "$src/snapshots/$newest" "$work/snapshot"
+[ "$(sha256sum "$work/snapshot" | cut -d' ' -f1)" = "$sum" ] || fail "sha256 of $newest does not match latest.json"
+[ "$(head -n1 "$work/snapshot")" = "age-encryption.org/v1" ] || fail "$newest is not an age file"
+[ "$(stat -c%s "$work/snapshot")" -ge "$min_bytes" ] || fail "$newest is smaller than $min_bytes bytes"
+echo "backup check ok: $newest"
+```
+
+**Monthly, by hand, on another machine where your key is.** The full
+restore-and-boot, on a scratch directory and a spare port, never over the live
+lodge:
+
+1. Run "Restore from the bucket" above with `--to /tmp/restore-check`.
+2. **Delete every restored secret, then boot with the wolf and the chat
+   connectors off.** The `.env` files and `config.json` hold the live tokens: a
+   scratch lodge with them would start a second Telegram/Slack poller on the
+   same bot (your messages could land there instead of the real lodge), and an
+   app's `.env` could reach a live service. With the wolf on, the real crons
+   would fire.
+
+   ```bash
+   r=/tmp/restore-check/wolts
+   find "$r" -name '.env*' -not -name '*.example' -not -name '*.sample' -delete
+   rm -f "$r/.space/platform/config.json"
+   left=$(find "$r" \( -name '.env*' -not -name '*.example' -not -name '*.sample' \) -o -path "$r/.space/platform/config.json")
+   if [ -n "$left" ]; then
+     echo "secrets in the scratch tree, refusing to boot: $left" >&2; exit 1
+   fi
+   WOLTSPACE_WOLTS_DIR=$r WOLTSPACE_PUBLIC_TUNNEL=false \
+     ENABLE_TELEGRAM_BOT=false ENABLE_SLACK_BOT=false WOLTSPACE_WOLF=false WOLTSPACE_VULTURE=false \
+     woltspace serve --port 7778
+   ```
+
+   It takes its own control-plane lock, so it runs beside a lodge on the same
+   machine.
+3. Check `curl -s localhost:7778/health` is ok, the session count from
+   `curl -s localhost:7778/sessions` equals `lodge_db.tables.sessions` in the
+   restored `backup-manifest.json`, and the wolts on disk match its `wolts` list.
+4. Stop it and `rm -rf /tmp/restore-check`.
 
 ## The container era
 
@@ -222,3 +675,11 @@ native mode — there is no container to commit on a native install, and the bar
 copy carried every `node_modules` and virtualenv along with the data. It still
 works for container users and this change does not alter it; it now points at
 the native command when the wheel is installed.
+
+## Restoring across filesystems
+
+When moving backups across filesystems, an archive with names differing only by
+case (for example `Notes.md` and `notes.md`) restores both on a case-sensitive
+target. On a case-insensitive target, restore refuses those collisions with an
+error before extraction. This includes typical macOS volumes; the actual target
+filesystem determines the behavior.

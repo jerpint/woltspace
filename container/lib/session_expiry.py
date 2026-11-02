@@ -3,13 +3,21 @@
 The owner-facing setting lives in ``woltspace.json`` and is only written by
 the FastAPI control plane.  Consumers (the vulture and session views) share
 this reader so "never" has one fail-safe meaning everywhere.
+
+The rule: a running session rests once nobody has used it for the window,
+unless it holds. Use is the later of the record's ``last_activity`` (every
+lodge write: spawn, wake, a message in or out, push-view, describe) and
+tmux's ``session_activity`` (an attach or a keystroke). Nothing else is
+read: no screen, no output, no CPU, no hooks, so every engine behaves alike.
 """
 
 import json
+import time
 from pathlib import Path
 
 from env_compat import get_env
-from paths import space_vulture_dir
+from session_runtime import RuntimeHandle
+from settings_files import settings_lock, write_json_atomic
 
 
 ALLOWED_IDLE_TIMEOUTS = {None, 3600, 14400, 86400}
@@ -43,24 +51,73 @@ def set_idle_timeout(value: int | None) -> int | None:
     if value not in ALLOWED_IDLE_TIMEOUTS:
         raise ValueError("idle timeout must be 3600, 14400, 86400, or null")
     path = _config_path()
-    try:
-        config = json.loads(path.read_text()) if path.exists() else {}
-        if not isinstance(config, dict):
-            config = {}
-    except (json.JSONDecodeError, OSError):
-        config = {}
-    config.setdefault("sessions", {})["idle_timeout_seconds"] = value
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(config, indent=2) + "\n")
-    tmp.replace(path)
+    with settings_lock(path):
+        try:
+            config = json.loads(path.read_text()) if path.exists() else {}
+            if not isinstance(config, dict):
+                config = {}
+        except (json.JSONDecodeError, OSError):
+            config = {}
+        config.setdefault("sessions", {})["idle_timeout_seconds"] = value
+        write_json_atomic(path, config)
     return value
 
 
-def get_pane_activity() -> dict:
-    path = space_vulture_dir(_config_path().parent) / "pane-activity.json"
-    try:
-        data = json.loads(path.read_text())
-        return data if isinstance(data, dict) else {}
-    except (json.JSONDecodeError, OSError):
-        return {}
+def last_use(record: dict, keys: dict[str, int]) -> int | None:
+    """When the session was last used; None when tmux does not list it.
+
+    ``keys`` is ``SessionRuntime.last_keys()``. Unknown is in use: a session
+    tmux did not report is never judged idle.
+    """
+    tmux_used = keys.get(RuntimeHandle.from_record(record).tmux_session_name)
+    if not isinstance(tmux_used, int):
+        return None
+    recorded = record.get("last_activity")
+    if not isinstance(recorded, int) or isinstance(recorded, bool):
+        recorded = 0
+    return max(recorded, tmux_used)
+
+
+# The longest hold the route takes; null (forever) covers anything longer. An
+# until past now + this was never written by the route, and no clock prints it.
+HOLD_MAX_SECONDS = 100 * 365 * 86400
+
+
+def _well_formed(hold, now: int) -> bool:
+    """A hold the route could have written: until null, or a whole epoch no
+    further than the route's cap. Anything else is malformed: no hold."""
+    if not isinstance(hold, dict) or "until" not in hold:
+        return False
+    until = hold["until"]
+    if until is None:
+        return True
+    return isinstance(until, int) and not isinstance(until, bool) and until <= now + HOLD_MAX_SECONDS
+
+
+def public_hold(hold, now: int | None = None) -> dict | None:
+    """The fields a hold shows: until (None is forever), reason, since.
+    None for a malformed hold, so every printer only sees a valid one; a
+    since no clock could print is left out (None) the same way."""
+    now = int(time.time()) if now is None else now
+    if not _well_formed(hold, now):
+        return None
+    since = hold.get("since")
+    if not (isinstance(since, int) and not isinstance(since, bool) and 0 <= since <= now + HOLD_MAX_SECONDS):
+        since = None
+    return {"until": hold["until"], "reason": hold.get("reason"), "since": since}
+
+
+def hold_active(record: dict, now: int) -> bool:
+    """A running session holds while its hold has no end or ends after now.
+
+    ``hold = {"until": <epoch> | None, "reason": str, "since": <epoch>}``;
+    ``until: None`` is forever. Reads the record only. A malformed hold is
+    no hold, never a forever one.
+    """
+    if record.get("status") != "running":
+        return False
+    hold = record.get("hold")
+    if not _well_formed(hold, now):
+        return False
+    return hold["until"] is None or hold["until"] > now

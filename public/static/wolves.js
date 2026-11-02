@@ -13,7 +13,7 @@ if (root) {
   const globalMessage = $('[data-global-message]', root);
   const WOLTS = JSON.parse($('#wolves-wolts').textContent || '[]');
   const EMOJI_BY_TYPE = typeof WOLT_EMOJI === 'object' ? WOLT_EMOJI : {};
-  const EMOJI = Object.fromEntries(WOLTS.map((w) => [w.name, EMOJI_BY_TYPE[w.type] || '🐾']));
+  const EMOJI = Object.fromEntries(WOLTS.map((w) => [w.name, EMOJI_BY_TYPE[w.type] || w.emoji || '🐾']));
   const CHAN_LABEL = { telegram: 'Telegram', slack: 'Slack' };
   const DAYN = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
   let TZ = Intl.DateTimeFormat().resolvedOptions().timeZone;

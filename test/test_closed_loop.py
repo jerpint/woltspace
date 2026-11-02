@@ -453,12 +453,26 @@ class TestFullRoundTrip:
 # ---------------------------------------------------------------------------
 
 class TestRegressions:
-    def test_notify_footer_appended(self):
-        """notify.py appends the DEN_REPLY_FOOTER to notify messages."""
-        notify_py = (Path(__file__).resolve().parents[1] / "server/notify.py")
-        source = notify_py.read_text()
-        assert "DEN_REPLY_FOOTER" in source
-        assert "message + footer" in source
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("session_link", [
+        "https://lodge.test/tui?session=test-session",
+        "session=test-session",
+    ])
+    async def test_notify_footer_appended(self, session_link):
+        """The Telegram sender appends the exact reply footer, including its fallback."""
+        from unittest.mock import AsyncMock
+        from server.config import DEN_REPLY_FOOTER
+        from server.notification_senders import telegram_sender
+        from server.notification_types import OutboundMessage, SendContext
+
+        transport = AsyncMock()
+        await telegram_sender(transport)(
+            OutboundMessage("message", session_link), {"chat_id": "123"},
+            SendContext({"TELEGRAM_BOT_TOKEN": "test-token"}, {}),
+        )
+        transport.assert_awaited_once_with(
+            "test-token", "123", f"message\n\n---{DEN_REPLY_FOOTER}\n{session_link}",
+        )
 
     """Guard against previously-fixed bugs."""
 
@@ -501,9 +515,9 @@ class TestRegressions:
         assert os.access(notify, os.X_OK)
 
     def test_den_reply_footer_consistent(self):
-        """Footer constant must match between server/config.py and telegram_adapter.py."""
+        """Footer constant must match between server/config.py and the lodge side that reads it."""
         config_src = (Path(__file__).resolve().parents[1] / "server/config.py").read_text()
-        adapter_src = (Path(__file__).resolve().parents[1] / "container/bot/telegram_adapter.py").read_text()
+        adapter_src = (Path(__file__).resolve().parents[1] / "container/lib/chat_lodge.py").read_text()
 
         # Both should contain the exact same sentinel string
         sentinel = "↩️ reply to this message to talk to this session directly"

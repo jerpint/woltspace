@@ -22,7 +22,7 @@ Add a `*.yourdomain.com` CNAME pointing to your tunnel:
 ```bash
 curl -X POST \
   "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/dns_records" \
-  -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+  -K <(printf 'header = "Authorization: Bearer %s"\n' "$CLOUDFLARE_API_TOKEN") \
   -H "Content-Type: application/json" \
   --data '{
     "type": "CNAME",
@@ -35,7 +35,7 @@ curl -X POST \
 Replace `YOUR_TUNNEL_ID` with your tunnel UUID. Find it with:
 ```bash
 curl "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/cfd_tunnel?is_deleted=false" \
-  -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" | python3 -m json.tool
+  -K <(printf 'header = "Authorization: Bearer %s"\n' "$CLOUDFLARE_API_TOKEN") | python3 -m json.tool
 ```
 
 ### 2. Tunnel ingress rule
@@ -45,7 +45,7 @@ Add a wildcard ingress rule that routes `*.yourdomain.com` to the FastAPI server
 ```bash
 curl -X PUT \
   "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/cfd_tunnel/${TUNNEL_ID}/configurations" \
-  -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+  -K <(printf 'header = "Authorization: Bearer %s"\n' "$CLOUDFLARE_API_TOKEN") \
   -H "Content-Type: application/json" \
   --data '{
     "config": {
@@ -68,7 +68,7 @@ Without this step, any app subdomain is publicly accessible to anyone who knows 
 # Create Access application
 APP_RESULT=$(curl -X POST \
   "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/access/apps" \
-  -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+  -K <(printf 'header = "Authorization: Bearer %s"\n' "$CLOUDFLARE_API_TOKEN") \
   -H "Content-Type: application/json" \
   --data '{
     "name": "woltspace-apps",
@@ -83,7 +83,7 @@ APP_ID=$(echo "$APP_RESULT" | python3 -c "import sys,json; print(json.load(sys.s
 # Create allow policy (email OTP)
 curl -X POST \
   "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/access/apps/${APP_ID}/policies" \
-  -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+  -K <(printf 'header = "Authorization: Bearer %s"\n' "$CLOUDFLARE_API_TOKEN") \
   -H "Content-Type: application/json" \
   --data '{
     "name": "allow-owner",

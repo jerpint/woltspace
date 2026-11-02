@@ -105,12 +105,10 @@ class TestSessionRegistry:
 
     def test_legacy_prompt_becomes_preview_without_becoming_title(self, tmp_registry):
         reg = tmp_registry
-        reg.create("legacy-description", wolt="neowolt", prompt="Build the lodge")
-        path = reg._path("neowolt", "legacy-description")
-        raw = json.loads(path.read_text())
+        raw = reg.create("legacy-description", wolt="neowolt", prompt="Build the lodge")
         raw.pop("prompt_preview")
         raw.pop("summary")
-        path.write_text(json.dumps(raw))
+        reg._write("neowolt", "legacy-description", raw)
 
         fetched = reg.get("legacy-description", wolt="neowolt", check_alive=False)
 
@@ -152,13 +150,13 @@ class TestSessionRegistry:
         assert len(tmp_files) == 0
 
     def test_corrupt_json_handled(self, tmp_registry):
-        """Corrupt JSON in registry should not crash."""
+        """A corrupt record in lodge.db should not crash."""
+        import lodge_db
         reg = tmp_registry
-        # Create a valid session first so the wolt dir exists
         reg.create("valid-session", wolt="neowolt")
-        sessions_dir = reg.wolts_dir / "neowolt" / ".state" / "sessions"
-        bad_file = sessions_dir / "corrupt.json"
-        bad_file.write_text("{invalid json")
+        reg.create("corrupt", wolt="neowolt")
+        with lodge_db.write(reg.wolts_dir) as conn:
+            conn.execute("UPDATE sessions SET record='{invalid json' WHERE name='corrupt'")
         # get should return None
         assert reg.get("corrupt", wolt="neowolt", check_alive=False) is None
         # list should skip it
@@ -480,17 +478,14 @@ class TestStartSessionSiteAutoStart:
 
     @patch("sessions.subprocess.run")
     def test_viewport_url_stored_in_session(self, mock_run, tmp_path):
-        """start_session() should store viewport URL in the session JSON."""
+        """start_session() should store viewport URL in the session record."""
         result = self.sessions.start_session(
             wolt="testwolt",
             prompt="hello",
             routing={"adapter": "telegram", "chat_id": "123"},
         )
-        session_name = result["name"]
-        # Viewport URL is now stored in the session JSON itself
-        session_file = tmp_path / "testwolt" / ".state" / "sessions" / f"{session_name}.json"
-        assert session_file.exists(), f"session file not found at {session_file}"
-        data = json.loads(session_file.read_text())
+        data = self.sessions.SessionRegistry(tmp_path)._read("testwolt", result["name"])
+        assert data is not None, "session not in the registry"
         assert data["viewport_url"] == "/wolt/testwolt/site/"
         assert data["viewport_port"] == 7777
 

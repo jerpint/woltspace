@@ -8,7 +8,10 @@
       </div>
       <div class="modal-field">
         <label class="modal-label" for="create-harness">Harness <span class="modal-label-hint">(you can change it later in Settings)</span></label>
-        <select class="modal-input" id="create-harness" onchange="selectCreateHarness(this.value)"></select>
+        <div class="engine-menu">
+          <button type="button" class="modal-input engine-menu-trigger" id="create-harness" aria-haspopup="listbox" aria-expanded="false" aria-controls="create-harness-list" onclick="toggleCreateHarnessMenu()"></button>
+          <div class="engine-menu-list" id="create-harness-list" role="listbox" aria-label="Harness" hidden></div>
+        </div>
       </div>
       <div class="modal-field">
         <label class="modal-label">Working style</label>

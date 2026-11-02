@@ -22,6 +22,7 @@ sys.path.insert(0, str(ROOT / "container" / "lib"))
 
 from session_runtime import RuntimeHandle, set_runtime  # noqa: E402
 from sessions import SessionRegistry  # noqa: E402
+from conftest import make_session  # noqa: E402
 from woltspace.adoption import adopt_runtime_sessions  # noqa: E402
 from woltspace.channel_supervisor import ChannelSupervisor, read_connector_report  # noqa: E402
 from woltspace.channels import ConnectorPlan  # noqa: E402
@@ -224,6 +225,7 @@ class AdoptionRuntime:
 class TestUpgradePath:
     def test_stop_then_start_readopts_sessions_and_the_connector(self, tmp_path, request):
         layout = _layout(tmp_path)
+        (layout.wolts_dir / "testwolt").mkdir(parents=True)
         registry = SessionRegistry(layout.wolts_dir)
         registry.create("upgrade-session", wolt="testwolt", harness="claude")
         registry.update(
@@ -670,9 +672,7 @@ class TestEntrypointsAreNotExempt:
         (layout.platform_state / "tunnel.json").write_text(json.dumps({
             "pid": 999998, "url": "https://old.example", "instance_id": "previous-boot",
         }))
-        sessions = layout.wolts_dir / "realwolt" / ".state" / "sessions"
-        sessions.mkdir(parents=True)
-        (sessions / "s.json").write_text(json.dumps({"status": "running"}))
+        make_session(SessionRegistry(layout.wolts_dir), name="s", wolt="realwolt")
 
         runner = fake_ps({})  # nothing from the old boot survived
         assert shared_data_root_check(layout, as_entrypoint=True, runner=runner) is None
@@ -683,9 +683,7 @@ class TestEntrypointsAreNotExempt:
         from woltspace.doctor import shared_data_root_check
 
         layout = _layout(tmp_path, isolation="external")
-        sessions = layout.wolts_dir / "realwolt" / ".state" / "sessions"
-        sessions.mkdir(parents=True)
-        (sessions / "s.json").write_text(json.dumps({"status": "running"}))
+        make_session(SessionRegistry(layout.wolts_dir), name="s", wolt="realwolt")
 
         assert shared_data_root_check(layout, as_entrypoint=True) is None
         # …but they still stop a guest.
@@ -750,7 +748,7 @@ class TestPrePublishTuiRemedy:
             return "/usr/bin/node" if name == "node" else None
 
         def runner(command, **kwargs):
-            return subprocess.CompletedProcess(command, 0, "v20.11.0", "")
+            return subprocess.CompletedProcess(command, 0, "v22.11.0", "")
 
         with pytest.raises(TuiResolutionError) as caught:
             resolve_tui({}, which=which, runner=runner)
@@ -837,11 +835,7 @@ class TestAStrayServeCannotTakeOverALiveDataRoot:
         (layout.platform_state / "tunnel.json").write_text(json.dumps({
             "pid": os.getpid(), "url": "https://incumbent.example", "type": "named",
         }))
-        sessions = layout.wolts_dir / "realwolt" / ".state" / "sessions"
-        sessions.mkdir(parents=True)
-        (sessions / "realwolt-live.json").write_text(json.dumps({
-            "name": "realwolt-live", "wolt": "realwolt", "status": "running",
-        }))
+        make_session(SessionRegistry(layout.wolts_dir), name="realwolt-live", wolt="realwolt")
         return layout
 
     # prepare() writes these directly; snapshot so a refused-then-allowed run
@@ -931,12 +925,14 @@ class TestAStrayServeCannotTakeOverALiveDataRoot:
 
         layout = _layout(tmp_path, isolation="external")
         plans = {plan.name: plan for plan in plan_connectors(layout)}
-        assert [plan.enabled for plan in plans.values()] == [False, False, False]
+        assert not any(plan.enabled for plan in plans.values())
         assert "ambient environment" in plans["telegram"].detail
         assert plans["telegram"].command == ()
         # And the wolf: two schedulers on one data root fire every cron twice.
         assert "not the platform entrypoint" in plans["wolf"].detail
         assert plans["wolf"].command == ()
+        # And the vulture: one data root, one reaper.
+        assert "not the platform entrypoint" in plans["vulture"].detail
 
     def test_the_supervisor_plans_no_child_for_a_guest(self, tmp_path):
         layout = _layout(tmp_path, isolation="external")
@@ -1388,15 +1384,16 @@ class TestTheReaperMarkerIsSpecific:
             "DEV_MODE": "true",
         })
 
-    def test_the_dev_command_still_ends_in_the_generic_directory(self, tmp_path):
-        """The shape that made command[-1] unusable as a marker."""
+    def test_the_dev_command_ends_in_the_connector_folder(self, tmp_path):
+        """Not a generic directory: the folder that only this connector has."""
         plan = self._dev_command(tmp_path)
-        assert plan.command[-1] == "bot/"
+        assert plan.command[-1] == str(ROOT / "container" / "connectors" / "telegram")
 
     def test_but_the_signature_is_a_token_pair(self, tmp_path):
         plan = self._dev_command(tmp_path)
-        assert plan.process_signature == ("-m", "bot.telegram_adapter")
-        assert plan.to_record()["process_signature"] == ["-m", "bot.telegram_adapter"]
+        folder = str(ROOT / "container" / "connectors" / "telegram")
+        assert plan.process_signature == ("telegram_connector.py", folder)
+        assert plan.to_record()["process_signature"] == list(plan.process_signature)
 
     def test_the_real_dev_process_matches(self, tmp_path):
         from woltspace.channel_supervisor import _matches_connector
@@ -1419,6 +1416,9 @@ class TestTheReaperMarkerIsSpecific:
             "tail -f /tmp/logs/bot.telegram_adapter.log",
             "less /var/log/bot.telegram_adapter",
             "grep -r bot.telegram_adapter /srv",
+            "vim telegram_connector.py",
+            "tail -f telegram_connector.py.log",
+            f"ls {ROOT / 'container' / 'connectors' / 'telegram'}",
         ):
             assert _matches_connector(
                 4242, plan.to_record(), runner=fake_ps({4242: impostor})

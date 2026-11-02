@@ -69,6 +69,11 @@
       </div>
     </div>
 
+    <div class="filter-strip" id="session-filters">
+      <button class="filter-chip active" onclick="filterSessions('online', this)">Online</button>
+      <button class="filter-chip" onclick="filterSessions('held', this)">Held</button>
+    </div>
+
     <div id="sessions-list" class="sessions-list">
       <div class="empty-state">
         <div class="empty-state-icon">🌿</div>

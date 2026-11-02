@@ -18,6 +18,19 @@ This ensures your reply lands in the right Slack thread. Each incoming message
 includes a complete heredoc with the correct route and a fresh delimiter; replace
 only `YOUR_REPLY` and run it. You do not need to load the notify skill first.
 
+To send a file, add `--file PATH` to the same command, before or after the route
+flags. One file per call. An HTML page must be one self-contained file, with its
+styles, scripts and images inlined. A file, a voice note or a spoken message
+goes only to this lodge's own chats: the chat this session was started from
+always works, and any other chat gets text only.
+
+To answer by voice: when the developer asks for a spoken answer and it is short
+and reads well aloud, add `--speak` to the same notify command. The lodge reads
+your message aloud and sends the audio into the thread as a file, with the text
+as its comment. Write it for the ear: plain sentences, no markdown, no lists, no
+code, no paths or links. Send anything long or technical as text. If `--speak`
+fails, send the same message without it.
+
 **When you start**: one-liner ack. "on it — reviewing the loop" or "got it, digging in."
 
 **When you're done**: Send a complete summary via notify — all key findings, decisions, and results. The reader should get full context without opening the session. But write it for chat, not a terminal — short paragraphs, no code blocks or formatted logs. Think "messaging a colleague your conclusions" not "pasting terminal output." Be thorough but digestible. NEVER say "see session" or "report in session."

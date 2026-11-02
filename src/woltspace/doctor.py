@@ -108,13 +108,27 @@ def _default_harness_check() -> DoctorCheck | None:
     )
 
 
+_FALLBACK_HARNESSES = ("claude", "codex", "opencode", "pi", "hermes")
+
+
+def _harness_table() -> dict:
+    """The harness registry, or {} when it cannot be imported."""
+    try:
+        from harnesses import HARNESSES
+    except ImportError:
+        return {}
+    return HARNESSES
+
+
 def _auth_paths(home: Path) -> dict[str, Path]:
     codex_home = Path(os.environ.get("CODEX_HOME", home / ".codex"))
     xdg_data = Path(os.environ.get("XDG_DATA_HOME", home / ".local" / "share"))
+    pi_home = Path(os.environ.get("PI_CODING_AGENT_DIR", home / ".pi" / "agent"))
     return {
         "claude": home / ".claude" / ".credentials.json",
         "codex": codex_home / "auth.json",
         "opencode": xdg_data / "opencode" / "auth.json",
+        "pi": pi_home / "auth.json",
     }
 
 
@@ -238,25 +252,19 @@ def _live_tunnel_owner(layout: RuntimeLayout, *, runner=None) -> int | None:
 
 def _running_session_count(layout: RuntimeLayout) -> int:
     """How many sessions this data root believes are alive right now."""
+    import sqlite3
+    _graft_runtime_lib(layout)
+    import lodge_db
     try:
-        entries = list(layout.wolts_dir.iterdir())
-    except OSError:
+        conn = lodge_db.connect(layout.wolts_dir, readonly=True)
+    except sqlite3.Error:  # no lodge.db yet: nothing has run here
         return 0
-    running = 0
-    for entry in entries:
-        if not entry.is_dir() or entry.name.startswith("."):
-            continue
-        sessions = entry / ".state" / "sessions"
-        if not sessions.is_dir():
-            continue
-        for record in sessions.glob("*.json"):
-            try:
-                data = json.loads(record.read_text())
-            except (json.JSONDecodeError, OSError):
-                continue
-            if isinstance(data, dict) and data.get("status") == "running":
-                running += 1
-    return running
+    try:
+        return conn.execute("SELECT count(*) FROM sessions WHERE status='running'").fetchone()[0]
+    except sqlite3.Error:
+        return 0
+    finally:
+        conn.close()
 
 
 def _owner_is_live_and_foreign(layout: RuntimeLayout, *, runner=None) -> "InstanceOwner | None":
@@ -377,9 +385,22 @@ def ensure_data_root_available(
         raise DataRootConflict(check)
 
 
+def _graft_runtime_lib(layout: RuntimeLayout) -> None:
+    """Make the install's `container/lib` importable, as `serve` does.
+
+    The harness registry lives there. Without the graft an installed CLI
+    (uvx, uv tool) cannot import it, and every harness check falls back to
+    names alone: no default-harness validation, no `auth_env` keys.
+    """
+    lib_dir = str(layout.runtime_lib)
+    if lib_dir not in sys.path:
+        sys.path.insert(0, lib_dir)
+
+
 def run_doctor(
     layout: RuntimeLayout, *, check_port: bool = True, as_entrypoint: bool = False
 ) -> list[DoctorCheck]:
+    _graft_runtime_lib(layout)
     checks = []
     version = sys.version_info
     checks.append(DoctorCheck(
@@ -427,18 +448,28 @@ def run_doctor(
         "Install tmux and ensure it is on PATH." if not tmux else "",
     ))
 
-    harnesses = {name: shutil.which(name) for name in ("claude", "codex", "opencode")}
+    table = _harness_table()
+    names = tuple(table) or _FALLBACK_HARNESSES
+    harnesses = {name: shutil.which(name) for name in names}
     installed = {name: path for name, path in harnesses.items() if path}
     checks.append(DoctorCheck(
         "harness",
         "pass" if installed else "fail",
         ", ".join(f"{name}={path}" for name, path in installed.items()) or "none found",
-        "Install at least one supported CLI: claude, codex, or opencode." if not installed else "",
+        f"Install at least one supported CLI: {', '.join(names)}." if not installed else "",
     ))
 
     home = Path.home()
     auth = _auth_paths(home)
-    authenticated = [name for name in installed if auth[name].is_file()]
+    authenticated = [name for name in installed if name in auth and auth[name].is_file()]
+    # A harness that authenticates from the lodge environment declares the
+    # variables it needs (`auth_env` in its table entry).
+    for name in installed:
+        if name in authenticated:
+            continue
+        keys = [key for key in table.get(name, {}).get("auth_env", ()) if os.environ.get(key)]
+        if keys:
+            authenticated.append(f"{name} ({keys[0]})")
     if (
         "claude" in installed
         and "claude" not in authenticated

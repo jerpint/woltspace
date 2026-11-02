@@ -31,7 +31,7 @@ source /workspace/wolts/.env
 EMAIL="<email>"
 
 curl -s "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/access/apps" \
-  -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" | python3 -c "
+  -K <(printf 'header = "Authorization: Bearer %s"\n' "$CLOUDFLARE_API_TOKEN") | python3 -c "
 import json, sys, urllib.request, os
 
 email = '$EMAIL'
@@ -63,7 +63,7 @@ POLICY_ID="<policy_id>"
 
 curl -s -X DELETE \
   "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/access/apps/$APP_ID/policies/$POLICY_ID" \
-  -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" | python3 -c "
+  -K <(printf 'header = "Authorization: Bearer %s"\n' "$CLOUDFLARE_API_TOKEN") | python3 -c "
 import json, sys
 r = json.load(sys.stdin)
 print('Deleted' if r.get('success') else f'FAILED: {r}')

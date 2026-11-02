@@ -121,3 +121,59 @@ test('poll updates preserve a control and its keyboard focus while state is unch
   assert.equal(document.activeElement, button);
   assert.equal(row.querySelector('.session-title').textContent, 'After');
 });
+
+const todayAt = (hours, minutes) => { const when = new Date(); when.setHours(hours, minutes, 0, 0); return Math.floor(when.getTime() / 1000); };
+const held = (hold, extra = {}) => ({ name: 'pal-dev', title: 'Dev', status: 'running', alive: true, openable: true, hold, ...extra });
+
+test('a held row shows its hold and its reason inline, the full reason as the title', () => {
+  // Inline, because a phone never shows a tooltip; CSS cuts a long reason with an ellipsis.
+  const api = load(async () => ({ ok: true }));
+  const forever = api.sessionRow(held({ until: null, reason: 'tunnel for the demo', since: 1 }));
+  assert.equal(forever.querySelector('.session-hold-badge').textContent, '📌 forever\u00a0· tunnel for the demo');
+  assert.equal(forever.querySelector('.session-hold-badge').title, 'tunnel for the demo');
+  // A no-break space: a plain one at the start of a flex item collapses ("forever· …").
+  assert.equal(forever.querySelector('.session-hold-reason').textContent, '\u00a0· tunnel for the demo');
+  const until = api.sessionRow(held({ until: todayAt(13, 25), reason: 'dev server', since: 1 }));
+  assert.equal(until.querySelector('.session-hold-badge').textContent, '📌 until 13:25\u00a0· dev server');
+});
+
+test('releasing a hold asks first, then deletes it and drops the badge', async () => {
+  const calls = [];
+  const api = load(async (url, options) => { calls.push([url, options]); return { ok: true }; });
+  const session = held({ until: null, reason: 'dev server', since: 1 });
+  const row = api.sessionRow(session);
+  await row.querySelector('.session-hold-release').dispatch('click');
+  assert.equal(calls.length, 0);
+  assert.equal(row.querySelector('.session-hold').querySelector('.session-confirm-label').textContent, 'Release?');
+  await row.querySelector('.session-hold').querySelector('.yes').dispatch('click');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][0], '/sessions/pal-dev/hold');
+  assert.equal(calls[0][1].method, 'DELETE');
+  assert.equal(row.querySelector('.session-hold'), null);
+  assert.equal(session.hold, undefined);
+  assert.equal(row.querySelector('.session-control-button').textContent, '■');  // the session keeps running
+});
+
+test('a poll that drops the hold removes the badge', () => {
+  const api = load(async () => ({ ok: true }));
+  const row = api.sessionRow(held({ until: null, reason: 'dev server', since: 1 }));
+  api.updateSessionRow(row, held(undefined));
+  assert.equal(row.querySelector('.session-hold'), null);
+});
+
+test('a long hold reason shrinks instead of widening the Sessions list', () => {
+  // The fake DOM cannot measure; the e2e checks that every row ends inside a
+  // 412 px viewport with a 200-character reason. This pins the cause: a grid
+  // column with an automatic minimum takes the nowrap badge's full width.
+  const css = readFileSync(join(root, 'public/static/style.css'), 'utf8');
+  const rule = selector => {
+    const start = css.indexOf(`${selector} {`);
+    assert.notEqual(start, -1, selector);
+    return css.slice(start, css.indexOf('}', start));
+  };
+  assert.match(rule('.sessions-group-body'), /grid-template-columns:\s*minmax\(0,\s*1fr\)/);
+  assert.match(rule('.sessions-group-body > .sessions-group-inner'), /min-width:\s*0/);
+  assert.match(rule('.session-hold-badge'), /min-width:\s*0/);
+  assert.match(rule('.session-hold-reason'), /text-overflow:\s*ellipsis/);
+});

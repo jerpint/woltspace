@@ -13,14 +13,14 @@
   const fetchJSON = async (url, fallback) => { try { const r = await fetch(url); return r.ok ? await r.json() : fallback; } catch { return fallback; } };
   const time = ts => new Date(ts * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   const day = ts => { const d = new Date(ts * 1000), now = new Date(), yesterday = new Date(Date.now() - 86400e3); return d.toDateString() === now.toDateString() ? 'Today' : d.toDateString() === yesterday.toDateString() ? 'Yesterday' : d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' }); };
-  const effective = () => { const id = config.harness || harnesses.default || 'claude'; const h = (harnesses.harnesses || []).find(x => x.id === id) || {}; const models = h.models || {}; return { id, model: config.model || models[config.type] || models.raccoon || '' }; };
+  const effective = () => { const id = config.harness || harnesses.default || 'claude'; const h = (harnesses.harnesses || []).find(x => x.id === id) || {}; return { id, model: config.model || woltDefaultModel(config, { ...h, id }) }; };
 
   function renderHeader() {
     const eng = effective(), own = sessions.filter(s => s.wolt === name).sort((a,b) => (b.last_activity || b.created_at || 0) - (a.last_activity || a.created_at || 0));
     const online = own.filter(sessionIsOnline);
     const avatar = root.querySelector('[data-avatar]');
     const sprite = woltSpriteAvatar(config.type || 'rodent', 44);
-    if (sprite) avatar.innerHTML = sprite; else avatar.textContent = WOLT_EMOJI[config.type] || '🦫';
+    if (sprite) avatar.innerHTML = sprite; else avatar.textContent = woltEmoji(config);
     root.querySelector('[data-name]').textContent = config.display_name || name;
     const last = own.length ? (own[0].last_activity || own[0].created_at || 0) : 0;
     root.querySelector('[data-meta]').textContent = `${config.type || 'rodent'} · ${eng.id}${eng.model ? ` · ${eng.model}` : ''} · ${woltStateText({ online, last })}`;
@@ -78,7 +78,7 @@
   }
   function choiceGroup(label, choices, selected, onChoose) {
     const section = el('section','wolt-choice-section'), title = el('div','wolt-colhead',label), pills = el('div','wolt-choices');
-    choices.forEach(choice => { const button = el('button',`wolt-choice${choice.id === selected ? ' active' : ''}`,choice.label); button.type='button'; button.onclick=()=>onChoose(choice.id); pills.appendChild(button); });
+    choices.forEach(choice => { const button = el('button',`wolt-choice${choice.id === selected ? ' active' : ''}`,choice.label); if (choice.icon) { const icon = el('span','engine-icon'); icon.style.setProperty('--engine-icon',`url("${choice.icon}")`); icon.setAttribute('aria-hidden','true'); button.prepend(icon); } button.type='button'; button.onclick=()=>onChoose(choice.id); pills.appendChild(button); });
     section.append(title,pills); return section;
   }
   function renderSettings(message = 'Changes apply from the next session.') {
@@ -90,11 +90,12 @@
     rename.onsubmit=event=>{event.preventDefault();saveSettings({display_name:nameInput.value.trim()},status);};
     rename.append(nameInput,renameSave); box.appendChild(rename);
     box.appendChild(el('p','wolt-rename-note',`Folder and address stay ${name}.`));
-    const engines = (harnesses.harnesses || []).map(h => ({id:h.id,label:`${h.emoji || ''} ${h.label}`.trim()}));
+    const engines = (harnesses.harnesses || []).map(h => ({id:h.id,icon:h.icon,label:`${h.icon ? '' : `${h.emoji || ''} `}${h.label}`.trim()+(h.experimental?' · experimental':'')}));
     box.appendChild(choiceGroup('Engine',engines,eng.id,id=>saveSettings({harness:id},status)));
     const selected = (harnesses.harnesses || []).find(h=>h.id===eng.id) || {};
     const models = (selected.catalog || []).map(model=>({id:model.id,label:model.label || model.id}));
     box.appendChild(choiceGroup('Model',models,eng.model,id=>saveSettings({model:id},status)));
+    box.appendChild(el('p','wolt-rename-note','Effort and other engine settings: ask your wolt.'));
     if (selected.freeform_model) {
       const freeform = el('form','wolt-model-form'), input = el('input','wolt-model-input');
       input.type='text'; input.placeholder='provider/model'; input.value=eng.model || '';

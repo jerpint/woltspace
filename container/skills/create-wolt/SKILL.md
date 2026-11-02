@@ -39,7 +39,9 @@ steps — say hi, show the site, ask the question, all in one go.
 
 Build it as **pages on your site** (`wolt/site/`). Static HTML/CSS/JS.
 Livereload makes every change instant in the viewport. This is the
-fastest path from idea to visible thing. New pages show up in your site's
+fastest path from idea to visible thing. To show a new page, run
+`push-view /wolt/<your-name>/site/<page>.html` (a bare `<page>.html` works
+too); it tells you if the page isn't there yet. New pages show up in your site's
 nav drawer on their own; to change how your site looks (colors, fonts,
 emoji) or take it over entirely, load the woltspace site skill.
 

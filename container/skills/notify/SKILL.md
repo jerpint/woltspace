@@ -1,6 +1,6 @@
 ---
 name: notify
-description: Push a message back to the user on Telegram or Slack — from inside a session.
+description: Push a message, a file or a voice note back to the user on Telegram or Slack — from inside a session.
 ---
 
 # Notify — Push Messages to the User
@@ -35,6 +35,106 @@ quotes, or other metacharacters.
 
 `notify` accepts no message argument. This keeps message text out of the shell
 command itself on every harness.
+
+## Send a file
+
+```bash
+notify --file wolt/sparks/weekly-update.html <<'WOLTSPACE_NOTIFY_7F3A91C2'
+Weekly update is ready. Open the attached page.
+WOLTSPACE_NOTIFY_7F3A91C2
+```
+
+`--file PATH` sends one file to the same chat or thread the message goes to.
+`PATH` is absolute or relative to the current directory. On Telegram the file
+arrives as a document with your message as its caption; a message too long for
+a caption arrives first, and the file follows it. On Slack the file lands in
+the thread with your message as its comment.
+
+Telegram reads an audio file's name. One ending in `.ogg`, `.oga` or `.opus`
+arrives as a voice note, and one ending in `.mp3` or `.m4a` as audio in
+Telegram's player. If Telegram will not take it that way (an `.ogg` that is not
+Opus, say), it arrives as a plain file. Any other name is a document.
+
+- One file per call, up to 50 MB. Send several files with several calls.
+- A file goes only to this lodge's own chats: the chat your session was started
+  from, a Telegram chat in `TELEGRAM_ALLOWED_USERS`, or the Slack channel in
+  `SLACK_NOTIFY_CHANNEL`. Your own chat always works. To any other chat the
+  send is refused and nothing goes out; send text there. On a lodge with no
+  `SLACK_NOTIFY_CHANNEL`, a file reaches Slack only from a session that was
+  started in Slack.
+- `--file PATH` goes before or after the route flags, so you can add it to the
+  heredoc Woltspace generates for a reply.
+- An HTML page must be one self-contained file, with its styles, scripts and
+  images inlined. Nothing it links to on disk travels with it.
+- Credential files are refused: `.env`, the Claude and Codex credential files,
+  anything in an `.ssh` folder except public keys (`*.pub`), `known_hosts`,
+  `authorized_keys` and `config`, SSH private keys by name (`id_rsa`,
+  `id_ed25519` and the like) wherever they are, files ending in `.pem`, `.key`,
+  `.p12` or `.pfx`, `.netrc`, `.git-credentials` and `.pgpass`, AWS
+  `credentials` and `config`, password vaults (`.kdbx` and the like), and
+  anything in the lodge's `.space` folder (chat history, sessions, tunnel
+  state; to send back a photo the human uploaded, copy it into your wolt's
+  folder first). A link to
+  one of them under another name is refused too. A Keynote deck also ends in
+  `.key`: export it to PDF and send that.
+- The message may be empty when a file is attached.
+
+A large file takes as long to send as it takes to upload, so let the command
+finish. If it times out, do not send again without checking: the lodge may
+still be delivering the file, and a second send would give the user two.
+
+On Slack the app needs the `files:write` scope. Without it the send fails with
+a message that names the scope; tell the user, and send the text on its own.
+
+## Send a voice note
+
+```bash
+notify --speak <<'WOLTSPACE_NOTIFY_5C3E81D7'
+The build is green. I pushed nothing yet.
+WOLTSPACE_NOTIFY_5C3E81D7
+```
+
+`--speak` has the lodge read your message aloud and send the audio to the same
+chat or thread the message goes to. On Telegram the user gets a voice note with
+your message as its caption; a message too long for a caption arrives first,
+and the voice note follows it. On Slack the audio lands in the thread as a
+file, with your message as its comment.
+
+Use it when the user spoke to you (their message starts with `[voice message]`)
+or asked for a spoken answer, and the answer is short. Send anything long or
+technical as text.
+
+- Write for the ear: plain sentences, no markdown, no lists, no code, no paths
+  or links. A few sentences is right. 4096 characters is the hard limit: a
+  longer message is refused, not cut.
+- The lodge says your words only, not your name in front of them and not the
+  reply footer.
+- `--voice PATH` sends audio you already have as a voice note: a file ending in
+  `.ogg` (Opus), `.oga`, `.opus`, `.mp3` or `.m4a`, up to 50 MB. It is the way
+  to ask for a voice note and be told when Telegram cannot make it one. With
+  `--file` the same audio still arrives, as a plain file if need be, and you
+  are not told which. Any other audio (`.wav`, say) goes with `--file`, as a
+  document.
+- One of `--file`, `--voice` and `--speak` per call. Like `--file`, the voice
+  flags go before or after the route flags.
+- Like a file, a voice note and a spoken message go only to the lodge's own
+  chats. Another chat gets text only, and nothing is spoken for it.
+- If the speech service fails (the lodge tries it twice), the lodge sends your
+  words as text with a short "voice note failed" line, and `notify` says
+  `the lodge sent the text instead`. The user has your words; do not send them
+  again.
+- If it fails, send the same message again as text. The error says why: no
+  key for the speech service in the lodge's `.env`, the audio was too large, or the
+  user has voice messages blocked. If it says the text was delivered, the user
+  already has your words; do not send them twice.
+- The text of the message goes to the lodge's speech service: OpenAI by
+  default (one API request per `--speak`, billed to the lodge's key), or
+  whatever the owner set with `woltspace speech set`, such as a model on this
+  machine. `woltspace speech show` tells you which.
+
+Speech takes a few seconds to make, more for a long message, so let the command
+finish here too. If it times out, check before you send the text: the lodge may
+still be delivering the voice note.
 
 ## Explicit routing
 

@@ -24,6 +24,7 @@ if str(_lib_path) not in sys.path:
 
 from sessions import SessionRegistry  # noqa: E402
 from harnesses import HARNESSES  # noqa: E402
+from settings_files import settings_lock, write_json_atomic  # noqa: E402
 
 
 # Unpinned on purpose: a fresh lodge installs the starter's latest main, so
@@ -75,12 +76,15 @@ def _lodge_config() -> dict:
         return {}
 
 
+def _lodge_config_lock():
+    """Held from a _lodge_config() read to its _write_lodge_config()."""
+    return settings_lock(WOLTS_DIR / "woltspace.json")
+
+
 def _write_lodge_config(config: dict) -> None:
     path = WOLTS_DIR / "woltspace.json"
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(config, indent=2) + "\n")
-    tmp.rename(path)
+    write_json_atomic(path, config)
 
 
 def _has_any_wolt() -> bool:
@@ -102,10 +106,11 @@ def select_onboarding_harness(name: str) -> None:
     Keeping this write beside the reader makes first-open state independent of
     harness implementation details and authentication.
     """
-    config = _lodge_config()
-    config.setdefault("harness", {})["default"] = name
-    config.setdefault("onboarding", {})["harness_selected"] = True
-    _write_lodge_config(config)
+    with _lodge_config_lock():
+        config = _lodge_config()
+        config.setdefault("harness", {})["default"] = name
+        config.setdefault("onboarding", {})["harness_selected"] = True
+        _write_lodge_config(config)
 
 
 def apply_default_harness_from_env(installer=None) -> bool:
@@ -137,44 +142,45 @@ def apply_default_harness_from_env(installer=None) -> bool:
 def install_starter_seed(installer=None) -> dict:
     """Attempt the configured starter once, without making onboarding fragile."""
     with _starter_seed_lock:
-        config = _lodge_config()
-        existing = config.get("starter_seed")
-        if isinstance(existing, dict):
-            return existing
+        with _lodge_config_lock():
+            config = _lodge_config()
+            existing = config.get("starter_seed")
+            if isinstance(existing, dict):
+                return existing
 
-        configured_source = os.environ.get("WOLTSPACE_STARTER_SEED")
-        source = (
-            DEFAULT_STARTER_SEED if configured_source is None else configured_source
-        ).strip()
-        installed_at = datetime.now(timezone.utc).isoformat()
-        if _has_any_wolt():
+            configured_source = os.environ.get("WOLTSPACE_STARTER_SEED")
+            source = (
+                DEFAULT_STARTER_SEED if configured_source is None else configured_source
+            ).strip()
+            installed_at = datetime.now(timezone.utc).isoformat()
+            if _has_any_wolt():
+                record = {
+                    "source": source,
+                    "installed_at": installed_at,
+                    "result": {"state": "skipped", "reason": "lodge already has wolts"},
+                }
+                config["starter_seed"] = record
+                _write_lodge_config(config)
+                return record
+            if not source or source.lower() == "none":
+                record = {
+                    "source": source,
+                    "installed_at": installed_at,
+                    "result": {"state": "skipped", "reason": "starter seed disabled"},
+                }
+                config["starter_seed"] = record
+                _write_lodge_config(config)
+                return record
+
+            # Claim the one attempt before touching the source. A crash cannot make
+            # a restart silently repeat a partially completed import.
             record = {
                 "source": source,
                 "installed_at": installed_at,
-                "result": {"state": "skipped", "reason": "lodge already has wolts"},
+                "result": {"state": "installing"},
             }
             config["starter_seed"] = record
             _write_lodge_config(config)
-            return record
-        if not source or source.lower() == "none":
-            record = {
-                "source": source,
-                "installed_at": installed_at,
-                "result": {"state": "skipped", "reason": "starter seed disabled"},
-            }
-            config["starter_seed"] = record
-            _write_lodge_config(config)
-            return record
-
-        # Claim the one attempt before touching the source. A crash cannot make
-        # a restart silently repeat a partially completed import.
-        record = {
-            "source": source,
-            "installed_at": installed_at,
-            "result": {"state": "installing"},
-        }
-        config["starter_seed"] = record
-        _write_lodge_config(config)
         try:
             if installer is None:
                 from woltspace.seed import install_seed
@@ -188,9 +194,10 @@ def install_starter_seed(installer=None) -> dict:
         except Exception as exc:
             record["result"] = {"state": "failed", "error": str(exc)}
             print(f"[starter-seed] install failed: {exc}", file=sys.stderr)
-        config = _lodge_config()
-        config["starter_seed"] = record
-        _write_lodge_config(config)
+        with _lodge_config_lock():
+            config = _lodge_config()
+            config["starter_seed"] = record
+            _write_lodge_config(config)
         return record
 
 

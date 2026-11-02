@@ -10,7 +10,13 @@ from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "container" / "lib"))
+# The platform modules. Put on sys.path only when missing: tests hand
+# os.pathsep.join(sys.path) to child processes as PYTHONPATH, and an insert on
+# every fixture use grew that one variable past the kernel's 128 KiB limit for
+# a single string (E2BIG).
+LIB_DIR = str(Path(__file__).resolve().parent.parent / "container" / "lib")
+if LIB_DIR not in sys.path:
+    sys.path.insert(0, LIB_DIR)
 from env_compat import get_env  # noqa: E402
 
 
@@ -134,6 +140,18 @@ def stub_harness_model_discovery(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def engines_on_path(monkeypatch):
+    """Every engine counts as installed unless a test says otherwise.
+
+    Native spawns refuse an engine whose program is not on PATH. Tests that
+    create or start sessions must not depend on which CLIs this machine has;
+    the refusal itself is tested by overriding this.
+    """
+    import harnesses
+    monkeypatch.setattr(harnesses, "_engine_on_path", lambda binary: True)
+
+
+@pytest.fixture(autouse=True)
 def claude_trust_home(tmp_path_factory, monkeypatch):
     """Point Claude's trust file at a throwaway home for every test.
 
@@ -143,7 +161,8 @@ def claude_trust_home(tmp_path_factory, monkeypatch):
     can read the file back.
     """
     import sys
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "container" / "lib"))
+    if LIB_DIR not in sys.path:
+        sys.path.insert(0, LIB_DIR)
     import trust
 
     home = tmp_path_factory.mktemp("claude-home")
@@ -218,11 +237,21 @@ def tmux_session():
 def tmp_registry(tmp_path):
     """Create a temporary session registry with a temp wolts_dir."""
     import sys
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "container" / "lib"))
+    if LIB_DIR not in sys.path:
+        sys.path.insert(0, LIB_DIR)
     from sessions import SessionRegistry
-    # Per-wolt model: registry uses WOLTS_DIR as root, sessions land in
-    # wolts_dir/{wolt}/.state/sessions/{name}.json
     return SessionRegistry(tmp_path)
+
+
+def make_session(reg, **fields) -> dict:
+    """Store one session record as given (name and wolt required), as a test seed.
+
+    A raw write into the registry's lodge.db: no defaults beyond a running
+    status and a creation time, and no last_activity stamp.
+    """
+    record = {"status": "running", "created_at": int(time.time()), **fields}
+    reg._write(record["wolt"], record["name"], record)
+    return record
 
 
 @pytest.fixture
@@ -287,10 +316,8 @@ def _stop_shadow_sessions(wolts_dir: Path):
     """Stop every session the shadow wolt spawned — through the server if it is up."""
     import urllib.request
 
-    sessions_dir = wolts_dir / SHADOW_WOLT / ".state" / "sessions"
-    names = []
-    if sessions_dir.is_dir():
-        names = [path.stem for path in sessions_dir.glob("*.json")]
+    from sessions import SessionRegistry
+    names = [r["name"] for r in SessionRegistry(wolts_dir).records(wolt=SHADOW_WOLT)]
     for name in names:
         body = json.dumps({}).encode()
         request = urllib.request.Request(
@@ -313,7 +340,8 @@ def routed_test_session(test_chat_id, shadow_wolt):
     Ensures notify probes go to the test group, never the main chat.
     """
     import sys
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "container" / "lib"))
+    if LIB_DIR not in sys.path:
+        sys.path.insert(0, LIB_DIR)
     from sessions import SessionRegistry
 
     wolts_dir = Path(get_env("WOLTSPACE_WOLTS_DIR", "/workspace/wolts"))
@@ -350,6 +378,22 @@ def tunnel_url():
 # Session runtime test double
 # ---------------------------------------------------------------------------
 
+@pytest.fixture(autouse=True)
+def _no_subprocess_inside_a_lodge_write(monkeypatch):
+    """A lodge.db write holds the lodge's one lock: SQL only, never tmux or ps."""
+    import subprocess as _subprocess
+    import lodge_db
+
+    def guarded(real):
+        def call(*args, **kwargs):
+            assert not lodge_db.in_write(), f"subprocess inside a lodge.db write: {args[:1]}"
+            return real(*args, **kwargs)
+        return call
+
+    monkeypatch.setattr(_subprocess, "run", guarded(_subprocess.run))
+    monkeypatch.setattr(_subprocess, "Popen", guarded(_subprocess.Popen))
+
+
 class FakeSessionRuntime:
     """Recording stand-in for TmuxSessionRuntime.
 
@@ -362,13 +406,25 @@ class FakeSessionRuntime:
     (pane_id, pane_pid, active) tuples. agents: the pane_ids whose process
     tree should count as carrying an agent. agent_sessions: tmux session names
     the batch check reports as agent-bearing (None = undetermined, which makes
-    list() fall back to tmux presence).
+    list() fall back to tmux presence). raw: what input_ready reports for any
+    pane — True (raw), False (still cooked) or None (unreadable). age: what
+    agent_age reports, in seconds — an agent long up by default — or None.
     """
+
+    def __getattribute__(self, name):
+        value = object.__getattribute__(self, name)
+        if callable(value) and not name.startswith("_"):
+            import lodge_db
+            assert not lodge_db.in_write(), f"runtime.{name} inside a lodge.db write"
+        return value
 
     def __init__(self, *, alive: bool = True, capture_text: str = "",
                  next_pane: str = "%1", panes=None, agents=(),
-                 agent_sessions=None):
+                 agent_sessions=None, raw: bool | None = True,
+                 age: int | None = 60):
         self._alive = alive
+        self._raw = raw
+        self._age = age
         # Batch liveness answer, by tmux session name. None = undetermined.
         self._agent_sessions = agent_sessions
         self._capture_text = capture_text
@@ -379,6 +435,7 @@ class FakeSessionRuntime:
         self.in_session_spawns: list[tuple[str, str, str]] = []
         self.pastes: list[tuple[str, str, float]] = []  # (target pane, text, settle)
         self.captures: list[tuple[str, str | None]] = []  # (target pane, start)
+        self.last_key_at: dict[str, int] = {}           # session -> session_activity
         self.stops: list[str] = []                      # tmux session names
         self.alive_checks: list[str] = []
 
@@ -458,6 +515,15 @@ class FakeSessionRuntime:
             return self._capture_text[0] if self._capture_text else ""
         return self._capture_text
 
+    def input_ready(self, handle) -> bool | None:
+        return self._raw
+
+    def agent_age(self, handle, process_names) -> int | None:
+        return self._age
+
+    def last_keys(self) -> dict[str, int]:
+        return dict(self.last_key_at)
+
     def stop(self, handle) -> bool:
         self.stops.append(handle.tmux_session_name)
         return True
@@ -510,7 +576,8 @@ def agent_comes_up(monkeypatch):
     itself is covered by TestResumeVerification in test_session_resume.py.
     """
     import sys
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "container" / "lib"))
+    if LIB_DIR not in sys.path:
+        sys.path.insert(0, LIB_DIR)
     import sessions
 
     seen: list[tuple] = []
@@ -533,11 +600,43 @@ def fake_runtime(monkeypatch):
     walk in the same call.
     """
     import sys
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "container" / "lib"))
+    if LIB_DIR not in sys.path:
+        sys.path.insert(0, LIB_DIR)
     import session_runtime
 
     runtime = FakeSessionRuntime(panes=[("%1", "100", True)], agents={"%1"})
     assert isinstance(runtime, session_runtime.SessionRuntime)
+    session_runtime.set_runtime(runtime)
+    yield runtime
+    session_runtime.set_runtime(None)
+
+
+class LiveSessionRuntime(FakeSessionRuntime):
+    """A tmux session is alive while its exact name is in `live`; stop() takes it out."""
+
+    def __init__(self):
+        super().__init__()
+        self.live: set[str] = set()
+
+    def is_alive(self, handle) -> bool:
+        return handle.tmux_session_name in self.live
+
+    def list_session_names(self, include_main: bool = False) -> set[str]:
+        return set(self.live)
+
+    def stop(self, handle) -> bool:
+        self.live.discard(handle.tmux_session_name)
+        return super().stop(handle)
+
+
+@pytest.fixture
+def live_runtime():
+    import sys
+    if LIB_DIR not in sys.path:
+        sys.path.insert(0, LIB_DIR)
+    import session_runtime
+
+    runtime = LiveSessionRuntime()
     session_runtime.set_runtime(runtime)
     yield runtime
     session_runtime.set_runtime(None)

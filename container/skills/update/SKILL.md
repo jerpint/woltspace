@@ -37,3 +37,5 @@ Read the command's final old/new version, health and degradation report. It rech
 Migration instructions are not executed by uv. Carry out only actions covered by user permission and workspace rules, and report the rest as pending. Package installation does not mean migrations are done.
 
 If the old release predates `woltspace update`, follow the manual uv procedure in the linked documentation once. External/container lodges stay with host tooling.
+
+To restart the lodge without updating it (after a configuration change), run `woltspace restart`. It keeps the same host and port and reports health the same way.

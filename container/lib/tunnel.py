@@ -161,13 +161,16 @@ def start_named_tunnel(token: str, host_header: str | None = None) -> dict:
         RuntimeError: if tunnel fails to start
     """
     log_file = tempfile.mktemp(suffix="-cloudflared.log")
-    cmd = ["cloudflared", "tunnel", "run", "--token", token]
+    # The token goes in TUNNEL_TOKEN, never argv: every user on the machine
+    # can read any process's command line (ps), but not its environment.
+    cmd = ["cloudflared", "tunnel", "run"]
     if host_header:
         cmd += ["--http-host-header", host_header]
 
     with open(log_file, "w") as lf:
         proc = subprocess.Popen(
             cmd,
+            env={**os.environ, "TUNNEL_TOKEN": token},
             stdout=lf,
             stderr=subprocess.STDOUT,
             start_new_session=True,

@@ -464,21 +464,12 @@ class TestNotifyEndToEnd:
             return {"error": str(e)}
 
     def _find_session_with_routing(self):
-        """Find a session file that has routing info (adapter + chat_id)."""
+        """Find a session that has routing info (adapter + chat_id)."""
+        from sessions import SessionRegistry
         wolts_dir = Path(get_env("WOLTSPACE_WOLTS_DIR", "/workspace/wolts"))
-        for wolt_dir in wolts_dir.iterdir():
-            if not wolt_dir.is_dir() or wolt_dir.name.startswith("."):
-                continue
-            sessions_dir = wolt_dir / ".state" / "sessions"
-            if not sessions_dir.exists():
-                continue
-            for f in sessions_dir.glob("*.json"):
-                try:
-                    data = json.loads(f.read_text())
-                    if data.get("adapter"):
-                        return f.stem, data
-                except (json.JSONDecodeError, OSError):
-                    continue
+        for data in SessionRegistry(wolts_dir).records():
+            if data.get("adapter"):
+                return data["name"], data
         return None, None
 
     def _read_last_chat_line(self, chat_id: str) -> str:

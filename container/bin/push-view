@@ -1,10 +1,27 @@
 #!/usr/bin/env bash
 # Push a URL to the viewport for the current session.
-# Usage: push-view /path/to/page.html
+# Usage: push-view /wolt/<name>/site/page.html
 #
 # Auto-detects which session we're in. Just works.
 
-URL="${1:?usage: push-view /path}"
+usage() {
+  cat <<'EOF'
+usage: push-view PAGE
+
+Shows PAGE in this session's viewport. PAGE can be:
+  /wolt/<name>/site/page.html    a page on a wolt's site
+  page.html, wolt/site/page.html a page on YOUR site (made into the path above)
+  http://<app>.localhost:7777/   an app
+The page must exist: push-view checks it loads before showing it.
+EOF
+}
+
+case "${1:-}" in
+  -h|--help) usage; exit 0 ;;
+  "") usage >&2; exit 2 ;;
+  -*) echo "push-view: unknown option ${1}" >&2; usage >&2; exit 2 ;;
+esac
+URL="$1"
 
 # Detect session: env var first (set by run-session.sh — both spellings,
 # see docs/environment.md), then tmux, then main
@@ -13,17 +30,86 @@ if [ -z "$SESSION" ]; then
   SESSION=$(tmux display-message -p '#S' 2>/dev/null || true)
 fi
 SESSION="${SESSION:-main}"
+WOLT="${WOLTSPACE_WOLT_NAME:-${WOLT_NAME:-}}"
 
 # The control plane that owns this session — see `notify` for where the stamp
 # comes from. The literal is the container's baked-in default only.
 API="${WOLTSPACE_API:-http://localhost:7777}"
 
+# A file on disk under some wolt's `wolt/site/` becomes that site's URL, so an
+# agent can pass the path it just wrote. Anything else not starting with `/`
+# or a scheme is a page on this wolt's own site: `page.html`, `./page.html`,
+# `site/page.html` and `wolt/site/page.html` all mean the same page. A bare
+# name used to be sent as is, and the viewport showed "not found".
+case "$URL" in
+  http://*|https://*) ;;
+  *)
+    if [ -e "$URL" ]; then
+      ABS="$(cd "$(dirname "$URL")" 2>/dev/null && pwd -P)/$(basename "$URL")"
+      case "$ABS" in
+        */wolt/site/*|*/wolt/site)
+          OWNER="${ABS%%/wolt/site*}"
+          REST="${ABS#"$OWNER"/wolt/site}"
+          REST="${REST#/}"
+          URL="/wolt/$(basename "$OWNER")/site/${REST}"
+          ;;
+      esac
+    fi
+    case "$URL" in
+      /*) ;;
+      *)
+        if [ -z "$WOLT" ]; then
+          echo "push-view: ${URL} is not a URL path and this session has no wolt name;" \
+               "pass /wolt/<name>/site/${URL}" >&2
+          exit 2
+        fi
+        REST="${URL#./}"
+        REST="${REST#wolt/site/}"
+        REST="${REST#site/}"
+        URL="/wolt/${WOLT}/site/${REST}"
+        ;;
+    esac
+    ;;
+esac
+
+# Check a lodge path loads before showing it: a page that 404s in the viewport
+# looks to the human like the wolt is broken, and the agent never sees it.
+# This also refuses a page the server has not written yet (a brand new wolt's
+# site); the server preloads that one itself, so push-view never needs to.
+# Spaces are encoded for curl only; the viewport gets the URL as typed, and the
+# browser encodes it as it always did.
+case "$URL" in
+  /*)
+    CHECK_URL=$(printf '%s' "$URL" | sed 's/ /%20/g')
+    CODE=$(curl -sS --max-time 5 -o /dev/null -w '%{http_code}' "${API}${CHECK_URL}" 2>/dev/null || true)
+    case "$CODE" in
+      2??|3??) ;;
+      000|"")
+        echo "[viewport:${SESSION}] failed to reach ${API}: no answer to ${URL}" >&2
+        exit 1
+        ;;
+      404)
+        echo "[viewport:${SESSION}] not pushed: ${URL} was not found." >&2
+        echo "Wolt sites are served at /wolt/<name>/site/<file>; check the file exists under wolt/site/." >&2
+        exit 1
+        ;;
+      *)
+        echo "[viewport:${SESSION}] not pushed: ${URL} answered HTTP ${CODE:-nothing}." >&2
+        exit 1
+        ;;
+    esac
+    ;;
+esac
+
+# JSON-escape the URL (backslash, then double quote).
+JSON_URL=$(printf '%s' "$URL" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')
+
 # `curl -s` swallows a connection refusal, and the old unconditional echo below
 # then reported a push that never happened — the single most misleading thing a
 # tool can do to an agent checking its own work. Fail loudly instead.
-if ! RESPONSE=$(curl -sS -f -X POST "${API}/current?session=${SESSION}" \
+if ! RESPONSE=$(curl -sS -f --max-time 5 -X POST "${API}/current?session=${SESSION}" \
   -H 'Content-Type: application/json' \
-  -d "{\"url\":\"${URL}\"}" 2>&1); then
+  -d "{\"url\":\"${JSON_URL}\"}" 2>&1); then
   echo "[viewport:${SESSION}] failed to reach ${API}: ${RESPONSE}" >&2
   exit 1
 fi

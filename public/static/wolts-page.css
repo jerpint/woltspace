@@ -33,7 +33,10 @@
   box-shadow: 0 8px 28px rgba(24,16,10,.18); border: 1px solid rgba(24,16,10,.08); }
 .wolts-menu a, .wolts-menu button { display: flex; justify-content: space-between; width: 100%; box-sizing: border-box; padding: 9px 10px; border: 0; background: none;
   border-radius: 7px; font: 14px var(--font-body, "DM Sans", sans-serif); text-align: left; color: inherit; text-decoration: none; cursor: pointer; }
-.wolts-menu a:hover { background: rgba(24,16,10,.06); }
-.wolts-menu button[disabled] { opacity: .4; cursor: default; }
-.wolts-menu small { font-size: 11px; }
+.wolts-menu a:hover, .wolts-menu button:hover { background: rgba(24,16,10,.06); }
 .wolts-menu hr { border: 0; border-top: 1px solid rgba(24,16,10,.08); margin: 4px 0; }
+.wolts-archived { margin-top: 14px; }
+.wolts-archived > summary { cursor: pointer; }
+.wolts-archived-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 8px; margin-top: 8px; padding: 10px 12px;
+  border-radius: 12px; background: rgba(255,255,255,.85); border: 1px solid rgba(24,16,10,.08); }
+.wolts-archived-row .wolts-body { color: var(--ink-3); }

@@ -151,7 +151,7 @@ def test_a_foreign_local_binary_falls_back_to_npx_latest():
 
 
 def test_missing_binary_and_npx_has_actionable_remedy():
-    with pytest.raises(TuiResolutionError, match="Install Node.js 18 or newer"):
+    with pytest.raises(TuiResolutionError, match="Install Node.js 22 or newer"):
         resolve_tui({}, which=lambda name: None)
 
 

@@ -75,6 +75,7 @@ CONNECTOR_CREATURES = {
     "telegram": "🐶",
     "slack": "🐶",
     "wolf": "🐺",
+    "vulture": "🦅",
     "tui": BEAVER,
 }
 

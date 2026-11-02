@@ -6,6 +6,11 @@ By default, woltspace uses free quick tunnels that generate a random URL on ever
 
 **This is idempotent** — safe to run again. If things are already configured, validate and skip.
 
+> **Secrets stay off command lines.** Every user on the machine can read a
+> running command's arguments with `ps`. So the API token reaches curl as a
+> config file (`-K <(printf ...)`, `printf` is a shell builtin) and never as
+> `-H "Authorization: Bearer ..."`. Keep it that way in any call you add.
+
 ## Step 0: Check existing config
 
 Check if a named tunnel is already configured:
@@ -66,7 +71,7 @@ Verify the token works:
 ```bash
 source /workspace/wolts/.env
 curl -s "https://api.cloudflare.com/client/v4/user/tokens/verify" \
-  -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" | python3 -c "
+  -K <(printf 'header = "Authorization: Bearer %s"\n' "$CLOUDFLARE_API_TOKEN") | python3 -c "
 import json,sys; r=json.load(sys.stdin)
 print('token OK' if r.get('success') else f'token FAILED: {r}')
 "
@@ -90,15 +95,18 @@ source /workspace/wolts/.env
 # Create the tunnel
 TUNNEL_RESULT=$(curl -s -X POST \
   "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/cfd_tunnel" \
-  -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+  -K <(printf 'header = "Authorization: Bearer %s"\n' "$CLOUDFLARE_API_TOKEN") \
   -H "Content-Type: application/json" \
-  --data "{\"name\": \"woltspace-lodge\", \"tunnel_secret\": \"$(openssl rand -base64 32)\"}")
+  --data @<(printf '{"name": "woltspace-lodge", "tunnel_secret": "%s"}' "$(openssl rand -base64 32)"))
 
 TUNNEL_ID=$(echo "$TUNNEL_RESULT" | python3 -c "import json,sys; print(json.load(sys.stdin)['result']['id'])")
 TUNNEL_TOKEN=$(echo "$TUNNEL_RESULT" | python3 -c "import json,sys; print(json.load(sys.stdin)['result']['token'])")
 
 echo "Tunnel ID: $TUNNEL_ID"
-echo "Token: $TUNNEL_TOKEN"
+# Never print the token: it would land in this session's transcript.
+# Write it straight to .env from the same shell.
+printf 'CLOUDFLARE_TUNNEL_TOKEN=%s\n' "$TUNNEL_TOKEN" >> /workspace/wolts/.env
+echo "Token saved to .env (${#TUNNEL_TOKEN} chars)"
 ```
 
 Configure the tunnel ingress:
@@ -106,7 +114,7 @@ Configure the tunnel ingress:
 ```bash
 curl -s -X PUT \
   "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/cfd_tunnel/$TUNNEL_ID/configurations" \
-  -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+  -K <(printf 'header = "Authorization: Bearer %s"\n' "$CLOUDFLARE_API_TOKEN") \
   -H "Content-Type: application/json" \
   --data "{
     \"config\": {
@@ -123,7 +131,7 @@ Create the DNS CNAME record:
 ```bash
 curl -s -X POST \
   "https://api.cloudflare.com/client/v4/zones/$CLOUDFLARE_ZONE_ID/dns_records" \
-  -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+  -K <(printf 'header = "Authorization: Bearer %s"\n' "$CLOUDFLARE_API_TOKEN") \
   -H "Content-Type: application/json" \
   --data "{
     \"type\": \"CNAME\",
@@ -133,10 +141,9 @@ curl -s -X POST \
   }"
 ```
 
-Add the tunnel token and URL to `.env`:
+The token is already in `.env` (written above). Add the tunnel URL next to it:
 
 ```
-CLOUDFLARE_TUNNEL_TOKEN=<token from above>
 CLOUDFLARE_TUNNEL_URL=https://<subdomain>.<domain>
 ```
 
@@ -152,7 +159,7 @@ source /workspace/wolts/.env
 # Create Access application
 APP_RESULT=$(curl -s -X POST \
   "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/access/apps" \
-  -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+  -K <(printf 'header = "Authorization: Bearer %s"\n' "$CLOUDFLARE_API_TOKEN") \
   -H "Content-Type: application/json" \
   --data "{
     \"name\": \"woltspace-lodge\",
@@ -166,7 +173,7 @@ APP_ID=$(echo "$APP_RESULT" | python3 -c "import json,sys; print(json.load(sys.s
 # Create policy allowing the user's email via OTP
 curl -s -X POST \
   "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/access/apps/$APP_ID/policies" \
-  -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+  -K <(printf 'header = "Authorization: Bearer %s"\n' "$CLOUDFLARE_API_TOKEN") \
   -H "Content-Type: application/json" \
   --data "{
     \"name\": \"allow-owner\",
@@ -187,7 +194,7 @@ If the user wants public apps to be served at `{app-name}.{domain}` (e.g. `corew
 ```bash
 curl -s -X POST \
   "https://api.cloudflare.com/client/v4/zones/$CLOUDFLARE_ZONE_ID/dns_records" \
-  -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+  -K <(printf 'header = "Authorization: Bearer %s"\n' "$CLOUDFLARE_API_TOKEN") \
   -H "Content-Type: application/json" \
   --data "{
     \"type\": \"CNAME\",
@@ -202,7 +209,7 @@ curl -s -X POST \
 ```bash
 curl -s -X PUT \
   "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/cfd_tunnel/$TUNNEL_ID/configurations" \
-  -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+  -K <(printf 'header = "Authorization: Bearer %s"\n' "$CLOUDFLARE_API_TOKEN") \
   -H "Content-Type: application/json" \
   --data "{
     \"config\": {
@@ -220,7 +227,7 @@ curl -s -X PUT \
 ```bash
 APP_RESULT=$(curl -s -X POST \
   "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/access/apps" \
-  -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+  -K <(printf 'header = "Authorization: Bearer %s"\n' "$CLOUDFLARE_API_TOKEN") \
   -H "Content-Type: application/json" \
   --data "{
     \"name\": \"woltspace-apps\",
@@ -233,7 +240,7 @@ APP_ID=$(echo "$APP_RESULT" | python3 -c "import json,sys; print(json.load(sys.s
 
 curl -s -X POST \
   "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/access/apps/$APP_ID/policies" \
-  -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+  -K <(printf 'header = "Authorization: Bearer %s"\n' "$CLOUDFLARE_API_TOKEN") \
   -H "Content-Type: application/json" \
   --data "{
     \"name\": \"allow-owner\",
@@ -252,7 +259,9 @@ Start the named tunnel manually to verify:
 
 ```bash
 source /workspace/wolts/.env
-cloudflared tunnel run --token "$CLOUDFLARE_TUNNEL_TOKEN" &
+# TUNNEL_TOKEN in the environment, not --token: a command line is visible
+# to every user on the machine (ps).
+TUNNEL_TOKEN="$CLOUDFLARE_TUNNEL_TOKEN" cloudflared tunnel run &
 sleep 3
 curl -s -o /dev/null -w "%{http_code}" "https://<subdomain>.<domain>"
 ```
@@ -275,7 +284,7 @@ Explain to the human how to revert:
 
 - **DNS_PROBE_FINISHED_NXDOMAIN** — nameserver propagation isn't complete yet. Check `dig NS <domain> @8.8.8.8 +short` — it should show Cloudflare nameservers. If it still shows your old registrar, wait.
 - **"Authentication error" on API calls** — token missing required permissions. Edit at cloudflare.com/profile/api-tokens.
-- **Tunnel starts but site doesn't load** — verify ingress config: `curl -s "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/cfd_tunnel/$TUNNEL_ID/configurations" -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"`
+- **Tunnel starts but site doesn't load** — verify ingress config: `curl -s "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/cfd_tunnel/$TUNNEL_ID/configurations" -K <(printf 'header = "Authorization: Bearer %s"\n' "$CLOUDFLARE_API_TOKEN")`
 - **Access login page doesn't appear** — Access app might not be created, or domain doesn't match. Check Zero Trust → Access → Applications.
 - **"This site can't be reached" after DNS propagated** — tunnel process might not be running. Check `ps aux | grep cloudflared`.
 - **Local DNS cache** — flush with `sudo dscacheutil -flushcache && sudo killall -HUP mDNSResponder` (macOS) or try `dig <subdomain>.<domain> @8.8.8.8` to bypass cache.

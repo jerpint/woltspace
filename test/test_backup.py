@@ -44,7 +44,7 @@ def wolts(tmp_path):
     write(".env", f"TELEGRAM_BOT_TOKEN={SECRET}\n")
     write("woltspace.json", json.dumps({"active": {"telegram": "beaverwolt"}}))
     write(".state/registry/session-1.json", json.dumps({"name": "session-1"}))
-    write(".space/platform/config.json", json.dumps({"channels": {}}))
+    write(".space/platform/adoption.json", json.dumps({"adopted": []}))
 
     for name in ("beaverwolt", "raccoonwolt"):
         write(f"{name}/CLAUDE.md", f"# {name}\n")
@@ -86,7 +86,7 @@ def test_excludes_drop_the_junk_and_keep_the_data(wolts, tmp_path):
     for kept in (
         f"{ARCHIVE_ROOT}/woltspace.json",
         f"{ARCHIVE_ROOT}/.state/registry/session-1.json",
-        f"{ARCHIVE_ROOT}/.space/platform/config.json",
+        f"{ARCHIVE_ROOT}/.space/platform/adoption.json",
         f"{ARCHIVE_ROOT}/beaverwolt/wolt/wolt.json",
         f"{ARCHIVE_ROOT}/beaverwolt/wolt/memory/identity.md",
         f"{ARCHIVE_ROOT}/beaverwolt/wolt/.git/HEAD",
@@ -186,6 +186,10 @@ def test_round_trip_restores_the_tree_byte_for_byte(wolts, tmp_path):
 
     before = snapshot(wolts)
     after = snapshot(restored.wolts_dir)
+    # The one file a restore adds: the mark that keeps the copy on its own tmux.
+    assert after.pop(backup_mod.RESTORED_MARKER)[0] == "file"
+    # The one it removes: a runtime record of the source's processes.
+    assert before.pop(".space/platform/adoption.json")[0] == "file"
     assert before == after
     assert restored.manifest["tag"] == result.manifest["tag"]
     assert restored.entries == result.manifest["entries"]
@@ -425,7 +429,7 @@ def test_the_manifest_names_every_withheld_path(wolts_with_credentials, tmp_path
         "beaverwolt/home/.codex/auth.json": "codex-auth",
     }
     assert {rule["rule"] for rule in withheld["rules"]} == {
-        "dotenv", "claude-credentials", "codex-auth",
+        "dotenv", "claude-credentials", "codex-auth", "platform-config",
     }
     assert SECRET not in json.dumps(result.manifest)
     assert "8 credential file(s)" in "\n".join(backup_mod.summary_lines(result))
@@ -723,3 +727,1278 @@ def test_cli_reports_a_missing_source_without_traceback(tmp_path, capsys):
     code = cli_main(["backup", "--wolts-dir", str(tmp_path / "nope"), "--out", str(tmp_path)])
     assert code == 1
     assert "backup failed" in capsys.readouterr().out
+
+
+# Slim (the default) and --full
+
+
+@pytest.fixture
+def lived_in(wolts):
+    """The same lodge after some living: media, big logs, caches, checkouts."""
+
+    def write(rel: str, data: bytes) -> None:
+        path = wolts / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+
+    write("beaverwolt/wolt/drafts/talk/render.mp4", b"\0" * 40_000)
+    write("beaverwolt/wolt/site/hero.png", b"\x89PNG" + b"\0" * 9_000)
+    write("beaverwolt/wolt/drafts/huge-notes.md", b"n" * (backup_mod.SLIM_TEXT_MAX + 1))
+    write("beaverwolt/wolt/drafts/plan.md", b"# plan\n")
+    write("beaverwolt/wolt/drafts/nb.ipynb", b"{}")
+    write("beaverwolt/worktrees/feature-y/README.md", b"checkout\n")
+    write("beaverwolt/wolt/sparks/tool/lib/python3.13/site.py", b"x = 1\n")
+    write("beaverwolt/wolt/sparks/npm/_cacache/index", b"c" * 100)
+    write("beaverwolt/.git/worktrees/feature-y/HEAD", b"ref: refs/heads/y\n")
+    # Context, kept at any size and in any format.
+    big = b"{}\n" * (backup_mod.SLIM_TEXT_MAX // 3 + 1)
+    write("beaverwolt/.claude/projects/-pond/session.jsonl", big)
+    write("raccoonwolt/.codex/sessions/2026/10/rollout.jsonl", big)
+    write("raccoonwolt/.codex/state_5.sqlite", b"SQLite format 3\0")
+    write("raccoonwolt/.local/share/opencode/opencode.db", b"SQLite format 3\0")
+    write("beaverwolt/wolt/.git/objects/pack/pack-1.pack", b"\0" * 30_000)
+    write("beaverwolt/wolt/memory/photo.jpg", b"\xff\xd8" + b"\0" * 100)
+    write(".space/logs/control-plane.log", b"log\n")
+    return wolts
+
+
+def test_slim_keeps_all_context_and_code_and_lists_the_rest(lived_in, tmp_path):
+    result = create_backup(lived_in, out_dir=tmp_path / "out")
+    names = set(_members(result.archive))
+
+    for kept in (
+        "beaverwolt/wolt/drafts/plan.md",
+        "beaverwolt/wolt/drafts/nb.ipynb",
+        "beaverwolt/wolt/site/index.html",
+        "beaverwolt/.claude/projects/-pond/session.jsonl",
+        "raccoonwolt/.codex/sessions/2026/10/rollout.jsonl",
+        "raccoonwolt/.codex/state_5.sqlite",
+        "raccoonwolt/.local/share/opencode/opencode.db",
+        "beaverwolt/wolt/.git/objects/pack/pack-1.pack",
+        "beaverwolt/.git/worktrees/feature-y/HEAD",
+        "beaverwolt/wolt/memory/photo.jpg",
+        ".space/platform/adoption.json",
+    ):
+        assert f"{ARCHIVE_ROOT}/{kept}" in names, kept
+
+    left = {
+        "beaverwolt/wolt/drafts/talk/render.mp4",
+        "beaverwolt/wolt/site/hero.png",
+        "beaverwolt/wolt/drafts/huge-notes.md",
+        "beaverwolt/worktrees",
+        "beaverwolt/wolt/sparks/tool/lib/python3.13",
+        "beaverwolt/wolt/sparks/npm/_cacache",
+        ".space/logs/control-plane.log",
+    }
+    assert not {f"{ARCHIVE_ROOT}/{rel}" for rel in left} & names
+    assert not [n for n in names if n.startswith(f"{ARCHIVE_ROOT}/beaverwolt/worktrees/")]
+
+    manifest = result.manifest
+    assert manifest["mode"] == "slim"
+    with tarfile.open(result.archive, "r:gz") as tar:
+        listed = tar.extractfile(backup_mod.LEFT_OUT_NAME).read().decode().splitlines()
+    rows = {line.split("\t")[0]: line.split("\t") for line in listed[1:]}
+    assert left <= set(rows)
+    assert rows["beaverwolt/worktrees"][1] == "dir"
+    assert int(rows["beaverwolt/wolt/drafts/talk/render.mp4"][2]) == 40_000
+    assert manifest["left_out"]["files"] == sum(int(r[3]) for r in rows.values())
+    verify_archive(result.archive)
+
+
+def test_full_keeps_media_and_writes_no_left_out_list(lived_in, tmp_path):
+    result = create_backup(lived_in, out_dir=tmp_path / "out", full=True)
+    names = set(_members(result.archive))
+    assert f"{ARCHIVE_ROOT}/beaverwolt/wolt/drafts/talk/render.mp4" in names
+    assert f"{ARCHIVE_ROOT}/beaverwolt/wolt/drafts/huge-notes.md" in names
+    assert backup_mod.LEFT_OUT_NAME not in names
+    assert result.manifest["mode"] == "full"
+    assert "left_out" not in result.manifest
+
+
+def test_slim_round_trip_restores_what_it_kept_and_says_what_it_did_not(lived_in, tmp_path):
+    result = create_backup(lived_in, out_dir=tmp_path / "out")
+    restored = restore_backup(result.archive, to=tmp_path / "back")
+    assert restored.entries == result.manifest["entries"]
+    root = restored.wolts_dir
+    session = root / "beaverwolt" / ".claude" / "projects" / "-pond" / "session.jsonl"
+    assert session.read_bytes() == (lived_in / "beaverwolt/.claude/projects/-pond/session.jsonl").read_bytes()
+    assert not (root / "beaverwolt" / "wolt" / "drafts" / "talk" / "render.mp4").exists()
+    assert (restored.target / backup_mod.LEFT_OUT_NAME).is_file()
+    lines = backup_mod.restore_lines(restored)
+    assert any(line.startswith("left out:") for line in lines)
+
+
+def test_a_wolt_at_the_root_is_never_slim_dropped_by_name(wolts, tmp_path):
+    (wolts / "cache" / "wolt").mkdir(parents=True)
+    (wolts / "cache" / "wolt" / "wolt.json").write_text(json.dumps({"name": "cache"}))
+    result = create_backup(wolts, out_dir=tmp_path / "out")
+    assert f"{ARCHIVE_ROOT}/cache/wolt/wolt.json" in _members(result.archive)
+
+
+def test_cli_full_flag(lived_in, tmp_path, capsys, monkeypatch):
+    monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(lived_in))
+    assert cli_main(["backup", "--tag", "slim", "--out", str(tmp_path / "out")]) == 0
+    assert "mode: slim" in capsys.readouterr().out
+    assert cli_main(["backup", "--full", "--tag", "full", "--out", str(tmp_path / "out"), "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["manifest"]["mode"] == "full"
+
+
+def test_slim_keeps_every_transcript_even_inside_dropped_dirs(wolts, tmp_path):
+    """Reproducibility: no session transcript is ever left out of a slim backup."""
+    stores = (
+        "beaverwolt/worktrees/feature-z/.claude/projects/-z/a.jsonl",
+        "beaverwolt/wolt/worktrees/old/.codex/sessions/2026/r.jsonl",
+        "beaverwolt/wolt/sparks/.tmp/lodge/wolts/w/.claude/projects/-w/b.jsonl",
+        "beaverwolt/wolt/apps/demo/node_modules/x/.codex/archived_sessions/c.jsonl",
+        "beaverwolt/wolt/drafts/cache/home/.local/share/opencode/opencode.db",
+    )
+    for rel in stores:
+        path = wolts / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"\0" * 10)
+    (wolts / "beaverwolt/worktrees/feature-z/big.mp4").write_bytes(b"\0" * 1000)
+    (wolts / "beaverwolt/worktrees/feature-z/src.py").write_text("x = 1\n")
+
+    result = create_backup(wolts, out_dir=tmp_path / "out")
+    names = set(_members(result.archive))
+    for rel in stores:
+        assert f"{ARCHIVE_ROOT}/{rel}" in names, rel
+    # Only the transcripts come out of a dropped directory; the rest is listed.
+    assert f"{ARCHIVE_ROOT}/beaverwolt/worktrees/feature-z/src.py" not in names
+    with tarfile.open(result.archive, "r:gz") as tar:
+        listed = tar.extractfile(backup_mod.LEFT_OUT_NAME).read().decode()
+    assert "beaverwolt/worktrees/feature-z/big.mp4" in listed
+    assert "beaverwolt/worktrees/feature-z/src.py" in listed
+    assert "beaverwolt/wolt/apps/demo/node_modules/left-pad" in listed
+
+
+# Slim leaves databases out unless a manifest opts them in
+
+
+def test_slim_leaves_databases_out_unless_a_manifest_opts_them_in(wolts, tmp_path):
+    def write(rel: str, data: bytes) -> None:
+        path = wolts / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+
+    app = "beaverwolt/wolt/apps/demo"
+    write(f"{app}/woltspace.json", json.dumps({"name": "demo", "backup": {"keep": ["data/app.db"]}}).encode())
+    write(f"{app}/data/app.db", b"\0" * (backup_mod.SLIM_TEXT_MAX + 1))
+    write(f"{app}/data/app.db-wal", b"\0" * 10)
+    write(f"{app}/data/scratch.db", b"\0" * 10)
+    # A wolt opts in from its own wolt.json; a manifest never reaches outside itself.
+    write("raccoonwolt/wolt/wolt.json", json.dumps({
+        "name": "raccoonwolt", "backup": {"keep": ["notes/*.sqlite", "../beaverwolt/x.db", "/etc/hosts"]},
+    }).encode())
+    write("raccoonwolt/notes/index.sqlite", b"\0" * 10)
+    write("beaverwolt/x.db", b"\0" * 10)
+    write("raccoonwolt/.codex/logs_2.sqlite", b"\0" * 10)
+    write(f"{app}/Makefile", b"all:\n" * (backup_mod.SLIM_NO_SUFFIX_MAX // 5 + 1))
+
+    result = create_backup(wolts, out_dir=tmp_path / "out")
+    names = set(_members(result.archive))
+    for kept in (f"{app}/data/app.db", f"{app}/data/app.db-wal", f"{app}/Makefile",
+                 "raccoonwolt/notes/index.sqlite"):
+        assert f"{ARCHIVE_ROOT}/{kept}" in names, kept
+    for left in (f"{app}/data/scratch.db", "beaverwolt/x.db", "raccoonwolt/.codex/logs_2.sqlite"):
+        assert f"{ARCHIVE_ROOT}/{left}" not in names, left
+    with tarfile.open(result.archive, "r:gz") as tar:
+        listed = tar.extractfile(backup_mod.LEFT_OUT_NAME).read().decode()
+    assert f"{app}/data/scratch.db" in listed
+    assert result.manifest["left_out"]["rules"]["opted_in"] == {
+        app: ["data/app.db"], "raccoonwolt": ["notes/*.sqlite"],
+    }
+
+
+# A restored copy keeps its hands off the lodge it came from
+
+
+def _lodge_runtime(wolts: Path, live_pid: int) -> None:
+    """Runtime records as a lodge before lodge.db left them, pointing at live processes."""
+    source = str(wolts.resolve())
+
+    def write(rel: str, data) -> None:
+        path = wolts / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data))
+
+    write(".space/platform/control-plane.json", {"instance_id": "abc", "pid": live_pid})
+    write(".space/platform/tunnel.json", {"pid": live_pid, "url": "https://example.test"})
+    write(".space/platform/connectors.json", {"connectors": [{"name": "wolf", "pid": live_pid}]})
+    write(".space/apps/demo.json", {"name": "demo", "pid": live_pid, "port": 4001, "tunnel_pid": None})
+    session = {
+        "name": "beaverwolt-s1", "wolt": "beaverwolt", "status": "running",
+        "workdir": f"{source}/beaverwolt", "dir": f"{source}/beaverwolt",
+        "target": {"wolt_id": "beaverwolt", "canonical_workdir": f"{source}/beaverwolt"},
+        "runtime": {"tmux_session_name": "beaverwolt-s1", "pane_id": "%7", "kind": "tmux"},
+        "harness_session_id": "resume-me",
+    }
+    write("beaverwolt/.state/sessions/beaverwolt-s1.json", session)
+    write("beaverwolt/.state/sessions/beaverwolt-repo.json", {
+        **session, "name": "beaverwolt-repo", "workdir": "/elsewhere/repo", "dir": "/elsewhere/repo",
+        "target": {"wolt_id": "beaverwolt", "canonical_workdir": "/elsewhere/repo"},
+    })
+    write("beaverwolt/.state/sessions/beaverwolt-old.json", {
+        **session, "name": "beaverwolt-old", "status": "stopped",
+        "workdir": "/workspace/wolts/beaverwolt", "dir": "/workspace/wolts/beaverwolt",
+        "target": {"wolt_id": "beaverwolt", "canonical_workdir": "/workspace/wolts/beaverwolt"},
+    })
+    write(".space/auto-grants.json", {"grants": [
+        {"wolt_id": "beaverwolt", "canonical_workdir": f"{source}/beaverwolt", "policy_version": 1},
+        {"wolt_id": "beaverwolt", "canonical_workdir": "/elsewhere/repo", "policy_version": 1},
+    ]})
+
+
+def test_a_pre_lodge_db_archive_is_disarmed_in_its_files(wolts, tmp_path):
+    """A slim archive from before lodge.db holds its state in JSON files, which
+    the copy's first boot imports: they are disarmed where they lie."""
+    _lodge_runtime(wolts, os.getpid())
+    # What an import left behind, and a downgrade would put back.
+    imported = wolts / "beaverwolt/.state/sessions.imported/beaverwolt-was.json"
+    imported.parent.mkdir(parents=True)
+    imported.write_text(json.dumps({
+        "name": "beaverwolt-was", "wolt": "beaverwolt", "status": "running",
+        "workdir": f"{wolts.resolve()}/beaverwolt", "runtime": {"tmux_session_name": "x"},
+    }))
+    archive = create_backup(wolts, out_dir=tmp_path / "out").archive
+    restored = restore_backup(archive, to=tmp_path / "back")
+    copy = restored.wolts_dir
+    assert restored.manifest["mode"] == "slim"
+    assert not (copy / ".space" / "lodge.db").exists()
+
+    for rel in (".space/platform/control-plane.json", ".space/platform/tunnel.json",
+                ".space/platform/connectors.json"):
+        assert not (copy / rel).exists(), rel
+    # The app is still wanted, but no longer claims the source's process.
+    assert json.loads((copy / ".space/apps/demo.json").read_text()) == {"name": "demo", "port": 4001}
+    session = json.loads((copy / "beaverwolt/.state/sessions/beaverwolt-s1.json").read_text())
+    assert session["status"] == "stopped"
+    assert "runtime" not in session
+    assert session["workdir"] == session["dir"] == str(copy / "beaverwolt")
+    assert session["target"]["canonical_workdir"] == str(copy / "beaverwolt")
+    assert session["harness_session_id"] == "resume-me"
+    # The container era saw the same lodge at /workspace/wolts: re-pointed, not set aside.
+    old = json.loads((copy / "beaverwolt/.state/sessions/beaverwolt-old.json").read_text())
+    assert old["dir"] == old["target"]["canonical_workdir"] == str(copy / "beaverwolt")
+    # Worked outside the lodge: set aside, not re-pointed, not deleted.
+    assert not (copy / "beaverwolt/.state/sessions/beaverwolt-repo.json").exists()
+    aside = restored.target / backup_mod.QUARANTINE_NAME / "beaverwolt/.state/sessions/beaverwolt-repo.json"
+    assert json.loads(aside.read_text())["harness_session_id"] == "resume-me"
+    was = json.loads((copy / "beaverwolt/.state/sessions.imported/beaverwolt-was.json").read_text())
+    assert (was["status"], was["workdir"], "runtime" in was) == ("stopped", str(copy / "beaverwolt"), False)
+    grants = json.loads((copy / ".space/auto-grants.json").read_text())["grants"]
+    assert [g["canonical_workdir"] for g in grants] == [str(copy / "beaverwolt")]
+    # The source is untouched.
+    assert json.loads((wolts / ".space/apps/demo.json").read_text())["pid"] == os.getpid()
+    lines = backup_mod.restore_lines(restored)
+    assert any(line.startswith("disarmed: 3 session(s) come back stopped and 1 app(s)")
+               for line in lines)
+    assert any(line.startswith("set aside: 1 session(s)") for line in lines)
+    assert any("WOLTSPACE_PORT=" in line for line in lines)
+    assert backup_mod.restored_tmux_dir(copy) == restored.target / "tmux"
+    assert backup_mod.restored_tmux_dir(wolts) is None
+
+
+def _container_lib(name: str):
+    import importlib
+
+    lib = str(ROOT / "container" / "lib")
+    if lib not in sys.path:
+        sys.path.insert(0, lib)
+    return importlib.import_module(name)
+
+
+def _lodge_db_runtime(wolts: Path, live_pid: int) -> None:
+    """The same runtime as `_lodge_runtime`, the way 0.5.23 keeps it: rows in
+    lodge.db, with the real schema, and only the platform records as files."""
+    lodge_db = _container_lib("lodge_db")
+
+    source = str(wolts.resolve())
+    for rel, data in ((".space/platform/control-plane.json", {"pid": live_pid}),
+                      (".space/platform/tunnel.json", {"pid": live_pid})):
+        (wolts / rel).parent.mkdir(parents=True, exist_ok=True)
+        (wolts / rel).write_text(json.dumps(data))
+    session = {
+        "name": "beaverwolt-s1", "wolt": "beaverwolt", "status": "running", "created_at": 1,
+        "workdir": f"{source}/beaverwolt", "dir": f"{source}/beaverwolt",
+        "target": {"wolt_id": "beaverwolt", "canonical_workdir": f"{source}/beaverwolt"},
+        "runtime": {"tmux_session_name": "beaverwolt-s1", "pane_id": "%7", "kind": "tmux"},
+        "harness_session_id": "resume-me",
+    }
+    sessions = [
+        session,
+        {**session, "name": "beaverwolt-repo", "harness_session_id": "resume-repo",
+         "workdir": "/elsewhere/repo", "dir": "/elsewhere/repo",
+         "target": {"wolt_id": "beaverwolt", "canonical_workdir": "/elsewhere/repo"}},
+        {**session, "name": "beaverwolt-old", "status": "resting", "harness_session_id": "resume-old",
+         "workdir": "/workspace/wolts/beaverwolt", "dir": "/workspace/wolts/beaverwolt",
+         "target": {"wolt_id": "beaverwolt", "canonical_workdir": "/workspace/wolts/beaverwolt"}},
+    ]
+    app = {"name": "demo", "keeper": "beaverwolt", "port": 4001, "pid": live_pid,
+           "tunnel_pid": live_pid, "tunnel_url": "https://demo.example"}
+    with lodge_db.write(wolts) as conn:
+        for record in sessions:
+            conn.execute(
+                "INSERT INTO sessions (name, wolt, status, created_at, harness_session_id,"
+                " record, updated_at) VALUES (?, ?, ?, 1, ?, ?, 1)",
+                (record["name"], record["wolt"], record["status"], record["harness_session_id"],
+                 json.dumps(record)),
+            )
+        conn.executemany(
+            "INSERT INTO grants (kind, wolt_id, scope, policy_version, approved_at, record)"
+            " VALUES (?, 'beaverwolt', ?, 1, 1, ?)",
+            [("auto", f"{source}/beaverwolt", None), ("auto", "/workspace/wolts/beaverwolt", None),
+             ("auto", "/elsewhere/repo", None), ("dig", "pi", json.dumps({"host": "pi.lan"}))],
+        )
+        conn.execute(
+            "INSERT INTO apps_running (name, pid, port, tunnel_pid, tunnel_url, keeper,"
+            " started_at, record) VALUES ('demo', ?, 4001, ?, ?, 'beaverwolt', 1, ?)",
+            (live_pid, live_pid, app["tunnel_url"], json.dumps(app)),
+        )
+
+
+def _rows(db: Path, sql: str) -> list[tuple]:
+    import sqlite3
+
+    conn = sqlite3.connect(f"{db.as_uri()}?mode=ro", uri=True)
+    try:
+        return conn.execute(sql).fetchall()
+    finally:
+        conn.close()
+
+
+def test_restore_disarms_the_copys_lodge_db(wolts, tmp_path):
+    _lodge_db_runtime(wolts, os.getpid())
+    live_db = wolts / ".space" / "lodge.db"
+    before = _rows(live_db, "SELECT name, status, record FROM sessions ORDER BY name")
+    archive = create_backup(wolts, out_dir=tmp_path / "out").archive
+    restored = restore_backup(archive, to=tmp_path / "back")
+    copy = restored.wolts_dir
+    db = copy / ".space" / "lodge.db"
+
+    assert not (copy / ".space/platform/control-plane.json").exists()
+    assert not (copy / ".space/platform/tunnel.json").exists()
+    sessions = {name: (status, json.loads(record)) for name, status, record in
+                _rows(db, "SELECT name, status, record FROM sessions")}
+    assert sorted(sessions) == ["beaverwolt-old", "beaverwolt-s1"]
+    status, s1 = sessions["beaverwolt-s1"]
+    assert status == s1["status"] == "stopped" and s1["finished_at"]
+    assert "runtime" not in s1
+    assert s1["workdir"] == s1["dir"] == s1["target"]["canonical_workdir"] == str(copy / "beaverwolt")
+    assert s1["harness_session_id"] == "resume-me"
+    # Resting is not live: it keeps its status, and its container-era paths move.
+    status, old = sessions["beaverwolt-old"]
+    assert status == old["status"] == "resting"
+    assert old["dir"] == str(copy / "beaverwolt")
+    # Worked outside the lodge: out of the copy's database, into the quarantine,
+    # in the shape the importer reads.
+    aside = restored.target / backup_mod.QUARANTINE_NAME / "beaverwolt/.state/sessions/beaverwolt-repo.json"
+    repo = json.loads(aside.read_text())
+    assert (repo["name"], repo["harness_session_id"], repo["status"]) == (
+        "beaverwolt-repo", "resume-repo", "stopped")
+    assert repo["workdir"] == "/elsewhere/repo" and "runtime" not in repo
+    # Auto approvals: re-pointed (two that land on one folder are one), or dropped.
+    assert _rows(db, "SELECT kind, scope FROM grants ORDER BY kind") == [
+        ("auto", str(copy / "beaverwolt")), ("dig", "pi"),
+    ]
+    # Apps: still wanted, but no pid of anyone's.
+    (pid, port, tunnel_pid, tunnel_url, record), = _rows(
+        db, "SELECT pid, port, tunnel_pid, tunnel_url, record FROM apps_running")
+    assert (pid, port, tunnel_pid, tunnel_url) == (None, 4001, None, None)
+    assert json.loads(record) == {"name": "demo", "keeper": "beaverwolt", "port": 4001}
+
+    # The source's database is untouched.
+    assert _rows(live_db, "SELECT name, status, record FROM sessions ORDER BY name") == before
+    assert _rows(live_db, "SELECT pid FROM apps_running") == [(os.getpid(),)]
+    done = restored.disarmed
+    assert (done["sessions_stopped"], done["apps"], done["grants_dropped"]) == (
+        2, ["demo"], ["/elsewhere/repo"])
+    lines = "\n".join(backup_mod.restore_lines(restored))
+    assert "set aside: 1 session(s)" in lines and "approvals dropped: 1" in lines
+
+
+def test_a_set_aside_session_comes_back_through_the_importer(wolts, tmp_path):
+    """Moved into the copy, a quarantined row is what the boot import reads."""
+    lodge_db = _container_lib("lodge_db")
+    import_sessions = _container_lib("sessions").import_sessions
+
+    _lodge_db_runtime(wolts, os.getpid())
+    restored = restore_backup(create_backup(wolts, out_dir=tmp_path / "out").archive,
+                              to=tmp_path / "back")
+    aside = restored.target / backup_mod.QUARANTINE_NAME / "beaverwolt/.state/sessions"
+    home = restored.wolts_dir / "beaverwolt/.state/sessions"
+    home.mkdir(parents=True)
+    (aside / "beaverwolt-repo.json").rename(home / "beaverwolt-repo.json")
+    ran = lodge_db.run_imports(restored.wolts_dir, {"sessions": import_sessions})
+    assert ran["sessions"] == {"imported": 1, "skipped": 0}
+    assert _rows(restored.wolts_dir / ".space/lodge.db",
+                 "SELECT status FROM sessions WHERE name='beaverwolt-repo'") == [("stopped",)]
+
+
+def test_slim_always_keeps_the_lodge_db_and_never_its_sidecars(wolts, tmp_path):
+    live = _live_lodge_db(wolts)
+    app = wolts / "beaverwolt" / "wolt" / "apps" / "shop"
+    app.mkdir(parents=True)
+    (app / "shop.db").write_bytes(b"rows")
+    try:
+        result = create_backup(wolts, out_dir=tmp_path / "out")
+    finally:
+        live.close()
+    assert result.manifest["mode"] == "slim"
+    names = _members(result.archive)
+    assert f"{ARCHIVE_ROOT}/.space/lodge.db" in names
+    assert f"{ARCHIVE_ROOT}/.space/lodge.db-wal" not in names
+    assert f"{ARCHIVE_ROOT}/.space/lodge.db-shm" not in names
+    assert result.manifest["lodge_db"]["tables"]["sessions"] == 3
+    left = {item["path"] for item in result.scan.left_out}
+    assert not [path for path in left if "lodge.db" in path]
+    # An app's database is still opt-in.
+    assert "beaverwolt/wolt/apps/shop/shop.db" in left
+
+
+def test_slim_and_encrypted_round_trip(wolts_with_credentials, fake_age, tmp_path):
+    """The two together: one sealed file, slim inside, disarmed on the way out."""
+    wolts = wolts_with_credentials
+    _lodge_db_runtime(wolts, os.getpid())
+    media = wolts / "beaverwolt" / "wolt" / "site" / "hero.png"
+    media.write_bytes(b"\x89PNG" + b"0" * 64)
+    result = create_backup(wolts, out_dir=tmp_path / "out", tag="slim-age")
+    assert result.archive.name == "woltspace-backup-slim-age.tar.gz.age"
+    files = _fake_open(result.archive)
+    assert f"{ARCHIVE_ROOT}/beaverwolt/wolt/site/hero.png" not in files
+    assert "beaverwolt/wolt/site/hero.png" in files[backup_mod.LEFT_OUT_NAME].decode()
+    manifest = json.loads(files[MANIFEST_NAME])
+    assert manifest["mode"] == "slim" and manifest["secrets"]["present"] is True
+
+    restored = restore_backup(result.archive, to=tmp_path / "back", identity=FAKE_KEY)
+    copy = restored.wolts_dir
+    assert SECRET in (copy / ".env").read_text()
+    assert not (copy / "beaverwolt/wolt/site/hero.png").exists()
+    assert (restored.target / backup_mod.LEFT_OUT_NAME).is_file()
+    assert _rows(copy / ".space/lodge.db", "SELECT pid FROM apps_running") == [(None,)]
+    assert _rows(copy / ".space/lodge.db",
+                 "SELECT status FROM sessions WHERE name='beaverwolt-s1'") == [("stopped",)]
+    assert (copy / backup_mod.RESTORED_MARKER).is_file()
+    out = "\n".join(backup_mod.restore_lines(restored))
+    assert "left out: 1 files" in out and "disarmed: 2 session(s)" in out
+
+
+def test_restore_refuses_a_link_at_the_lodge_db(tmp_path):
+    outside = tmp_path / "live.db"
+    outside.write_bytes(b"live")
+
+    def build(tar):
+        _add_bytes(tar, f"{ARCHIVE_ROOT}/w/wolt/wolt.json", b"{}")
+        _add_symlink(tar, f"{ARCHIVE_ROOT}/.space/lodge.db", str(outside))
+        _add_bytes(tar, MANIFEST_NAME, json.dumps({"entries": 2, "source": "/src"}).encode())
+
+    archive = _write_archive(tmp_path / "evil.tar.gz", build)
+    with pytest.raises(ValueError, match="symlink where a restore must disarm"):
+        restore_backup(archive, to=tmp_path / "back")
+    assert outside.read_bytes() == b"live"
+
+
+def test_restore_refuses_a_link_where_it_must_disarm(tmp_path):
+    outside = tmp_path / "live" / ".space"
+    (outside / "apps").mkdir(parents=True)
+    (outside / "apps" / "demo.json").write_text('{"pid": 1}')
+
+    def build(tar):
+        _add_bytes(tar, f"{ARCHIVE_ROOT}/w/wolt/wolt.json", b"{}")
+        _add_symlink(tar, f"{ARCHIVE_ROOT}/.space", str(outside))
+        _add_bytes(tar, MANIFEST_NAME, json.dumps({"entries": 2, "source": "/src"}).encode())
+
+    archive = _write_archive(tmp_path / "evil.tar.gz", build)
+    with pytest.raises(ValueError, match="symlink where a restore must disarm"):
+        restore_backup(archive, to=tmp_path / "back")
+    assert (outside / "apps" / "demo.json").is_file()
+    assert not (tmp_path / "back" / ARCHIVE_ROOT).exists()
+
+
+def test_disarm_fails_closed_through_a_link(tmp_path):
+    outside = tmp_path / "live"
+    (outside / "apps").mkdir(parents=True)
+    (outside / "apps" / "demo.json").write_text('{"pid": 1}')
+    copy = tmp_path / "back" / "wolts"
+    copy.mkdir(parents=True)
+    (copy / ".space").symlink_to(outside)
+    with pytest.raises(ValueError, match="through a symlink"):
+        backup_mod.disarm(copy, "/source", tmp_path / "back")
+    assert (outside / "apps" / "demo.json").is_file()
+
+
+@pytest.mark.skipif(not __import__("shutil").which("tmux"), reason="needs tmux")
+def test_a_copy_beside_its_source_only_touches_itself(wolts, tmp_path):
+    """Same machine, same session names, started with the source's tmux in its
+    environment: the copy's boot, wake and stop still stay in the copy."""
+    import shutil
+    import subprocess
+    import tempfile
+
+    app = subprocess.Popen(["sleep", "300"])  # the source's live app
+    short = Path(tempfile.mkdtemp(prefix="wsb-", dir="/tmp"))  # socket paths are capped
+    source_tmux = short / "src"
+    source_tmux.mkdir()
+    source_socket = source_tmux / f"tmux-{os.getuid()}" / "default"
+
+    def tmux(*args: str, where: Path = source_tmux) -> subprocess.CompletedProcess:
+        env = {**os.environ, "TMUX_TMPDIR": str(where)}
+        env.pop("TMUX", None)
+        return subprocess.run(["tmux", *args], env=env, capture_output=True, text=True)
+
+    def in_copy(code: str) -> str:
+        # The worst case: launched from a pane of the source's tmux server.
+        env = {**os.environ, "TMUX_TMPDIR": str(source_tmux), "TMUX": f"{source_socket},1,0",
+               "WOLTSPACE_WOLTS_DIR": str(copy)}
+        lib = ROOT / "container" / "lib"
+        out = subprocess.run([sys.executable, "-c", f"import sys; sys.path[:0] = [{str(lib)!r}]\n{code}"],
+                             env=env, capture_output=True, text=True, timeout=60)
+        assert out.returncode == 0, out.stderr
+        return out.stdout
+
+    try:
+        _lodge_db_runtime(wolts, app.pid)
+        assert tmux("new-session", "-d", "-s", "beaverwolt-s1", "sleep 300").returncode == 0
+        archive = create_backup(wolts, out_dir=tmp_path / "out").archive
+        restored = restore_backup(archive, to=short / "back")
+        copy = restored.wolts_dir
+        own_tmux = restored.target / "tmux"
+
+        # Boot: the copy adopts nothing of the source's.
+        report = json.loads(in_copy(
+            "import json, sessions\nprint(json.dumps(sessions.SessionRegistry().adopt_runtime_sessions()))"
+        ))
+        assert not report["adopted"]
+        # Stop in the copy: its app is wanted but has no pid to signal, its
+        # session has no tmux of its own.
+        out = in_copy("import apps, sessions\nprint(apps.stop_app('demo'))\n"
+                      "print(sessions.stop_session('beaverwolt-s1')['was_alive'])")
+        assert out.split() == ["True", "False"]
+        # Wake in the copy (same name), then stop it: it lands on, and leaves, the copy's own server.
+        in_copy("import subprocess, paths\n"
+                "subprocess.run(['tmux', 'new-session', '-d', '-s', 'beaverwolt-s1', 'sleep 300'], check=True)")
+        assert tmux("has-session", "-t", "=beaverwolt-s1", where=own_tmux).returncode == 0
+        assert in_copy("import sessions\nprint(sessions.stop_session('beaverwolt-s1')['was_alive'])").split() == ["True"]
+        assert tmux("has-session", "-t", "=beaverwolt-s1", where=own_tmux).returncode != 0
+
+        # The source never noticed.
+        assert tmux("has-session", "-t", "=beaverwolt-s1").returncode == 0
+        assert app.poll() is None
+    finally:
+        tmux("kill-session", "-t", "=beaverwolt-s1")
+        tmux("kill-session", "-t", "=beaverwolt-s1", where=short / "back" / "tmux")
+        app.kill()
+        app.wait()
+        shutil.rmtree(short, ignore_errors=True)
+
+# ---------------------------------------------------------------------------
+# The lodge database: one consistent snapshot, never the live sidecars
+# ---------------------------------------------------------------------------
+
+def _live_lodge_db(wolts: Path, rows: int = 3):
+    """A lodge.db as a running lodge leaves it: WAL mode, rows still in the -wal."""
+    import sqlite3
+
+    db = wolts / ".space" / "lodge.db"
+    db.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(db, isolation_level=None)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA wal_autocheckpoint=0")
+    conn.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)")
+    conn.execute("CREATE TABLE sessions (name TEXT PRIMARY KEY, record TEXT)")
+    for i in range(rows):
+        conn.execute("INSERT INTO sessions VALUES (?, '{}')", (f"pal-{i}",))
+    assert (wolts / ".space" / "lodge.db-wal").stat().st_size > 0
+    return conn
+
+
+def test_the_lodge_db_goes_in_as_one_consistent_snapshot(wolts, tmp_path):
+    import sqlite3
+
+    live = _live_lodge_db(wolts)
+    try:
+        result = create_backup(wolts, out_dir=tmp_path / "out")
+    finally:
+        live.close()
+    names = _members(result.archive)
+    assert f"{ARCHIVE_ROOT}/.space/lodge.db" in names
+    assert f"{ARCHIVE_ROOT}/.space/lodge.db-wal" not in names
+    assert f"{ARCHIVE_ROOT}/.space/lodge.db-shm" not in names
+    assert result.manifest["lodge_db"]["tables"] == {"meta": 0, "sessions": 3}
+
+    restored = restore_backup(result.archive, to=tmp_path / "back")
+    db = restored.wolts_dir / ".space" / "lodge.db"
+    conn = sqlite3.connect(db)
+    try:
+        assert conn.execute("PRAGMA integrity_check").fetchone() == ("ok",)
+        assert conn.execute("SELECT count(*) FROM sessions").fetchone() == (3,)
+    finally:
+        conn.close()
+
+
+def test_the_backup_folds_the_wal_and_still_restores(wolts, tmp_path):
+    import sqlite3
+
+    live = _live_lodge_db(wolts, rows=500)
+    wal = wolts / ".space" / "lodge.db-wal"
+    try:
+        assert wal.stat().st_size > 100_000
+        result = create_backup(wolts, out_dir=tmp_path / "out")
+        assert wal.stat().st_size == 0
+    finally:
+        live.close()
+    db = restore_backup(result.archive, to=tmp_path / "back").wolts_dir / ".space" / "lodge.db"
+    conn = sqlite3.connect(db)
+    try:
+        assert conn.execute("SELECT count(*) FROM sessions").fetchone() == (500,)
+    finally:
+        conn.close()
+
+
+def test_a_busy_checkpoint_is_one_line_and_the_backup_goes_on(wolts, tmp_path, capsys):
+    live = _live_lodge_db(wolts)
+    try:
+        live.execute("BEGIN")
+        live.execute("SELECT count(*) FROM sessions").fetchone()  # a reader pins the WAL
+        result = create_backup(wolts, out_dir=tmp_path / "out")
+    finally:
+        live.close()
+    assert result.manifest["lodge_db"]["tables"]["sessions"] == 3
+    lines = [line for line in capsys.readouterr().err.splitlines() if "checkpoint" in line]
+    assert len(lines) == 1, lines
+
+
+def test_no_lodge_db_means_no_lodge_db_in_the_manifest(wolts, tmp_path):
+    result = create_backup(wolts, out_dir=tmp_path / "out")
+    assert "lodge_db" not in result.manifest
+    assert result.verified
+
+
+def test_an_apps_own_sqlite_wal_is_kept(wolts, tmp_path):
+    """Only the lodge's sidecars go: an app's -wal can hold committed rows."""
+    app = wolts / "beaverwolt" / "wolt" / "apps" / "shop"
+    app.mkdir(parents=True)
+    for name in ("shop.db", "shop.db-wal", "shop.db-shm"):
+        (app / name).write_bytes(b"rows")
+    # Slim leaves an app's database out unless the app opts in: --full keeps it.
+    names = _members(create_backup(wolts, out_dir=tmp_path / "out", full=True).archive)
+    for name in ("shop.db", "shop.db-wal", "shop.db-shm"):
+        assert f"{ARCHIVE_ROOT}/beaverwolt/wolt/apps/shop/{name}" in names
+
+
+def test_a_lodge_db_that_cannot_be_snapshotted_fails_the_backup(wolts, tmp_path):
+    """A backup without the lodge's state in it is not a backup."""
+    (wolts / ".space" / "lodge.db").write_bytes(b"not a database at all" * 100)
+    with pytest.raises(ValueError, match="lodge.db"):
+        create_backup(wolts, out_dir=tmp_path / "out")
+    assert list((tmp_path / "out").iterdir()) == []
+
+
+def test_cli_reports_an_unsnapshottable_lodge_db_without_traceback(wolts, tmp_path, capsys):
+    (wolts / ".space" / "lodge.db").write_bytes(b"not a database at all" * 100)
+    code = cli_main(["backup", "--wolts-dir", str(wolts), "--out", str(tmp_path / "out")])
+    assert code == 1
+    captured = capsys.readouterr()
+    assert "backup failed" in captured.out
+    assert "lodge.db" in captured.out
+    assert "Traceback" not in captured.out + captured.err
+
+
+def test_a_lodge_db_the_scan_cannot_read_fails_before_writing(wolts, tmp_path):
+    os.mkfifo(wolts / ".space" / "lodge.db")
+    with pytest.raises(ValueError, match="lodge.db"):
+        create_backup(wolts, out_dir=tmp_path / "out")
+    assert list((tmp_path / "out").iterdir()) == []
+
+
+def test_an_unlistable_space_dir_fails_before_writing(wolts, tmp_path, monkeypatch):
+    """`.space` unreadable: the scan can't say whether a lodge.db is there."""
+    space = (wolts / ".space").resolve()  # create_backup walks the resolved path
+    real_scandir = os.scandir
+
+    def scandir(path="."):
+        if Path(path) == space:
+            raise PermissionError(13, "Permission denied", str(path))
+        return real_scandir(path)
+
+    monkeypatch.setattr(os, "scandir", scandir)
+    with pytest.raises(ValueError, match="lodge.db"):
+        create_backup(wolts, out_dir=tmp_path / "out")
+    assert list((tmp_path / "out").iterdir()) == []
+
+
+def test_an_ordinary_file_vanishing_mid_write_stays_a_warning(wolts, tmp_path, monkeypatch):
+    gone = wolts / "beaverwolt" / "wolt" / "memory" / "identity.md"
+    real_add = backup_mod._add_entry
+
+    def add_entry(tar, entry):
+        if entry.path == gone:
+            gone.unlink()
+        return real_add(tar, entry)
+
+    monkeypatch.setattr(backup_mod, "_add_entry", add_entry)
+    result = create_backup(wolts, out_dir=tmp_path / "out")
+    assert result.verified
+    assert "beaverwolt/wolt/memory/identity.md" in {
+        item["path"] for item in result.manifest["unreadable"]
+    }
+    assert f"{ARCHIVE_ROOT}/beaverwolt/wolt/memory/identity.md" not in _members(result.archive)
+
+
+@pytest.mark.parametrize("rel", [".space/pal.pipe", "beaverwolt/.space/lodge.db"])
+def test_only_the_lodges_own_db_is_required(wolts, tmp_path, rel):
+    (wolts / rel).parent.mkdir(parents=True, exist_ok=True)
+    os.mkfifo(wolts / rel)
+    result = create_backup(wolts, out_dir=tmp_path / "out")
+    assert rel in {item["path"] for item in result.manifest["unreadable"]}
+    assert result.verified
+
+
+# ---------------------------------------------------------------------------
+# A recipient set: the whole archive goes through age, secrets inside
+# ---------------------------------------------------------------------------
+
+RECIPIENT = "age1pal0000000000000000000000000000000000000000000000000000000"
+FAKE_KEY = b"AGE-SECRET-KEY-1PALFAKE\n"
+AGE_HEADER = b"age-encryption.org/v1\n"
+
+
+@pytest.fixture
+def fake_age(tmp_path, monkeypatch):
+    """An `age` on PATH that base64s instead of encrypting, and decrypts back.
+
+    Every call is logged to `calls` (with the mode of the file it writes to),
+    so a test can see how age was driven. `swap` makes the second decryption
+    hand back a different archive. The real round trip is a test of its own.
+    """
+    bin_dir = tmp_path / "fake-bin"
+    bin_dir.mkdir()
+    script = bin_dir / "age"
+    script.write_text(
+        f"#!{sys.executable}\n"
+        "import base64, json, os, sys\n"
+        f"HEADER, KEY, LOG = {AGE_HEADER!r}, {FAKE_KEY!r}, {str(bin_dir / 'calls')!r}\n"
+        "args = sys.argv[1:]\n"
+        "call = {'args': args, 'out_mode': oct(os.fstat(1).st_mode & 0o777)}\n"
+        "open(LOG, 'a').write(json.dumps(call) + '\\n')\n"
+        "if '-d' in args:\n"
+        "    if sys.stdin.buffer.read() != KEY:\n"
+        "        sys.exit('age: error: no identity matched any of the recipients')\n"
+        "    data = open(args[-1], 'rb').read()\n"
+        "    swap = args[-1] + '.swap'\n"
+        "    if os.path.exists(swap) and sum('-d' in l for l in open(LOG)) > 1:\n"
+        "        data = open(swap, 'rb').read()\n"
+        "    sys.stdout.buffer.write(base64.b64decode(data[len(HEADER):]))\n"
+        "    sys.exit(0)\n"
+        "if args[args.index('-r') + 1] == 'age1broken':\n"
+        "    sys.exit('age: error: malformed recipient')\n"
+        "sys.stdout.buffer.write(HEADER + base64.b64encode(sys.stdin.buffer.read()))\n"
+    )
+    script.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    monkeypatch.setenv("WOLTSPACE_BACKUP_AGE_RECIPIENT", RECIPIENT)
+    return bin_dir
+
+
+def _age_calls(fake_age: Path) -> list[dict]:
+    log = fake_age / "calls"
+    return [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
+
+
+def _fake_encrypt(plain: bytes) -> bytes:
+    import base64
+    return AGE_HEADER + base64.b64encode(plain)
+
+
+def _fake_open(path: Path) -> dict[str, bytes]:
+    """The members of a fake-encrypted archive, by name."""
+    import base64
+    import io as io_mod
+
+    data = path.read_bytes()
+    assert data.startswith(AGE_HEADER)
+    files = {}
+    with tarfile.open(fileobj=io_mod.BytesIO(base64.b64decode(data[len(AGE_HEADER):]))) as tar:
+        for member in tar.getmembers():
+            files[member.name] = tar.extractfile(member).read() if member.isreg() else b""
+    return files
+
+
+def test_a_recipient_encrypts_the_whole_archive_secrets_inside(
+    wolts_with_credentials, fake_age, tmp_path,
+):
+    (wolts_with_credentials / ".space" / "platform" / "config.json").write_text(
+        json.dumps({"telegram": {"token": SECRET}})
+    )
+    result = create_backup(wolts_with_credentials, out_dir=tmp_path / "out", tag="t1")
+    assert result.archive == tmp_path / "out" / "woltspace-backup-t1.tar.gz.age"
+    assert sorted(p.name for p in (tmp_path / "out").iterdir()) == [result.archive.name]
+    assert SECRET.encode() not in result.archive.read_bytes()
+
+    (call,) = _age_calls(fake_age)
+    assert call["args"] == ["-r", RECIPIENT]  # no -o: age writes into our 0600 fd
+    assert call["out_mode"] == "0o600"
+
+    files = _fake_open(result.archive)
+    for rel in (".env", ".space/platform/config.json", "beaverwolt/wolt/apps/shop/.env",
+                "beaverwolt/wolt/apps/shop/.env.local", "beaverwolt/wolt/apps/shop/.env.production"):
+        assert SECRET.encode() in files[f"{ARCHIVE_ROOT}/{rel}"], rel
+    # OAuth chains stay withheld forever, encrypted or not.
+    assert not [name for name in files if "credentials.json" in name or "auth.json" in name]
+    manifest = json.loads(files[MANIFEST_NAME])
+    assert manifest["secrets"] == {"present": True, "recipient": RECIPIENT}
+    assert manifest["entries"] == len(files) - 2  # the manifest and the slim left-out list
+    report = "\n".join(backup_mod.summary_lines(result))
+    assert f"encrypted to {RECIPIENT}" in report
+    withheld = manifest["withheld"]["paths"]
+    inside = sum(item["rule"] in backup_mod.ENCRYPTED_RULES for item in withheld)
+    assert inside and len(withheld) > inside
+    assert f"{len(withheld) - inside} not in the archive, {inside} inside, encrypted" in report
+
+
+def test_a_symlinked_env_is_not_counted_inside_the_encrypted_archive(
+    wolts_with_credentials, fake_age, tmp_path,
+):
+    env = wolts_with_credentials / "beaverwolt" / "wolt" / "apps" / "shop" / ".env"
+    env.unlink()
+    env.symlink_to(tmp_path / "elsewhere.env")
+    result = create_backup(wolts_with_credentials, out_dir=tmp_path / "out", tag="t4")
+    withheld = result.manifest["withheld"]["paths"]
+    inside = sum(
+        item["rule"] in backup_mod.ENCRYPTED_RULES and item["path"] != "beaverwolt/wolt/apps/shop/.env"
+        for item in withheld
+    )
+    report = "\n".join(backup_mod.summary_lines(result))
+    assert f"{len(withheld) - inside} not in the archive, {inside} inside, encrypted" in report
+
+
+def test_no_plaintext_touches_the_disk(wolts, fake_age, tmp_path, monkeypatch):
+    import tempfile
+
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(scratch))
+    live = _live_lodge_db(wolts)
+    try:
+        result = create_backup(wolts, out_dir=tmp_path / "out", tag="t2")
+    finally:
+        live.close()
+    assert list(scratch.iterdir()) == []
+    assert sorted(p.name for p in (tmp_path / "out").iterdir()) == [result.archive.name]
+    assert result.manifest["lodge_db"]["tables"] == {"meta": 0, "sessions": 3}
+
+
+def test_without_a_recipient_the_archive_is_plain_and_secrets_withheld(
+    wolts, fake_age, tmp_path, monkeypatch,
+):
+    monkeypatch.delenv("WOLTSPACE_BACKUP_AGE_RECIPIENT")
+    result = create_backup(wolts, out_dir=tmp_path / "out", tag="t3")
+    assert result.archive.name == "woltspace-backup-t3.tar.gz"
+    assert _age_calls(fake_age) == []
+    secrets = result.manifest["secrets"]
+    assert secrets["present"] is False and "not set" in secrets["reason"]
+    assert ".env" in {item["path"] for item in result.manifest["withheld"]["paths"]}
+    assert f"{ARCHIVE_ROOT}/.env" not in _members(result.archive)
+    report = "\n".join(backup_mod.summary_lines(result))
+    assert "inside, encrypted" not in report
+    assert f"{len(result.manifest['withheld']['paths'])} not in the archive" in report
+
+
+def test_a_recipient_without_age_fails_rather_than_write_in_the_clear(
+    wolts, fake_age, tmp_path, monkeypatch, capsys,
+):
+    monkeypatch.setenv("PATH", str(tmp_path / "empty-bin"))
+    code = cli_main([
+        "backup", "--wolts-dir", str(wolts), "--out", str(tmp_path / "out"), "--tag", "t4",
+    ])
+    assert code == 1
+    assert "age is not on PATH" in capsys.readouterr().out
+    assert not list((tmp_path / "out").glob("*t4*"))
+
+
+def test_an_age_failure_fails_the_backup_and_leaves_nothing(
+    wolts, fake_age, tmp_path, monkeypatch, capsys,
+):
+    monkeypatch.setenv("WOLTSPACE_BACKUP_AGE_RECIPIENT", "age1broken")
+    code = cli_main([
+        "backup", "--wolts-dir", str(wolts), "--out", str(tmp_path / "out"), "--tag", "t5",
+    ])
+    assert code == 1
+    out = capsys.readouterr().out
+    assert "backup failed" in out and "malformed recipient" in out
+    assert not list((tmp_path / "out").glob("*t5*"))
+
+
+@pytest.mark.parametrize("recipient", [True, False])
+def test_backup_files_are_owner_only(wolts, fake_age, tmp_path, monkeypatch, recipient):
+    """Whatever the umask or an older file's mode, nobody but the owner reads a snapshot."""
+    if not recipient:
+        monkeypatch.delenv("WOLTSPACE_BACKUP_AGE_RECIPIENT")
+    suffix = ".tar.gz.age" if recipient else ".tar.gz"
+    stale = tmp_path / "out" / f"woltspace-backup-t7{suffix}"
+    stale.parent.mkdir()
+    stale.write_bytes(b"older run")
+    stale.chmod(0o644)
+    old = os.umask(0o022)
+    try:
+        create_backup(wolts, out_dir=tmp_path / "out", tag="t6")
+        create_backup(wolts, out_dir=tmp_path / "out", tag="t7")
+    finally:
+        os.umask(old)
+    for tag in ("t6", "t7"):
+        path = tmp_path / "out" / f"woltspace-backup-{tag}{suffix}"
+        assert (path.stat().st_mode & 0o777) == 0o600, path.name
+
+
+def test_a_symlinked_env_is_not_followed_into_the_archive(wolts, fake_age, tmp_path):
+    elsewhere = tmp_path / "elsewhere" / "id_key"
+    elsewhere.parent.mkdir()
+    elsewhere.write_text("not-a-dotenv-0123456789")
+    (wolts / "beaverwolt" / ".env").symlink_to(elsewhere)
+    result = create_backup(wolts, out_dir=tmp_path / "out", tag="t8")
+
+    files = _fake_open(result.archive)
+    assert f"{ARCHIVE_ROOT}/.env" in files
+    assert f"{ARCHIVE_ROOT}/beaverwolt/.env" not in files
+    assert all(b"not-a-dotenv" not in data for data in files.values())
+    skipped = {item["path"]: item["error"] for item in result.manifest["unreadable"]}
+    assert "symlink" in skipped["beaverwolt/.env"]
+    restored = restore_backup(result.archive, to=tmp_path / "back", identity=FAKE_KEY)
+    assert "beaverwolt/.env" in "\n".join(backup_mod.restore_lines(restored))
+
+
+def test_an_encrypted_restore_brings_the_secrets_back(wolts_with_credentials, fake_age, tmp_path):
+    result = create_backup(wolts_with_credentials, out_dir=tmp_path / "out", tag="t10")
+    restored = restore_backup(result.archive, to=tmp_path / "back", identity=FAKE_KEY)
+    assert SECRET in (restored.wolts_dir / ".env").read_text()
+    assert SECRET in (restored.wolts_dir / "beaverwolt/wolt/apps/shop/.env.local").read_text()
+    assert not (restored.wolts_dir / ".claude" / ".credentials.json").exists()
+    assert (restored.wolts_dir / "beaverwolt" / "wolt" / "wolt.json").is_file()
+    assert restored.target == tmp_path / "back"
+    out = "\n".join(backup_mod.restore_lines(restored))
+    assert "claude login" in out and "copy .env.example" not in out
+
+
+def test_restore_of_an_encrypted_archive_wants_the_key(wolts, fake_age, tmp_path):
+    result = create_backup(wolts, out_dir=tmp_path / "out", tag="t11")
+    with pytest.raises(ValueError, match="--identity"):
+        restore_backup(result.archive, to=tmp_path / "back")
+    assert not (tmp_path / "back").exists()
+    with pytest.raises(OSError, match="no identity matched"):
+        restore_backup(result.archive, to=tmp_path / "back", identity=b"AGE-SECRET-KEY-1WRONG\n")
+    assert list((tmp_path / "back").iterdir()) == []
+
+
+def test_an_encrypted_archive_is_audited_before_a_byte_lands(fake_age, tmp_path):
+    plain = tmp_path / "plain.tar.gz"
+    _write_archive(plain, lambda tar: (
+        _add_bytes(tar, f"{ARCHIVE_ROOT}/fine.txt"),
+        _add_bytes(tar, "../escaped.txt"),
+    ))
+    sealed = tmp_path / "evil.tar.gz.age"
+    sealed.write_bytes(_fake_encrypt(plain.read_bytes()))
+    with pytest.raises(Exception):
+        restore_backup(sealed, to=tmp_path / "back", identity=FAKE_KEY)
+    assert list((tmp_path / "back").iterdir()) == []
+    assert not (tmp_path / "escaped.txt").exists()
+    assert sum("-d" in call["args"] for call in _age_calls(fake_age)) == 1  # no extraction pass
+
+
+def test_an_archive_that_changes_between_the_passes_is_refused(wolts, fake_age, tmp_path):
+    result = create_backup(wolts, out_dir=tmp_path / "out", tag="t12")
+    other = tmp_path / "other.tar.gz"
+    _write_archive(other, lambda tar: _add_bytes(tar, f"{ARCHIVE_ROOT}/planted.txt"))
+    Path(f"{result.archive}.swap").write_bytes(_fake_encrypt(other.read_bytes()))
+    with pytest.raises(ValueError, match="changed between"):
+        restore_backup(result.archive, to=tmp_path / "back", identity=FAKE_KEY)
+    assert not (tmp_path / "back" / ARCHIVE_ROOT / "planted.txt").exists()
+
+
+@pytest.mark.parametrize("from_stdin", [False, True])
+def test_cli_restore_takes_the_key_from_a_file_or_stdin(
+    wolts, fake_age, tmp_path, monkeypatch, capsys, from_stdin,
+):
+    import io as io_mod
+
+    result = create_backup(wolts, out_dir=tmp_path / "out", tag="t13")
+    if from_stdin:
+        monkeypatch.setattr(sys, "stdin", io_mod.TextIOWrapper(io_mod.BytesIO(FAKE_KEY)))
+        identity = "-"
+    else:
+        (tmp_path / "key.txt").write_bytes(FAKE_KEY)
+        identity = str(tmp_path / "key.txt")
+    code = cli_main(["restore", str(result.archive), "--to", str(tmp_path / "back"),
+                     "--identity", identity])
+    assert code == 0
+    assert SECRET in (tmp_path / "back" / ARCHIVE_ROOT / ".env").read_text()
+    assert "WOLTSPACE_WOLTS_DIR=" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("case", ["no recipient", "plaintext archive", "encrypted"])
+def test_the_documented_upload_never_sends_plaintext(tmp_path, case):
+    """The upload script in docs/backup.md, run against stand-in woltspace and rclone."""
+    import subprocess
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    suffix = ".tar.gz" if case == "plaintext archive" else ".tar.gz.age"
+    (bin_dir / "woltspace").write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = --version ]; then echo "woltspace 0.0.0"; exit 0; fi\n'
+        f'mkdir -p "$5" && printf x > "$5/woltspace-backup-$3{suffix}"\n'
+    )
+    (bin_dir / "rclone").write_text(f'#!/bin/sh\necho "$@" >> {tmp_path / "rclone.log"}\n')
+    for tool in ("woltspace", "rclone"):
+        (bin_dir / tool).chmod(0o755)
+    env = {"HOME": str(tmp_path), "PATH": f"{bin_dir}:/usr/bin:/bin"}
+    if case != "no recipient":
+        env["WOLTSPACE_BACKUP_AGE_RECIPIENT"] = RECIPIENT
+    run = subprocess.run(["bash", "-c", _doc_script("**The daily upload.**")], env=env,
+                         capture_output=True, text=True)
+    uploads = (tmp_path / "rclone.log").read_text() if (tmp_path / "rclone.log").exists() else ""
+    if case == "encrypted":
+        assert run.returncode == 0, run.stderr
+        assert ".tar.gz.age" in uploads and "latest.json" in uploads
+        assert not [line for line in uploads.splitlines() if line.split()[1].endswith(".tar.gz")]
+        latest = json.loads((tmp_path / ".woltspace" / "backups" / "latest.json").read_text())
+        assert sorted(latest) == ["sha256", "tag", "taken_at", "version"]
+    else:
+        assert run.returncode != 0
+        assert uploads == ""
+        assert "unencrypted" in run.stderr or "WOLTSPACE_BACKUP_AGE_RECIPIENT" in run.stderr
+
+
+def _doc_script(after: str) -> str:
+    text = (ROOT / "docs" / "backup.md").read_text()
+    return text.split(after, 1)[1].split("```bash\n", 1)[1].split("```", 1)[0]
+
+
+@pytest.mark.parametrize("case", ["ok", "latest points back", "sha mismatch", "plaintext", "stale"])
+def test_the_documented_weekly_check_needs_no_key(tmp_path, case):
+    """The on-lodge check in docs/backup.md, against a directory standing in for the bucket."""
+    import hashlib
+    import subprocess
+    from datetime import datetime, timedelta, timezone
+
+    bucket = tmp_path / "bucket" / "lodges" / "<lodge>"
+    (bucket / "snapshots").mkdir(parents=True)
+    for tag in ("20260101-000000", "20260102-000000"):
+        body = (b"PK not age\n" if case == "plaintext" else AGE_HEADER) + os.urandom(1_000_000)
+        (bucket / "snapshots" / f"woltspace-backup-{tag}.tar.gz.age").write_bytes(body)
+    newest = bucket / "snapshots" / "woltspace-backup-20260102-000000.tar.gz.age"
+    hours = 72 if case == "stale" else 1
+    taken = (datetime.now(timezone.utc) - timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    latest = {"tag": "20260102-000000", "taken_at": taken,
+              "sha256": hashlib.sha256(newest.read_bytes()).hexdigest()}
+    if case == "latest points back":
+        latest["tag"] = "20260101-000000"
+    if case == "sha mismatch":
+        latest["sha256"] = "0" * 64
+    (bucket / "latest.json").write_text(json.dumps(latest))
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "rclone").write_text(
+        f"#!{sys.executable}\n"
+        "import fnmatch, os, shutil, sys\n"
+        f"ROOT = {str(tmp_path / 'bucket')!r}\n"
+        "local = lambda r: os.path.join(ROOT, r.split('/', 1)[1])\n"
+        "verb, src, dst = sys.argv[1], sys.argv[2], sys.argv[3]\n"
+        "if verb == 'copyto':\n"
+        "    shutil.copy(local(src), dst)\n"
+        "else:\n"
+        "    pattern = sys.argv[sys.argv.index('--include') + 1]\n"
+        "    print('\\n'.join(n for n in sorted(os.listdir(local(src))) if fnmatch.fnmatch(n, pattern)))\n"
+    )
+    (bin_dir / "rclone").chmod(0o755)
+    run = subprocess.run(
+        ["bash", "-c", _doc_script("**Weekly, on the lodge, no key.**")],
+        env={"HOME": str(tmp_path), "PATH": f"{bin_dir}:/usr/bin:/bin", "TMPDIR": str(tmp_path)},
+        capture_output=True, text=True,
+    )
+    if case == "ok":
+        assert run.returncode == 0, run.stderr
+        assert "backup check ok" in run.stdout
+    else:
+        assert run.returncode != 0
+        assert "backup check FAILED" in run.stderr
+        if case == "stale":
+            assert "72 hours old" in run.stderr
+
+
+def test_the_documented_monthly_check_boots_without_secrets_or_crons(tmp_path):
+    """The by-hand restore check: every secret gone, then a lodge with nothing live."""
+    import subprocess
+
+    wolts = tmp_path / "restore-check" / "wolts"
+    secrets = [".env", ".env.local", "pal/wolt/apps/shop/.env", "pal/wolt/apps/shop/.env.production",
+               ".space/platform/config.json"]
+    kept = [".env.example", "pal/wolt/apps/shop/.env.sample", "pal/wolt/memory/identity.md"]
+    for rel in secrets + kept:
+        (wolts / rel).parent.mkdir(parents=True, exist_ok=True)
+        (wolts / rel).write_text(SECRET)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "woltspace").write_text(f'#!/bin/sh\nenv > {tmp_path / "boot.env"}\necho "$@" >> {tmp_path / "boot.env"}\n')
+    (bin_dir / "woltspace").chmod(0o755)
+    block = _doc_script("**Delete every restored secret").replace("/tmp/restore-check", str(tmp_path / "restore-check"))
+    run = subprocess.run(["bash", "-c", block], env={"PATH": f"{bin_dir}:/usr/bin:/bin"},
+                         capture_output=True, text=True)
+    assert run.returncode == 0, run.stderr
+    assert [rel for rel in secrets if (wolts / rel).exists()] == []
+    assert all((wolts / rel).exists() for rel in kept)
+    boot = (tmp_path / "boot.env").read_text()
+    for switch in ("ENABLE_TELEGRAM_BOT=false", "ENABLE_SLACK_BOT=false", "WOLTSPACE_WOLF=false",
+                   "WOLTSPACE_VULTURE=false", "WOLTSPACE_PUBLIC_TUNNEL=false"):
+        assert switch in boot.splitlines()
+    assert "serve --port 7778" in boot
+
+
+@pytest.mark.skipif(
+    not (__import__("shutil").which("age") and __import__("shutil").which("age-keygen")),
+    reason="age is not installed",
+)
+def test_real_age_round_trip(wolts, tmp_path, monkeypatch):
+    import subprocess
+
+    key = tmp_path / "key.txt"
+    subprocess.run(["age-keygen", "-o", str(key)], check=True, capture_output=True)
+    recipient = subprocess.run(
+        ["age-keygen", "-y", str(key)], check=True, capture_output=True, text=True,
+    ).stdout.strip()
+    monkeypatch.setenv("WOLTSPACE_BACKUP_AGE_RECIPIENT", recipient)
+    live = _live_lodge_db(wolts)
+    try:
+        result = create_backup(wolts, out_dir=tmp_path / "out", tag="t14")
+    finally:
+        live.close()
+    raw = result.archive.read_bytes()
+    assert raw.startswith(AGE_HEADER)
+    assert SECRET.encode() not in raw and b"beaverwolt" not in raw
+
+    restored = restore_backup(result.archive, to=tmp_path / "back", identity=key.read_bytes())
+    assert SECRET in (restored.wolts_dir / ".env").read_text()
+    assert (restored.wolts_dir / ".space" / "lodge.db").is_file()
+    assert restored.manifest["secrets"]["present"] is True
+
+
+def test_every_lodge_db_row_goes_into_the_snapshot(wolts, tmp_path):
+    """Chat routing, the Slack queue, running apps and consents travel too."""
+    live = _live_lodge_db(wolts)
+    marker = "pal-said-0xMARKER"
+    live.execute("CREATE TABLE pending_messages (id TEXT PRIMARY KEY, text TEXT)")
+    live.execute("CREATE TABLE chat_state (chat_id TEXT PRIMARY KEY, record TEXT)")
+    live.execute("CREATE TABLE grants (scope TEXT PRIMARY KEY, record TEXT)")
+    live.execute("CREATE TABLE apps_running (name TEXT PRIMARY KEY, pid INTEGER,"
+                 " tunnel_pid INTEGER, tunnel_url TEXT, record TEXT)")
+    for table, row in (("pending_messages", ("m1", marker)),
+                       ("chat_state", ("c1", "{}")),
+                       ("grants", ("/home/pal/nunu", "{}")),
+                       ("apps_running", ("shop", 1, None, None, "{}"))):
+        live.execute(f"INSERT INTO {table} VALUES ({', '.join('?' * len(row))})", row)
+    try:
+        result = create_backup(wolts, out_dir=tmp_path / "out")
+    finally:
+        live.close()
+
+    assert result.manifest["lodge_db"] == {"tables": {
+        "apps_running": 1, "chat_state": 1, "grants": 1, "meta": 0,
+        "pending_messages": 1, "sessions": 3,
+    }}
+    with tarfile.open(result.archive, "r:gz") as tar:
+        snapshot = tar.extractfile(f"{ARCHIVE_ROOT}/.space/lodge.db").read()
+    assert marker.encode() in snapshot
+
+    restored = restore_backup(result.archive, to=tmp_path / "back")
+    assert ("consents came back with the lodge: review them with woltspace auto list"
+            in "\n".join(backup_mod.restore_lines(restored)))
+
+
+def test_a_restored_app_row_forgets_its_process_ids(wolts, tmp_path):
+    """On another machine an old pid may be any live process: the app must be
+    started again, never taken as running, never signalled through it."""
+    import sqlite3
+
+    live = _live_lodge_db(wolts)
+    live.execute("CREATE TABLE apps_running (name TEXT PRIMARY KEY, pid INTEGER, port INTEGER,"
+                 " tunnel_pid INTEGER, tunnel_url TEXT, record TEXT)")
+    state = {"pid": os.getpid(), "port": 8100, "keeper": "pal", "tunnel_pid": os.getpid(),
+             "tunnel_url": "https://x.example"}
+    live.execute("INSERT INTO apps_running VALUES ('shop', ?, 8100, ?, 'https://x.example', ?)",
+                 (os.getpid(), os.getpid(), json.dumps(state)))
+    try:
+        result = create_backup(wolts, out_dir=tmp_path / "out")
+    finally:
+        live.close()
+
+    restored = restore_backup(result.archive, to=tmp_path / "back")
+    conn = sqlite3.connect(restored.wolts_dir / ".space" / "lodge.db")
+    try:
+        row = conn.execute("SELECT pid, port, tunnel_pid, tunnel_url, record FROM apps_running").fetchone()
+    finally:
+        conn.close()
+    # The lodge reads its app state from the record, so the pids go there too.
+    assert row[:4] == (None, 8100, None, None)
+    assert json.loads(row[4]) == {"port": 8100, "keeper": "pal"}
+
+
+def test_runtime_state_goes_into_the_archive(wolts, tmp_path):
+    """Logs, chat history and routing, spools, consents, and the *.imported
+    copies lodge.db's importers leave behind: all of it is data now."""
+    paths = (
+        ".space/logs/control-plane.log",
+        ".space/outbox/abc123",
+        ".space/telegram/history/42.jsonl",
+        ".space/telegram/chats.imported/42.json",
+        ".space/auto-grants.json.imported",
+        ".space/apps/shop.json",
+        "pal/.state/chat/slack/_pending_messages.json",
+    )
+    for rel in paths:
+        (wolts / rel).parent.mkdir(parents=True, exist_ok=True)
+        (wolts / rel).write_text("x")
+
+    result = create_backup(wolts, out_dir=tmp_path / "out", full=True)
+    names = set(_members(result.archive))
+    assert [rel for rel in paths if f"{ARCHIVE_ROOT}/{rel}" not in names] == []
+    assert "ephemeral" not in result.manifest["excludes"]
+
+    # Slim keeps all of it but the logs, which it lists.
+    slim = create_backup(wolts, out_dir=tmp_path / "slim")
+    names = set(_members(slim.archive))
+    assert [rel for rel in paths if f"{ARCHIVE_ROOT}/{rel}" not in names] == [
+        ".space/logs/control-plane.log",
+    ]
+    assert ".space/logs/control-plane.log" in {item["path"] for item in slim.scan.left_out}
+
+
+@pytest.mark.parametrize("status, after", [
+    ("running", "stopped"), ("starting", "stopped"), ("stopping", "stopped"),
+    ("orphaned", "stopped"), ("resting", "resting"), ("completed", "completed"),
+])
+def test_disarm_stops_every_live_status_and_keeps_the_rest(tmp_path, status, after):
+    """A snapshot can catch a session mid-stop: the copy never inherits that."""
+    report = {"sessions_stopped": 0, "sessions_rebased": 0}
+    record = {"name": "beaverwolt-s1", "status": status, "runtime": {"pane_id": "%1"}}
+    out, outside = backup_mod._disarm_session(record, "/old/wolts", tmp_path, report)
+    assert (out["status"], "runtime" in out, outside) == (after, False, [])
+    assert report["sessions_stopped"] == (after != status)
+
+
+def test_all_skipped_credentials_are_never_reported_inside(wolts_with_credentials, fake_age, tmp_path):
+    root = wolts_with_credentials
+    paths = [item["path"] for item in scan_tree(root).withheld
+             if item["rule"] in backup_mod.ENCRYPTED_RULES]
+    assert paths
+    for rel in paths:
+        (root / rel).unlink()
+        (root / rel).symlink_to(tmp_path / "missing-dummy.env")
+    result = create_backup(root, out_dir=tmp_path / "out", tag="all-skipped")
+    files = _fake_open(result.archive)
+    assert not any(f"{ARCHIVE_ROOT}/{rel}" in files for rel in paths)
+    assert result.manifest["secrets"]["present"] is True
+    report = "\n".join(backup_mod.summary_lines(result))
+    count = len(result.manifest["withheld"]["paths"])
+    assert f"{count} not in the archive" in report
+    assert f"encrypted to {RECIPIENT}" in report
+    assert SECRET not in report
+    assert "inside" not in report

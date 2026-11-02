@@ -67,16 +67,14 @@ def test_legacy_record_gets_non_destructive_target_backfill(tmp_path):
 def test_registry_persists_new_target_and_legacy_aliases(tmp_path):
     from sessions import SessionRegistry
 
-    home = _wolt(tmp_path)
+    _wolt(tmp_path)
     repo = tmp_path / "repo"
     repo.mkdir()
     target = SessionTarget.resolve("testwolt", repo, wolts_dir=tmp_path / "wolts")
     reg = SessionRegistry(tmp_path / "wolts")
     reg.create("testwolt-session", wolt="testwolt", target=target)
 
-    stored = json.loads(
-        (home / ".state" / "sessions" / "testwolt-session.json").read_text()
-    )
+    stored = reg._read("testwolt", "testwolt-session")
     assert stored["target"] == target.to_record()
     assert stored["wolt"] == stored["wolt_id"] == "testwolt"
     assert stored["dir"] == stored["workdir"] == str(repo.resolve())

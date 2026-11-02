@@ -467,6 +467,45 @@ class TestShippedManifest:
                      for line in head.splitlines() if line.startswith("name:")]
             assert names == [d.name], f"{d.name}: frontmatter name {names}"
 
+    def test_hold_ships_and_says_when_to_use_it(self):
+        """Every engine reads a skill's description in its skill list: that line
+        is where a wolt learns a hold is for a background task only."""
+        assert SHIPPED_SKILLS / "hold" in skills_sync.platform_skill_sources(ROOT)
+        head = (SHIPPED_SKILLS / "hold" / "SKILL.md").read_text().split("---")[1]
+        description = next(line for line in head.splitlines() if line.startswith("description:"))
+        assert "background task" in description
+        assert "never just to stay available" in description
+
+    def test_engine_settings_ships_and_keeps_wolts_out_of_shared_files(self):
+        """A wolt asked to change its effort finds this skill by its description,
+        and the skill keeps the change inside the wolt's own folder."""
+        assert SHIPPED_SKILLS / "engine-settings" in skills_sync.platform_skill_sources(ROOT)
+        text = (SHIPPED_SKILLS / "engine-settings" / "SKILL.md").read_text()
+        description = next(line for line in text.split("---")[1].splitlines()
+                           if line.startswith("description:"))
+        assert "effort" in description
+        assert "own folder" in description
+        assert '"effortLevel"' in text
+        assert "model_reasoning_effort" in text
+        assert "~/.claude/" in text and "~/.codex/" in text
+        # Claude ignores a saved "max"; Codex reads the key only at the top level.
+        assert "`max` can't be saved" in text
+        assert "top-level key, above the first `[table]` line" in text
+
+    def test_wolt_settings_point_to_the_wolt_for_effort(self):
+        page = (ROOT / "public" / "static" / "wolt-page.js").read_text()
+        assert "Effort and other engine settings: ask your wolt." in page
+
+    def test_hold_keeps_its_name_through_the_copy_rename(self, tmp_path):
+        skills = tmp_path / "wolts" / "nw" / ".claude" / "skills"
+        skills.mkdir(parents=True)
+
+        sync_all_wolt_skills(ROOT, tmp_path / "wolts")
+
+        delivered = (skills / "woltspace-hold" / "SKILL.md").read_text()
+        assert "name: woltspace-hold\n" in delivered
+        assert "woltspace session hold" in delivered
+
     def test_no_skill_still_wears_the_legacy_prefix(self):
         for d in self._skill_dirs():
             assert not d.name.startswith(skills_sync.LEGACY_PREFIX)

@@ -1,5 +1,8 @@
 # First run natively on macOS
 
+> **Installing?** The steps are in the "For agents" section of the
+> [README](../README.md); this page is background and detail.
+
 For jerpint and whoever is pairing with him. This is the walkthrough for
 running Woltspace natively on a Mac — no Docker.
 
@@ -20,7 +23,7 @@ this walkthrough uses a **fresh data root** and never touches the container's.
 
 ## 1. Prerequisites
 
-You need three things on PATH: `tmux`, Node 18+, and `uv`.
+You need three things on PATH: `tmux`, Node 22+, and `uv`.
 
 ```bash
 tmux -V
@@ -284,11 +287,11 @@ Then write `$WOLTSPACE_WOLTS_DIR/.space/platform/config.json`:
 Restart and check:
 
 ```bash
-woltspace stop && woltspace start
+woltspace restart
 woltspace status
 ```
 
-`connector telegram: running · bot.telegram_adapter from … · pid N` means it
+`connector telegram: running · Telegram · bundled connector … · pid N` means it
 is up. If it says `degraded` with a 409, the other bot is still polling that
 token. If it says `disabled · enabled but python-telegram-bot is not
 installed`, you skipped the extra — this is the exact output when that happens:

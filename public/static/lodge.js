@@ -8,6 +8,7 @@ let allSessions = [];
 let lodgeSessionsLoaded = false;
 let sessionTotals = {};
 let appFilter = 'all';
+let sessionFilter = 'online';  // or 'held': online sessions a hold keeps up
 let currentView = 'home';
 const LODGE_SESSIONS_CACHE = 'woltspace:lodge-sessions:v1';
 
@@ -48,8 +49,7 @@ function woltHarness(w) {
   const pinned = !!w.harness;
   const id = w.harness || harnessDefault;
   const info = harnessInfo(id);
-  const models = info.models || {};
-  const tierDefault = models[w.type] || models.raccoon || '';  // rodent (legacy) → raccoon tier
+  const tierDefault = woltDefaultModel(w, { ...info, id });  // rodent (legacy) → raccoon tier
   // per-wolt model pin wins IF valid for this engine (mirrors backend resolve_model:
   // a pin is harness-scoped, so an invalid one falls back to the tier default)
   const catalog = info.catalog || [];
@@ -84,6 +84,17 @@ function lodgeElement(tag, className = '', text = '') {
   if (className) element.className = className;
   if (text !== '') element.textContent = text;
   return element;
+}
+
+// An engine's icon: its SVG when the harness has one, else its emoji.
+function engineIcon(harness) {
+  if (harness && harness.icon) {
+    const icon = lodgeElement('span', 'engine-icon');
+    icon.style.setProperty('--engine-icon', `url("${harness.icon}")`);
+    icon.setAttribute('aria-hidden', 'true');
+    return icon;
+  }
+  return lodgeElement('span', 'engine-emoji', (harness && harness.emoji) || '');
 }
 
 // One definition of session state, shared by the sidebar, Wolts page, wolt page and
@@ -167,8 +178,12 @@ function renderFirstRunHarnessChoice() {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'home-harness-option';
-    const name = `${h.emoji || ''} ${h.label || h.id}`.trim();
-    button.appendChild(lodgeElement('span', '', name));
+    const name = lodgeElement('span', 'home-harness-name');
+    name.append(engineIcon(h), lodgeElement('span', '', h.label || h.id));
+    button.appendChild(name);
+    if (h.experimental) {
+      button.appendChild(lodgeElement('small', '', 'experimental'));
+    }
     button.onclick = () => chooseHomeHarness(h.id, button);
     options.appendChild(button);
   });
@@ -281,7 +296,7 @@ function woltStateText(x) {
 }
 
 function renderSidebarWolts() {
-  const all = allWolts.filter(w => WOLT_TYPES.has(w.type)).map(woltSessionSummary);
+  const all = allWolts.filter(w => WOLT_TYPES.has(woltBaseType(w))).map(woltSessionSummary);
   const container = document.getElementById('sidebar-wolts');
   const label = document.querySelector('#sidebar-team-section .sidebar-section-label');
   const everyone = all.length <= SIDEBAR_ALL_UP_TO;
@@ -308,7 +323,7 @@ function renderSidebarWolts() {
     card.onkeydown = e => { if (e.target === card && (e.key === 'Enter' || e.key === ' ')) card.click(); };
     const avatar = document.createElement('div'); avatar.className = 'wolt-avatar';
     const sprite = woltSpriteAvatar(w.type, 36);
-    if (sprite) avatar.innerHTML = sprite; else avatar.textContent = WOLT_EMOJI[w.type] || '🦫';
+    if (sprite) avatar.innerHTML = sprite; else avatar.textContent = woltEmoji(w);
     if (online.length) {
       const dot = document.createElement('div');
       dot.className = 'wolt-status-dot running';
@@ -320,7 +335,7 @@ function renderSidebarWolts() {
     const sub = document.createElement('div'); sub.className = 'wolt-type';
     sub.textContent = everyone ? w.type : woltStateText(x);
     info.append(nameEl, sub); card.append(avatar, info);
-    if (RODENT_TYPES.has(w.type)) { const add = document.createElement('button'); add.className = 'wolt-quick-session'; add.textContent = '+'; add.title = `New session with ${name}`; add.setAttribute('aria-label', add.title); add.onclick = e => { e.stopPropagation(); startSession(name); }; card.appendChild(add); }
+    if (RODENT_TYPES.has(woltBaseType(w))) { const add = document.createElement('button'); add.className = 'wolt-quick-session'; add.textContent = '+'; add.title = `New session with ${name}`; add.setAttribute('aria-label', add.title); add.onclick = e => { e.stopPropagation(); startSession(name); }; card.appendChild(add); }
     container.appendChild(card);
   });
   if (!everyone) {
@@ -373,7 +388,7 @@ function openEnginePicker(anchorEl, name) {
     button.type = 'button';
     button.appendChild(lodgeElement('span', 'engine-radio', selected ? '●' : '○'));
     button.appendChild(lodgeElement('span', 'engine-opt-label', h.label));
-    const model = modelFor(h.id, w.type);
+    const model = woltDefaultModel(w, harnessInfo(h.id));
     const sub = model + (h.id === harnessDefault ? ' · default' : '');
     if (sub) button.appendChild(lodgeElement('span', 'engine-opt-sub', sub));
     button.addEventListener('click', event => {
@@ -469,7 +484,7 @@ function renderApps() {
     const canToggle = !!p.start;
     const keeper = p.keeper || 'unassigned';
     const keeperWolt = allWolts.find(w => (w.name || w.dir) === keeper);
-    const keeperEmoji = keeperWolt ? (WOLT_EMOJI[keeperWolt.type] || '🦫') : '📦';
+    const keeperEmoji = keeperWolt ? woltEmoji(keeperWolt) : '📦';
     const keeperSprite = keeperWolt ? woltSpriteAvatar(keeperWolt.type, 24) : null;
     const body = lodgeElement('div', 'app-card-body');
     const top = lodgeElement('div', 'app-card-top');
@@ -613,19 +628,29 @@ function paintSessionGroupHeader(group, wolt) {
   const avatar = group.querySelector('.sessions-group-avatar');
   if (avatar && avatar.dataset.type !== type) {
     const sprite = woltData ? woltSpriteAvatar(woltData.type, 20) : null;
-    if (sprite) avatar.innerHTML = sprite; else avatar.textContent = WOLT_EMOJI[type] || '🦫';
+    if (sprite) avatar.innerHTML = sprite; else avatar.textContent = woltEmoji(woltData);
     avatar.dataset.type = type;
   }
   const label = group.querySelector('.sessions-group-name');
   if (label) label.textContent = woltLabel(woltData) || wolt;
 }
 
+function filterSessions(filter, el) {
+  sessionFilter = filter;
+  document.querySelectorAll('#session-filters .filter-chip').forEach(c => c.classList.remove('active'));
+  if (el) el.classList.add('active');
+  document.getElementById('sessions-list')?.replaceChildren();
+  renderSessions();
+}
+
 function renderSessions() {
   const online = allSessions.filter(s => s.name !== 'main' && sessionIsOnline(s));
+  const held = online.filter(s => s.hold);
+  const visible = sessionFilter === 'held' ? held : online;
   const total = Object.values(sessionTotals).reduce((sum, count) => sum + count, 0)
     || allSessions.length;
   const subtitle = document.getElementById('sessions-subtitle');
-  if (subtitle) subtitle.textContent = `${online.length} online · ${total} total`;
+  if (subtitle) subtitle.textContent = `${online.length} online · ${total} total${held.length ? ` · ${held.length} held` : ''}`;
   const badge = document.getElementById('sessions-badge');
   if (badge) {
     badge.textContent = online.length || '';
@@ -640,12 +665,12 @@ function renderSessions() {
     if (session) updateSessionRow(row, session);
   });
   const groups = new Map();
-  online.forEach(session => {
+  visible.forEach(session => {
     const name = session.wolt || 'unknown';
     if (!groups.has(name)) groups.set(name, []);
     groups.get(name).push(session);
   });
-  if (online.length) container.querySelector('.empty-state')?.remove();
+  if (visible.length) container.querySelector('.empty-state')?.remove();
   [...groups.entries()].sort(([a], [b]) => a.localeCompare(b)).forEach(([wolt, sessions]) => {
     let group = [...container.querySelectorAll('.sessions-group')].find(node => node.dataset.wolt === wolt);
     if (!group) {
@@ -665,15 +690,24 @@ function renderSessions() {
     paintSessionGroupHeader(group, wolt);
     syncSessionRows(group.querySelector('.sessions-group-inner'), sessions);
   });
+  if (sessionFilter === 'held') {
+    // Held shows only what a hold keeps up now: a row whose hold ended, or
+    // whose session went offline, leaves, and so does a group left empty.
+    const keep = new Set(visible.map(session => session.name));
+    container.querySelectorAll('.session-row').forEach(row => { if (!keep.has(row.dataset.session)) row.remove(); });
+    container.querySelectorAll('.sessions-group').forEach(group => { if (!group.querySelector('.session-row')) group.remove(); });
+  }
   container.querySelectorAll('.sessions-group').forEach(group => {
     const wolt = group.dataset.wolt;
-    const count = online.filter(session => (session.wolt || 'unknown') === wolt).length;
+    const count = visible.filter(session => (session.wolt || 'unknown') === wolt).length;
     const total = sessionTotals[wolt] ?? group.querySelectorAll('.session-row').length;
-    group.querySelector('.sessions-group-meta').textContent = `${count} online · ${total} total`;
+    group.querySelector('.sessions-group-meta').textContent =
+      sessionFilter === 'held' ? `${count} held` : `${count} online · ${total} total`;
   });
-  if (!online.length && !container.querySelector('.sessions-group')) {
+  if (!visible.length && !container.querySelector('.sessions-group')) {
     const empty = lodgeElement('div', 'empty-state');
-    empty.append(lodgeElement('div', 'empty-state-icon', '🌿'), lodgeElement('div', 'empty-state-text', 'no sessions online'));
+    empty.append(lodgeElement('div', 'empty-state-icon', sessionFilter === 'held' ? '📌' : '🌿'),
+      lodgeElement('div', 'empty-state-text', sessionFilter === 'held' ? 'no held sessions' : 'no sessions online'));
     container.replaceChildren(empty);
   }
 }
@@ -788,6 +822,7 @@ function openCreateWolt(e) {
 }
 
 function closeCreateWolt() {
+  closeCreateHarnessMenu();
   document.getElementById('create-modal').classList.remove('open');
   stopCreateNameIdeas();
 }
@@ -800,33 +835,98 @@ function pickType(el) {
 }
 
 function renderCreateHarnessOptions() {
-  const select = document.getElementById('create-harness');
-  if (!select) return;
-  select.innerHTML = '';
-  harnessList.forEach(harness => {
-    const option = document.createElement('option');
-    option.value = harness.id;
-    option.textContent = `${harness.label || harness.id}`
-      + (harness.id === harnessDefault ? ' (lodge default)' : '');
-    option.selected = harness.id === createSelectedHarness;
-    select.appendChild(option);
-  });
+  const list = document.getElementById('create-harness-list');
+  if (!list) return;
   // A stale/default id absent from the registry should never submit silently.
   if (!harnessList.some(h => h.id === createSelectedHarness)) {
     const first = harnessList[0];
     createSelectedHarness = first ? first.id : '';
-    select.value = createSelectedHarness;
   }
+  list.replaceChildren(...harnessList.map(harness => {
+    const option = lodgeElement('button', 'engine-menu-option');
+    option.type = 'button';
+    option.setAttribute('role', 'option');
+    option.dataset.id = harness.id;
+    option.append(engineIcon(harness), lodgeElement('span', 'engine-menu-label', harness.label || harness.id));
+    if (harness.id === harnessDefault) {
+      option.appendChild(lodgeElement('small', 'engine-menu-note', 'lodge default'));
+    }
+    if (harness.experimental) {
+      option.appendChild(lodgeElement('small', 'engine-menu-tag', 'experimental'));
+    }
+    option.onclick = () => { selectCreateHarness(harness.id); closeCreateHarnessMenu(true); };
+    return option;
+  }));
   renderCreateHarness();
 }
+
+function renderCreateHarnessTrigger() {
+  const trigger = document.getElementById('create-harness');
+  if (!trigger) return;
+  const harness = harnessInfo(createSelectedHarness);
+  const label = lodgeElement('span', 'engine-menu-label', harness.label || harness.id || 'No harness available');
+  const parts = createSelectedHarness ? [engineIcon(harness), label] : [label];
+  if (harness.experimental) parts.push(lodgeElement('small', 'engine-menu-tag', 'experimental'));
+  parts.push(lodgeElement('span', 'engine-menu-chevron', '▾'));
+  trigger.replaceChildren(...parts);
+  document.querySelectorAll('#create-harness-list .engine-menu-option').forEach(option => {
+    const selected = option.dataset.id === createSelectedHarness;
+    option.classList.toggle('selected', selected);
+    option.setAttribute('aria-selected', selected ? 'true' : 'false');
+  });
+}
+
+function toggleCreateHarnessMenu() {
+  const list = document.getElementById('create-harness-list');
+  if (!list) return;
+  if (!list.hidden) { closeCreateHarnessMenu(true); return; }
+  list.hidden = false;
+  document.getElementById('create-harness').setAttribute('aria-expanded', 'true');
+  const current = list.querySelector('.engine-menu-option.selected') || list.querySelector('.engine-menu-option');
+  if (current) current.focus();
+}
+
+function closeCreateHarnessMenu(refocus = false) {
+  const list = document.getElementById('create-harness-list');
+  const trigger = document.getElementById('create-harness');
+  if (!list || list.hidden) return;
+  list.hidden = true;
+  trigger.setAttribute('aria-expanded', 'false');
+  if (refocus) trigger.focus();
+}
+
+document.addEventListener('click', event => {
+  if (!event.target.closest('.engine-menu')) closeCreateHarnessMenu();
+});
+
+document.addEventListener('keydown', event => {
+  const list = document.getElementById('create-harness-list');
+  // An open menu owns these keys wherever focus sits (a click on the list's
+  // padding blurs the option), so Escape never falls through to the modal.
+  if (!list || list.hidden) return;
+  const options = [...list.querySelectorAll('.engine-menu-option')];
+  const index = options.indexOf(document.activeElement);
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    event.stopPropagation();
+    closeCreateHarnessMenu(true);
+  } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+    event.preventDefault();
+    const step = event.key === 'ArrowDown' ? 1 : -1;
+    options[(index + step + options.length) % options.length].focus();
+  } else if (event.key === 'Tab') {
+    closeCreateHarnessMenu();
+  }
+}, true);
 
 function selectCreateHarness(id) {
   createSelectedHarness = id;
-  renderCreateHarness();
+  renderCreateHarness(true);
   updateCreatePreview();
 }
 
-function renderCreateHarness() {
+function renderCreateHarness(keepChosen = false) {
+  renderCreateHarnessTrigger();
   const harness = harnessInfo(createSelectedHarness);
   const catalog = harness.catalog || [];
   // Engines that take any typed model name have no fixed list to choose from.
@@ -842,6 +942,10 @@ function renderCreateHarness() {
       model.hidden = choosable;
     }
     if (!select) return;
+    // Picking an engine keeps a model chosen on a card, as long as that engine
+    // offers it too. A card left on its usual model has no choice to keep: it
+    // follows the engine's usual model, and so does a freshly opened dialog.
+    const chosen = keepChosen && select.value !== select.dataset.usual ? select.value : '';
     select.hidden = !choosable;
     select.replaceChildren();
     if (!choosable) return;
@@ -859,7 +963,7 @@ function renderCreateHarness() {
       option.textContent = usual;
       select.prepend(option);
     }
-    select.value = usual;
+    select.value = catalog.some(entry => entry.id === chosen) ? chosen : usual;
     select.dataset.usual = usual;
   });
 }

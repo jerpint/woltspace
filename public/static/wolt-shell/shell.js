@@ -43,7 +43,7 @@
   function mount(m) {
     var w = m.wolt || {}, site = m.site || {}, t = site.tokens || {};
     var title = site.title || w.display_name || w.name;
-    var emoji = t.emoji || EMOJI[w.type] || '🌲';
+    var emoji = t.emoji || EMOJI[w.type] || w.emoji || '🌲';
 
     // No third-party fonts by default: the stacks below use the lodge fonts
     // when the page already has them and system fonts otherwise. A wolt opts

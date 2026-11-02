@@ -75,3 +75,51 @@ def test_create_route_uses_default_or_explicit_harness(
     assert 'Raccoon wolt. Just born.' in seed
     assert all(model not in seed for model in ('Opus', 'Sonnet', 'Haiku'))
     assert not (root / 'fresh/.codex/auth.json').exists()
+
+
+def test_create_refuses_an_engine_that_is_not_installed(tmp_path, monkeypatch):
+    import sessions
+    import wolts
+
+    root = tmp_path / 'wolts'
+    root.mkdir()
+    monkeypatch.setenv('WOLTSPACE_WOLTS_DIR', str(root))
+    monkeypatch.setenv('WOLTSPACE_ISOLATION', 'host')
+    monkeypatch.setattr(server_app, 'WOLTS_DIR', root)
+    monkeypatch.setattr(state, 'WOLTS_DIR', root)
+    monkeypatch.setattr(sessions, 'WOLTS_DIR', root)
+    monkeypatch.setattr(wolts, 'WOLTS_DIR', root)
+    monkeypatch.setattr(wolts, 'CONFIG_FILE', root / 'woltspace.json')
+    monkeypatch.setattr(harnesses, '_engine_on_path', lambda binary: binary != 'hermes')
+    started = []
+    monkeypatch.setattr(server_app, 'start_session', lambda **kw: started.append(kw))
+    client = TestClient(server_app.app, base_url="http://localhost:7777")
+
+    response = client.post(
+        '/sessions/new/create', json={'name': 'hermy', 'type': 'raccoon', 'harness': 'hermes'})
+
+    assert response.status_code == 400
+    assert response.json()['detail'] == 'Hermes is not installed (no `hermes` on PATH).'
+    assert not (root / 'hermy').exists(), "no wolt is scaffolded for an engine that cannot run"
+    assert started == []
+
+
+def test_spawn_refuses_an_engine_that_is_not_installed(tmp_path, monkeypatch):
+    import sessions
+
+    root = tmp_path / 'wolts'
+    (root / 'hermy' / 'wolt').mkdir(parents=True)
+    (root / 'hermy' / 'wolt' / 'wolt.json').write_text(
+        json.dumps({'name': 'hermy', 'type': 'raccoon', 'harness': 'hermes'}))
+    monkeypatch.setenv('WOLTSPACE_ISOLATION', 'host')
+    monkeypatch.setattr(sessions, 'WOLTS_DIR', root)
+    monkeypatch.setattr(harnesses, '_engine_on_path', lambda binary: False)
+
+    def no_spawn(*args, **kwargs):
+        raise AssertionError('tmux must not be touched')
+
+    monkeypatch.setattr(sessions, '_tmux_spawn', no_spawn)
+    monkeypatch.setattr(sessions.SessionRegistry, 'create', no_spawn)
+
+    with pytest.raises(sessions.HarnessNotInstalled, match='no `hermes` on PATH'):
+        sessions.start_session(wolt='hermy', prompt='hi')

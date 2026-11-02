@@ -679,6 +679,34 @@ class TestSyncClaudeMdPlatformSection:
         assert "WOLTSPACE_NOTIFY_7F3A91C2" not in content
         assert "# Alpha" in content
 
+    def test_the_block_says_a_wolt_can_send_a_file_and_answer_by_voice(self, tmp_path):
+        """And the template a new wolt starts from says it in the same words."""
+        mod = _load_entrypoint()
+        repo = Path(__file__).resolve().parent.parent
+        wolts = tmp_path / "wolts"
+        wolt = wolts / "alpha"
+        wolt.mkdir(parents=True)
+        (wolt / "CLAUDE.md").write_text("# Alpha\n")
+
+        woltspace = tmp_path / "woltspace"
+        lib = woltspace / "container" / "lib"
+        lib.mkdir(parents=True)
+        import shutil
+        shutil.copy2(repo / "container" / "lib" / "wolts.py", lib / "wolts.py")
+
+        mod.sync_claude_md_platform_section(wolts, woltspace)
+
+        synced = (wolt / "CLAUDE.md").read_text()
+        template = (repo / "template" / "CLAUDE.md").read_text()
+        for sentence in (
+            "To send a file, add `--file PATH`: `notify --file report.html <<'...'`.\n"
+            "One file per call; the notify skill has the details.\n",
+            "To answer by voice, add `--speak`: the lodge reads your message aloud and sends\n"
+            "it as a voice note. `--voice PATH` sends audio you already have as one.\n",
+        ):
+            assert sentence in synced
+            assert sentence in template
+
     def test_skips_wolts_without_claude_md(self, tmp_path):
         mod = _load_entrypoint()
         wolts = tmp_path / "wolts"

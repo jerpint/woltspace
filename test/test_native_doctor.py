@@ -2,6 +2,7 @@
 
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 from unittest.mock import patch
@@ -133,6 +134,29 @@ def test_doctor_warns_about_invalid_default_harness(tmp_path, monkeypatch):
     assert "first-run harness question will remain visible" in check.remedy
 
 
+def test_doctor_honors_pi_agent_dir_for_auth(tmp_path, monkeypatch):
+    layout = _layout(tmp_path)
+    host_home = tmp_path / "home"
+    pi_dir = tmp_path / "custom-pi-agent"
+    auth = pi_dir / "auth.json"
+    pi_dir.mkdir()
+    auth.write_text("{}")
+    monkeypatch.setenv("PI_CODING_AGENT_DIR", str(pi_dir))
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: host_home))
+
+    def which(name):
+        return f"/usr/bin/{name}" if name in {"tmux", "pi"} else None
+
+    with patch("woltspace.doctor.shutil.which", side_effect=which):
+        checks = run_doctor(layout, check_port=False)
+
+    by_name = {check.name: check for check in checks}
+    assert by_name["host-auth"].status == "pass"
+    assert by_name["host-auth"].detail == "pi"
+    assert auth.read_text() == "{}"
+    assert not layout.wolts_dir.exists()
+
+
 def _restore_env(snapshot: dict):
     for key, value in snapshot.items():
         if value is None:
@@ -253,3 +277,74 @@ def test_the_sigterm_uvicorn_reraises_still_lets_connectors_stop(tmp_path, monke
 
     assert events == ["start", "serve", "stop"]
     assert signal.getsignal(signal.SIGTERM) is before, "the handler is scoped to run()"
+
+
+def test_doctor_counts_a_provider_key_as_hermes_auth(tmp_path, monkeypatch):
+    layout = _layout(tmp_path)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "home"))
+    for key in ("OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY",
+                "CLAUDE_CODE_OAUTH_TOKEN"):
+        monkeypatch.delenv(key, raising=False)
+
+    def which(name):
+        return f"/usr/bin/{name}" if name in {"tmux", "hermes"} else None
+
+    with patch("woltspace.doctor.shutil.which", side_effect=which):
+        checks = run_doctor(layout, check_port=False)
+        assert {c.name: c for c in checks}["host-auth"].status == "warn"
+        # A key Hermes sessions cannot use does not count.
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+        checks = run_doctor(layout, check_port=False)
+        assert {c.name: c for c in checks}["host-auth"].status == "warn"
+        monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test")
+        checks = run_doctor(layout, check_port=False)
+
+    auth = {c.name: c for c in checks}["host-auth"]
+    assert auth.status == "pass"
+    assert auth.detail == "hermes (OPENROUTER_API_KEY)"
+
+
+def test_doctor_imports_the_harness_table_without_the_test_path(tmp_path):
+    """An installed CLI has only `src` on its path, never `container/lib`.
+
+    conftest puts `container/lib` on sys.path for every test here, so this
+    runs doctor in a fresh interpreter that never sees it.
+    """
+    root = installation_root()
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for name in ("tmux", "hermes"):
+        tool = bin_dir / name
+        tool.write_text("#!/bin/sh\nexit 0\n")
+        tool.chmod(0o755)
+    script = (
+        "import json, sys\n"
+        "from pathlib import Path\n"
+        "try:\n"
+        "    import harnesses\n"
+        "except ImportError:\n"
+        "    pass\n"
+        "else:\n"
+        "    sys.exit('container/lib leaked onto the path')\n"
+        "from woltspace.doctor import run_doctor\n"
+        "from woltspace.layout import RuntimeLayout\n"
+        f"layout = RuntimeLayout(Path({str(tmp_path / 'wolts')!r}), "
+        f"Path({str(root)!r}), '127.0.0.1', 18777, 'host')\n"
+        "print(json.dumps({c.name: c.detail for c in run_doctor(layout, check_port=False)}))\n"
+    )
+    env = {
+        "PATH": f"{bin_dir}:/usr/bin:/bin",
+        "HOME": str(tmp_path / "home"),
+        "PYTHONPATH": str(root / "src"),
+        "WOLTSPACE_DEFAULT_HARNESS": "claude",
+        "OPENROUTER_API_KEY": "sk-test",
+    }
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        env=env, cwd=tmp_path, capture_output=True, text=True, check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    details = json.loads(result.stdout.strip().splitlines()[-1])
+    assert details["default-harness"] == "claude is registered"
+    assert details["host-auth"] == "hermes (OPENROUTER_API_KEY)"

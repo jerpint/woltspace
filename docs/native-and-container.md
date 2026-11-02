@@ -1,5 +1,8 @@
 # Native and container
 
+> **Installing?** The steps are in the "For agents" section of the
+> [README](../README.md); this page is background and detail.
+
 Woltspace is one product with one codebase. Native and container are not two
 implementations of it — they are two answers to a single question:
 
@@ -80,7 +83,7 @@ mode on purpose keeps asking even where Auto is approved, and asking for Auto
 where no grant exists is refused rather than quietly downgraded — you find out
 at spawn, not three commands into the transcript.
 
-Grants live in `<wolts>/.space/auto-grants.json`, owner-readable only, and
+Grants are rows in the lodge DB (`<wolts>/.space/lodge.db`, table `grants`), and
 `woltspace auto revoke` takes one back. Revoking does not touch a session
 already running under it: a live agent keeps the permissions it started with
 until it exits.
@@ -167,9 +170,10 @@ platform skills and templates — and the image points the familiar
 `/workspace/woltspace` path at that bundle with a symlink, so every skill, wolt
 `CLAUDE.md` and bin script that knows the old path still works.
 
-The **entrypoint IS the package**: `ENTRYPOINT ["/usr/local/bin/woltspace",
-"container-entrypoint"]`, a subcommand of the installed CLI
-(`src/woltspace/container_entrypoint.py`). The wheel ships no bash. The command
+The **entrypoint IS the package**: `ENTRYPOINT ["/usr/bin/tini", "--",
+"/usr/local/bin/woltspace", "container-entrypoint"]`, a subcommand of the
+installed CLI (`src/woltspace/container_entrypoint.py`) started by tini, which
+is PID 1 and collects orphaned processes. The wheel ships no bash. The command
 runs twice — once as root, which moves the `node` user onto the host's uid/gid
 and re-execs itself through `gosu`, and once as node, which does only what a
 container has to: seed harness credentials and trust into the per-wolt HOMEs
@@ -177,11 +181,11 @@ container has to: seed harness credentials and trust into the per-wolt HOMEs
 prepare the workspace dirs the mount shadows, declare
 `WOLTSPACE_ISOLATION=external` and `WOLTSPACE_ENTRYPOINT=1`, open the tmux
 window — and then run `serve` **in this very process**, through the same call
-the `serve` subcommand makes. No exec, no shell in between: docker's SIGTERM
-lands on the process that owns the connectors, which is the guarantee bash's
-`exec` used to provide. Skills sync, hook normalization, session adoption, the
-connectors and the tunnel all belong to that control plane, which is
-byte-for-byte the one a native user runs.
+the `serve` subcommand makes. No exec, no shell in between: docker's SIGTERM,
+passed on by tini, lands on the process that owns the connectors, which is the
+guarantee bash's `exec` used to provide. Skills sync, hook normalization,
+session adoption, the connectors and the tunnel all belong to that control
+plane, which is byte-for-byte the one a native user runs.
 
 Because the entrypoint comes from the installed package, a registry build is
 only coherent from the **first release that carries this slim entrypoint**: an
@@ -278,7 +282,7 @@ the clash, `woltspace status` reports it in those terms and stops restarting,
 because restarting cannot win that race:
 
 ```
-connector telegram: degraded · bot.telegram_adapter from …
+connector telegram: degraded · Telegram · bundled connector …
   error: another process is already polling this bot token (Telegram getUpdates returned 409 Conflict)
   fix: One bot token can only be polled by one process. Stop the other instance …
 ```
@@ -365,7 +369,7 @@ live with it.
 |---|---|---|---|
 | Slack is silent | Slack is disabled, missing one of its three credentials, or the owner member ID is malformed. | Run `woltspace status` and follow the Slack connector remedy. | Use the bundled `setup-slack` skill for the owner-DM Agent View setup. |
 | No public URL | Native defaults the tunnel off (deliberately). `.env`'s named-tunnel token is ignored unless `WOLTSPACE_PUBLIC_TUNNEL=true`. | `WOLTSPACE_PUBLIC_TUNNEL=true woltspace start` — only with the container stopped, or two connectors load-balance the same hostname. | Document; possibly a `tunnel` block in `config.json`. |
-| The digest cron and the vulture reaper do not run | The wolf is a supervised connector in both runtimes now, so schedules fire natively. The vulture is gone from the container entrypoint too — adoption on start does the reconciling it existed for. | None; adoption covers the reaping. | The digest is a wolf schedule, not a creature. |
+| The digest cron does not run | The wolf is a supervised connector in both runtimes now, so schedules fire natively. | None. | The digest is a wolf schedule, not a creature. |
 | A session whose workdir sits outside the data root shows its agent's workspace trust prompt | Preparing a session pre-accepts the trust dialog — claude's in `~/.claude.json`, codex's in `$CODEX_HOME/config.toml` — but only for directories inside the data root: pointing woltspace at a colony is the trust decision, and it does not extend past it. Everything else still asks, and a headless spawn there parks with nobody to answer. | Trust the directory once by hand (open the agent in it), or keep session workdirs inside the data root. | Nothing — the data root is the boundary on purpose. |
 | `status` says `N orphaned` on first start | The registry still marks sessions the container was running. Their tmux sessions never existed on the host, so adoption orphans them. | Nothing; it is correct. | — |
 | Wolt `CLAUDE.md` / memory files mention `/workspace/wolts/...` | Written from inside the container. Registry records are normalized on adoption; prose is not. | Cosmetic. | — |

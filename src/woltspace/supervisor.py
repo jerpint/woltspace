@@ -22,7 +22,7 @@ from .channels import (
     plan_connectors,
     telegram_token_is_busy,
 )
-from .channel_supervisor import ChannelSupervisor
+from .channel_supervisor import ChannelSupervisor, publish_socket_connectors
 
 # How long uvicorn may wait for in-flight handlers (open websockets included)
 # once told to stop. Well inside `woltspace stop`'s own 10s patience.
@@ -123,6 +123,10 @@ class Supervisor:
             print(f"[connectors] reaped {len(reaped)} orphaned connector(s): {reaped}")
 
         plans = [self._refuse_busy_token(plan) for plan in planned]
+        try:
+            publish_socket_connectors(self.layout, plans)
+        except Exception as error:  # noqa: BLE001 — a connector never blocks a boot
+            print(f"[connectors] could not publish the socket connectors ({error})")
         # config.json is the authority for connector secrets: it overrides a
         # value that merely came from .env (that one may be the OTHER runtime's
         # bot token — notify must speak as the bot that is actually polling),

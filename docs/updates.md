@@ -27,6 +27,39 @@ For a running lodge it records status, stops, runs `uv tool install --force` wit
 
 The browser, tunnel and messaging briefly disconnect, but native tmux sessions survive. Existing sessions retain their loaded instructions; new sessions load newly synced skills.
 
+## Restart
+
+```sh
+woltspace restart
+```
+
+Stops a running lodge and starts it again on the same host and port, then waits up to thirty seconds for it to be healthy and reports connectors that got worse or sessions that were not adopted. It refuses a stopped lodge (use `woltspace start`) and container lodges. If start fails, the error names the exact `woltspace start` command that brings the lodge back. tmux sessions survive, as with an update.
+
+Prefer it over `woltspace stop && woltspace start` from inside a wolt: a wolt that runs `stop` alone leaves the lodge down, and cannot notify anyone until someone starts it again.
+
+## Recommended permissions
+
+Wolts that keep the lodge up to date need to run these commands without a prompt. For Claude, add them to the owner's `~/.claude/settings.json`, which covers every wolt on the machine:
+
+```json
+{
+  "permissions": {
+    "allow": [
+      "Bash(woltspace update:*)",
+      "Bash(woltspace restart:*)",
+      "Bash(woltspace status:*)",
+      "Bash(woltspace doctor:*)"
+    ]
+  }
+}
+```
+
+Claude's auto mode honours these rules too. `woltspace start` and `woltspace stop` are left out on purpose: they are for the person at the keyboard.
+
+What you accept with them: `update:*` also covers `--pre` and `--version X`, so a wolt can install a prerelease without asking (downgrades and yanked releases are still refused). `restart:*` lets any wolt, including one acting on text it was sent, bounce the lodge; tmux sessions survive, so the cost is a short outage.
+
+On a machine where two lodges share one install, updating one replaces the package under the other. `update` reports this and exits 1; restart the other lodge so it loads the new version.
+
 ## Manual native upgrade
 
 Older releases without the command can be upgraded once with the underlying steps. Review the [published release notes](https://github.com/jerpint/woltspace/releases), PyPI withdrawal state and crossed migrations, then run:
@@ -51,3 +84,6 @@ The npm `@woltspace/tui` has independent versions. Update it separately after re
 External/container deployments are updated through host container tooling, not with native lifecycle commands inside the container. Source and pip installs use the workflow for their installation method.
 
 Validate genuine transitions in a disposable lodge before updating a live lodge.
+
+Since 0.5.4, `uv tool install woltspace` includes all Telegram and Slack connector
+dependencies. Channels still run only when enabled in your configuration.

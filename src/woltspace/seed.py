@@ -306,6 +306,11 @@ def install_seed(
         wolts_dir.mkdir(parents=True, exist_ok=True)
         apps_dir = wolts_dir / "apps"
         _validate_apps_destination(apps_dir, bool(summary.apps))
+        # The lodge's archive (container/lib/wolt_archive.py): a name it holds is taken.
+        archived = [n for n in summary.wolts if (wolts_dir / ".archive" / n).is_dir()
+                    and not (wolts_dir / ".archive" / n).is_symlink()]
+        if archived:
+            raise SeedError(f"an archived wolt is named {archived[0]}: unarchive or delete it first")
         conflicts = [name for name in summary.wolts if _path_occupied(wolts_dir / name)]
         conflicts += [name for name in summary.apps if _path_occupied(apps_dir / name)]
         if conflicts:

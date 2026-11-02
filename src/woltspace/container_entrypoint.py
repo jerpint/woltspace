@@ -1,7 +1,8 @@
 """Container boot, as a subcommand of the installed CLI.
 
-`ENTRYPOINT ["/usr/local/bin/woltspace", "container-entrypoint"]`. The wheel
-ships no bash: what used to be `container/entrypoint.sh` (root) →
+`ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/woltspace", "container-entrypoint"]`:
+tini is PID 1 and collects orphaned processes, this command is its child. The
+wheel ships no bash: what used to be `container/entrypoint.sh` (root) →
 `container/start.sh` (node) → `container/entrypoint_setup.py` (config) is one
 command with two phases, dispatched on uid.
 
@@ -14,8 +15,9 @@ into the per-wolt HOME (container-only by design — native reuses your own logi
 and copies nothing), assembles the environment every child inherits, opens the
 tmux window the human lands in, and then runs the control plane **in-process**:
 the same `serve` a native user runs, from the same installed package. No exec,
-no shell in between — docker's SIGTERM lands on the process that owns the
-connectors, which is the guarantee bash's `exec` used to provide.
+no shell in between — docker's SIGTERM, passed on by tini, lands on the
+process that owns the connectors, which is the guarantee bash's `exec` used to
+provide.
 
 Why the entrypoint co-versions with the wheel: an image built on an older
 release ran that release's entrypoint. Now there is only one artifact.
@@ -46,6 +48,12 @@ HOME = Path("/home/node")
 # by `docker run -v "$WOLTSPACE_WOLTS_DIR:/workspace/wolts"`.
 DEFAULT_WOLTS_DIR = "/workspace/wolts"
 
+# Where the root phase looks for its tools. The image's PATH puts directories
+# node owns first (the bundle's container/bin, ~/.local/bin), and the root phase
+# re-owns them to node every boot, so a bare `chown` there could be a file a
+# session planted, run as root at the next container start.
+ROOT_PATH = "/usr/sbin:/usr/bin:/sbin:/bin"
+
 TUNNEL_POLL_ATTEMPTS = 45
 TUNNEL_POLL_INTERVAL = 1.0
 
@@ -64,24 +72,37 @@ def run_root_phase() -> int:
     """
     host_uid = os.environ.get("HOST_UID") or "1000"
     host_gid = os.environ.get("HOST_GID") or "1000"
+    root_env = {**os.environ, "PATH": ROOT_PATH}
 
-    subprocess.run(["groupmod", "-o", "-g", host_gid, "node"], check=True)
-    subprocess.run(["usermod", "-o", "-u", host_uid, "-g", host_gid, "node"], check=True)
-    subprocess.run(["chown", "node:node", "/workspace"], check=True)
-    subprocess.run(["chown", "-R", "node:node", str(HOME)], check=True)
+    def root_run(*cmd: str) -> None:
+        subprocess.run([_root_tool(cmd[0]), *cmd[1:]], check=True, env=root_env)
+
+    root_run("groupmod", "-o", "-g", host_gid, "node")
+    root_run("usermod", "-o", "-u", host_uid, "-g", host_gid, "node")
+    root_run("chown", "node:node", "/workspace")
+    root_run("chown", "-R", "node:node", str(HOME))
     # The platform is an installed package, so this is its wheel bundle rather
     # than a checkout — a few MB, not the venv. It still has to be re-owned
     # here: `usermod` above just moved node to the host's uid, and boot writes a
     # derived skill into it (container/skills/worktui).
     bundle = resolve_install_root(os.environ.get("WOLTSPACE_DIR"))
-    subprocess.run(["chown", "-R", "node:node", str(bundle)], check=True)
+    root_run("chown", "-R", "node:node", str(bundle))
 
     # gosu leaves the environment alone apart from the user it switches to, and
     # this process was started with root's HOME. Name node's home explicitly so
     # nothing downstream depends on gosu's behaviour to find ~/.gitconfig.
     os.environ["HOME"] = str(HOME)
-    os.execvp("gosu", ["gosu", "node", "/usr/local/bin/woltspace", "container-entrypoint"])
-    return 1  # unreachable — execvp either replaces this process or raises
+    # The node phase keeps the image's PATH; only gosu itself is looked up
+    # in ROOT_PATH.
+    os.execv(_root_tool("gosu"), ["gosu", "node", "/usr/local/bin/woltspace", "container-entrypoint"])
+    return 1  # unreachable — execv either replaces this process or raises
+
+
+def _root_tool(name: str) -> str:
+    path = shutil.which(name, path=ROOT_PATH)
+    if path is None:
+        raise FileNotFoundError(f"{name} not found in {ROOT_PATH}")
+    return path
 
 
 # ---------------------------------------------------------------------------
@@ -92,17 +113,28 @@ def run_root_phase() -> int:
 # but they stay import-light: this runs before anything else.
 # ---------------------------------------------------------------------------
 
+def _only_archived(wolts_dir: Path, name: str) -> bool:
+    # wolt_archive.in_archive, written out: importing it would load the session
+    # registry, whose paths read the environment at import time.
+    archived = wolts_dir / ".archive" / name
+    return not (wolts_dir / name).exists() and archived.is_dir() and not archived.is_symlink()
+
+
 def resolve_wolt_name(wolts_dir: Path) -> str:
-    """Active wolt: env name > woltspace.json > first wolt found."""
+    """Active wolt: env name > woltspace.json > first wolt found.
+
+    A name only the archive holds is skipped: a blank wolt scaffolded under it
+    would take the archived one's grants and block its unarchive.
+    """
     env_name = get_env("WOLTSPACE_WOLT_NAME", "")
-    if env_name:
+    if env_name and not _only_archived(wolts_dir, env_name):
         return env_name
     config_file = wolts_dir / "woltspace.json"
     if config_file.exists():
         try:
             config = json.loads(config_file.read_text())
             name = config.get("claude", {}).get("default_wolt", "")
-            if name:
+            if name and not _only_archived(wolts_dir, name):
                 return name
         except (json.JSONDecodeError, OSError):
             pass
@@ -302,14 +334,6 @@ def seed_wolf_json(wolt_dir: Path, woltspace_dir: Path):
         print(f"seeded default wolf.json for {wolt_dir.name}")
 
 
-def resolve_bot_module(wolt_dir: Path, woltspace_dir: Path, adapter: str) -> tuple:
-    """Returns (bot_dir, bot_module) — custom wolt bot or platform default."""
-    custom = wolt_dir / "wolt" / "bot" / f"{adapter}_adapter.py"
-    if custom.is_file():
-        return str(wolt_dir), f"wolt.bot.{adapter}_adapter"
-    return str(woltspace_dir / "container"), f"bot.{adapter}_adapter"
-
-
 # ---------------------------------------------------------------------------
 # Phase 2 — node: environment
 # ---------------------------------------------------------------------------
@@ -329,14 +353,11 @@ def build_environment(
     go straight into the environment they were always destined for.
     """
     source = os.environ if env is None else env
-    tg_dir, tg_mod = resolve_bot_module(wolt_dir, woltspace_dir, "telegram")
     return export_both({
         "WOLTSPACE_WOLT_NAME": wolt_name,
         "WOLTSPACE_WOLT_DIR": str(wolt_dir),
         "WOLTSPACE_WOLTS_DIR": str(wolts_dir),
         "DEV_MODE": "true" if dev_mode else "false",
-        "TELEGRAM_BOT_DIR": tg_dir,
-        "TELEGRAM_BOT_MODULE": tg_mod,
         "PYTHONPATH": f"{woltspace_dir}/container/lib:{source.get('PYTHONPATH', '')}",
         "PATH": f"{woltspace_dir}/container/bin:{source.get('PATH', '')}",
         "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1",

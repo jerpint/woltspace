@@ -19,6 +19,9 @@ instead of a cron that silently never fires.
 **The wolf fires in the lodge machine's local time.** `0 9 * * *` means 09:00 on
 the clock of the machine the lodge runs on — no UTC conversion. `woltspace wolf
 list` prints the zone it is using, and every time it shows is in that zone.
+A container lodge runs on UTC unless its env file sets `TZ`; to choose the
+zone and move existing crons safely, see
+[Time zone](../../../docs/environment.md#time-zone).
 
 ## Add
 
@@ -126,7 +129,7 @@ Exactly one of `schedule` or `at`.
 ## Where state lives
 
 - Schedules: each wolt's own `wolt/wolf.json`
-- Last-run stamps and the job journal are lodge-global, in `.space/wolf/`
-  (`<wolt>/<name>.last`, `jobs.jsonl`)
+- Last-run stamps and the job journal are lodge-global: the `wolf_runs` table of
+  the lodge DB (`woltspace wolf runs`, `woltspace db show wolf_runs`)
 - Lodge API behind the CLI: `GET/POST /wolf/crons`, `PUT/DELETE /wolf/crons/<wolt>/<name>`,
   `POST /wolf/crons/<wolt>/<name>/fire`; read-only views: `GET /wolf/schedules`, `GET /wolf/fires`

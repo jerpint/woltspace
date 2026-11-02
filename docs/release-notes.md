@@ -1,24 +1,43 @@
-# Woltspace 0.5.14
+# Woltspace 0.5.25
 
-Python **0.5.14** is a small patch on the 0.5 line. The separately distributed
-**@woltspace/tui remains at 0.5.2**; no npm release is required.
+Python **0.5.25** and **@woltspace/tui 0.5.4** are published together.
 
-## A fresh lodge meets the newest Onboardie
+## What's new
 
-- **The starter lodge is no longer pinned to a release.** A brand-new lodge
-  installs Onboardie from the latest `main` of
-  [woltspace-starter-lodge](https://github.com/jerpint/woltspace-starter-lodge),
-  so she improves between releases. Today that means a confident pitch for
-  people who want to build, plain answers on cost and safety, one install line
-  and nothing more, and a little more beaver.
-- **Existing lodges are unaffected.** The starter is installed once, on a
-  lodge's first start. The revision a lodge got is recorded on the wolt.
-- Set `WOLTSPACE_STARTER_SEED=none` before the first start to skip it, as
-  before.
+- **The TUI shows custom creatures.** A wolt that is a custom creature shows
+  its own emoji in the TUI's session list and in "wake a wolt" (#633, #646).
+- **The TUI runs on Ink 8 and React 19.** Ink 5 counted one-character emoji
+  such as ⭐ as one column, so a row with one wrapped and left a blank line.
+  Ink 8 measures them as terminals draw them (#646).
 
-## Releases
+## Changes to know about
 
-- **Patch releases can ship from a maintenance branch.** 0.5 fixes now come from
-  `release/0.5` while `main` moves on to 0.6. Nothing changes for installs:
-  `uv tool install woltspace` and `woltspace update` keep picking the newest
-  stable release.
+- **The TUI needs Node.js 22 or newer** (was 18). `woltspace tui` says so
+  when the Node it finds is older. CI, the release workflow and the container
+  image already use Node 22 or newer (#646).
+- **The unused v1 Telegram adapter is gone.** The Telegram connector from
+  0.5.24 is the only Telegram path (#636).
+
+## Upgrade notes
+
+Take a backup first, with the release you are leaving:
+
+```sh
+woltspace backup --tag pre-upgrade
+woltspace update
+```
+
+Native upgrades stop and restart the control plane while preserving tmux
+sessions. Container lodges update from the host as before.
+
+If you run the TUI with `npx woltspace` or `woltspace tui`, update Node.js to
+22 or newer first.
+
+Going back to 0.5.24 works without extra steps: nothing in the lodge's data
+changed.
+
+After upgrading, verify the lodge is healthy:
+
+```sh
+woltspace status
+```

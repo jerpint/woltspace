@@ -315,7 +315,7 @@ export default function App({ onAction, launchCwd = process.cwd() }) {
         h(Text, { color: color.terra, bold: true }, sel ? '▸ ' : '  '),
         h(Text, { color: agentAlive(s) ? color.green : color.dim },
           agentAlive(s) ? '● ' : s.tmux_alive ? '◐ ' : '○ '),
-        h(Text, null, creatureGlyph(s.creature) + ' '),
+        h(Text, null, creatureGlyph(s.creature, wolts.find((w) => w.name === s.wolt)?.emoji) + ' '),
         h(Text, {
           bold: sel,
           underline: match,
@@ -369,7 +369,7 @@ export default function App({ onAction, launchCwd = process.cwd() }) {
       wolts.slice(wTop, wTop + 7).forEach((w, idx) => {
         const i = wTop + idx;
         lines.push(h(Text, { key: w.name, bold: i === spawnCursor },
-          (i === spawnCursor ? ' ▸ ' : '   ') + creatureGlyph(w.type) + ' ' + w.name));
+          (i === spawnCursor ? ' ▸ ' : '   ') + creatureGlyph(w.type, w.emoji) + ' ' + w.name));
       });
       lines.push(h(Text, { key: 'sh', color: color.dim }, '   j/k pick · enter wake · esc cancel'));
     } else if (mode === 'spawn-confirm' && wolts[spawnCursor]) {

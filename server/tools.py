@@ -9,6 +9,8 @@ import time
 
 from .config import STATE_DIR, TOOL_REGISTRY_FILE, WOLT_DIR
 
+from apps import app_environment  # config puts container/lib on sys.path
+
 _registry: dict[str, dict] = {}
 
 
@@ -54,7 +56,7 @@ def spawn(name: str, command: str, port: int) -> dict:
     child = subprocess.Popen(
         ["sh", "-c", command],
         cwd=str(WOLT_DIR),
-        env={**os.environ, "PORT": str(port)},
+        env=app_environment(PORT=str(port)),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         start_new_session=True,
@@ -86,7 +88,7 @@ def restore():
                 child = subprocess.Popen(
                     ["sh", "-c", info["command"]],
                     cwd=str(WOLT_DIR),
-                    env={**os.environ, "PORT": str(info["port"])},
+                    env=app_environment(PORT=str(info["port"])),
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     start_new_session=True,

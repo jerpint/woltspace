@@ -6,31 +6,101 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import shlex
 import subprocess
 import sys
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+import outbox  # noqa: E402
+import voice_notes  # noqa: E402
+from creature_types import emoji_from  # noqa: E402
 from env_compat import get_env  # noqa: E402
 from notify_prompt import (  # noqa: E402
     MessageInputError,
+    parse_to,
     read_message_input,
     validate_argv,
 )
+from paths import space_outbox_dir  # noqa: E402
 
 
-USAGE = """Usage:
-  notify
-  notify --telegram CHAT_ID
-  notify --slack CHANNEL THREAD_TS
+USAGE = f"""Usage:
+  notify [--file PATH] [--voice PATH] [--speak]
+  notify --telegram CHAT_ID [--file PATH] [--voice PATH] [--speak]
+  notify --slack CHANNEL THREAD_TS [--file PATH] [--voice PATH] [--speak]
+  notify --to CONNECTOR:ROUTE [--file PATH] [--voice PATH] [--speak]
 
-Message text is read from standard input. Use a single-quoted heredoc."""
+Message text is read from standard input. Use a single-quoted heredoc.
+--file sends one file with the message; it may also come before the route flags.
+--voice sends one audio file ({voice_notes.VOICE_SUFFIXES_TEXT}) as a voice note.
+--speak has the lodge read the message aloud and send it as a voice note.
+Use at most one of --file, --voice and --speak."""
 
 
 def fail_usage(message: str) -> int:
     print(f"notify: {message}", file=sys.stderr)
     print(USAGE, file=sys.stderr)
     return 2
+
+
+def _take_extra(argv: list[str]) -> tuple[list[str], str | None, str | None]:
+    """Pull `--file PATH`, `--voice PATH` or `--speak` out of argv, before a `--`.
+
+    Returns the rest of argv, which of the three was given ("file", "voice",
+    "speak" or None) and its path. `--file=PATH` and `--voice=PATH` work too.
+    """
+    rest: list[str] = []
+    kind: str | None = None
+    path: str | None = None
+    index = 0
+    while index < len(argv):
+        arg = argv[index]
+        if arg == "--":
+            rest.extend(argv[index:])
+            break
+        flag, equals, value = arg.partition("=")
+        if flag not in ("--file", "--voice", "--speak"):
+            rest.append(arg)
+            index += 1
+            continue
+        taken = 1
+        if flag != "--speak" and not equals:
+            value, taken = (argv[index + 1] if index + 1 < len(argv) else ""), 2
+        if kind is not None:
+            if kind == "file" and flag == "--file":
+                raise ValueError("only one --file per notify")
+            raise ValueError("use only one of --file, --voice and --speak")
+        if flag == "--speak":
+            if equals:
+                raise ValueError("--speak takes no value")
+        elif not value:
+            raise ValueError(f"{flag} requires PATH")
+        kind, path = flag[2:], value or None
+        index += taken
+    return rest, kind, path
+
+
+def _not_as_asked(kind: str | None, attachments: object) -> str | None:
+    """What a lodge that answered ok did instead of what was asked, if it did.
+
+    A lodge older than this command ignores a field it does not know: it sends
+    the text alone, or the audio as a document, and still answers ok.
+    """
+    if kind is None:
+        return None
+    if not attachments:
+        return {
+            "file": "the lodge sent the text but not the file",
+            "voice": "the lodge sent the text but not the voice note",
+            "speak": "the lodge sent the text but did not speak it",
+        }[kind]
+    if kind != "file" and not any(
+        isinstance(entry, dict) and entry.get("kind") == "voice"
+        for entry in (attachments if isinstance(attachments, list) else ())
+    ):
+        return "the lodge sent the audio as a file, not as a voice note"
+    return None
 
 
 def _parse_route(argv: list[str]) -> tuple[list[str], str, str, str, list[str]]:
@@ -47,6 +117,18 @@ def _parse_route(argv: list[str]) -> tuple[list[str], str, str, str, list[str]]:
         if len(argv) < 2:
             raise ValueError("--telegram requires CHAT_ID")
         adapter, route_id = "telegram", argv[1]
+        route_argv, remaining = ["notify", *argv[:2]], argv[2:]
+    elif argv[:1] == ["--to"]:
+        if len(argv) < 2:
+            raise ValueError("--to requires CONNECTOR:ROUTE")
+        spec, route = parse_to(argv[1])
+        adapter = spec.name
+        if adapter == "telegram":
+            route_id = route["chat_id"]
+        elif adapter == "slack":
+            route_id, slack_thread = route["channel"], route["thread_ts"]
+        else:
+            route_id = spec.codec.format(route)
         route_argv, remaining = ["notify", *argv[:2]], argv[2:]
     elif argv[:1] == ["--"]:
         route_argv, remaining = ["notify"], argv[1:]
@@ -67,12 +149,12 @@ def _creature_emoji(session: str, session_reg: Path) -> str:
         text=True,
         check=False,
     )
-    return {
+    return emoji_from({
         "raccoon": "🦝",
         "beaver": "🦫",
         "otter": "🦦",
         "wolf": "🐺",
-    }.get(result.stdout.strip(), "🦫")
+    }, result.stdout.strip(), "🦫")
 
 
 def _safe_transport_detail(stderr: str, secrets: tuple[str, ...]) -> str:
@@ -87,9 +169,25 @@ def _safe_transport_detail(stderr: str, secrets: tuple[str, ...]) -> str:
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     try:
+        argv, kind, path_arg = _take_extra(argv)
         route_argv, adapter, route_id, slack_thread, remaining = _parse_route(argv)
     except ValueError as exc:
         return fail_usage(str(exc))
+
+    source = None if path_arg is None else Path(path_arg)
+    if source is not None:
+        try:
+            outbox.check_source(source)
+        except outbox.OutboxError as exc:
+            print(f"notify: {exc}", file=sys.stderr)
+            return 2
+        if kind == "voice" and voice_notes.voice_content_type(source.name) is None:
+            print(
+                f"notify: --voice needs audio ending in {voice_notes.VOICE_SUFFIXES_TEXT}: "
+                f"{source.name}",
+                file=sys.stderr,
+            )
+            return 2
 
     try:
         message = read_message_input(
@@ -97,10 +195,35 @@ def main(argv: list[str] | None = None) -> int:
             remaining,
             sys.stdin,
             prefix="WOLTSPACE_NOTIFY",
+            allow_empty=source is not None,
         )
     except MessageInputError as exc:
         print(str(exc), file=sys.stderr, end="")
+        if kind is not None and len(remaining) == 1:
+            # The recovery heredoc is built from the route alone. Written as a
+            # shell comment, so running the recovery text whole stays harmless.
+            if kind == "speak":
+                add_back = "To have it spoken, add: --speak"
+            else:
+                what = "voice note" if kind == "voice" else "file"
+                add_back = f"To send the {what} too, add: --{kind} {shlex.quote(path_arg)}"
+            print(f"# notify: this command sends the text only. {add_back}", file=sys.stderr)
         return 2
+
+    words = message.strip()
+    if kind == "speak":
+        # Checked here as well as in the lodge: nothing is sent for a message
+        # the speech service would refuse, and nothing is cut short.
+        if not words:
+            print("notify: --speak needs words to read aloud", file=sys.stderr)
+            return 2
+        if len(words) > voice_notes.SPEECH_MAX_CHARS:
+            print(
+                f"notify: --speak reads at most {voice_notes.SPEECH_MAX_CHARS} characters "
+                f"and this message has {len(words)}; send it as text or shorten it",
+                file=sys.stderr,
+            )
+            return 2
 
     session = get_env("WOLTSPACE_WOLT_SESSION", "")
     wolt_name = get_env("WOLTSPACE_WOLT_NAME", "wolt")
@@ -111,11 +234,37 @@ def main(argv: list[str] | None = None) -> int:
         pass  # the plain name is always a fine prefix
     session_reg = Path(__file__).resolve().parent / "session-reg"
     full_message = f"{_creature_emoji(session, session_reg)} {wolt_name}: {message}"
-    payload: dict[str, str] = {"session": session, "message": full_message}
+    payload: dict[str, object] = {"session": session, "message": full_message}
     if adapter == "slack":
         payload.update(adapter="slack", channel=route_id, thread_ts=slack_thread)
     elif adapter == "telegram":
         payload.update(adapter="telegram", chat_id=route_id)
+    elif adapter:
+        payload.update(adapter=adapter, route=route_id)
+    if kind == "speak":
+        # The words alone: the lodge reads them aloud without the name prefix.
+        payload["speak"] = {"text": words}
+
+    box = space_outbox_dir()
+    entry_id = None
+    if source is not None:
+        try:
+            entry_id = outbox.stage(source, box)
+        except outbox.OutboxError as exc:  # the file changed since the first check
+            print(f"notify: {exc}", file=sys.stderr)
+            return 2
+        except OSError as exc:
+            print(f"notify: could not stage the file: {exc}", file=sys.stderr)
+            return 1
+        attachment = {"id": entry_id, "name": source.name}
+        if kind == "voice":
+            attachment["kind"] = "voice"
+        payload["attachments"] = [attachment]
+
+    def unstage() -> None:
+        # The lodge removes an entry it handled; this covers a request it never saw.
+        if entry_id is not None:
+            outbox.discard(box, entry_id)
 
     api = os.environ.get("WOLTSPACE_API", "http://localhost:7777")
     request = subprocess.run(
@@ -135,6 +284,7 @@ def main(argv: list[str] | None = None) -> int:
         check=False,
     )
     if request.returncode != 0:
+        unstage()
         detail = _safe_transport_detail(
             request.stderr,
             (
@@ -154,11 +304,35 @@ def main(argv: list[str] | None = None) -> int:
     try:
         result = json.loads(response)
     except json.JSONDecodeError:
+        unstage()
         print("notify: failed: invalid or empty API response", file=sys.stderr)
         return 1
     if result.get("ok"):
-        print(f"[notify] → {result.get('adapter', '?')}: {message}")
+        if kind == "speak" and result.get("speech_failed"):
+            # The lodge could not make the audio and sent the words as text instead.
+            print(f"[notify] → {result.get('adapter', '?')}: {message} [sent as text]")
+            print(
+                f"notify: the voice note failed ({result['speech_failed']}); "
+                "the lodge sent the text instead",
+                file=sys.stderr,
+            )
+            return 0
+        problem = _not_as_asked(kind, result.get("attachments"))
+        if problem:
+            unstage()
+            print(
+                f"notify: {problem}; restart the lodge so it matches this command",
+                file=sys.stderr,
+            )
+            return 1
+        sent = f"[notify] → {result.get('adapter', '?')}: {message}"
+        if kind == "speak":
+            sent += " [spoken]"
+        elif source is not None:
+            sent += f" [{kind}: {source.name}]"
+        print(sent)
         return 0
+    unstage()
     print(f"notify: failed: {result.get('error', 'unknown error')}", file=sys.stderr)
     return 1
 

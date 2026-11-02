@@ -13,7 +13,7 @@ body:
     attributes:
       label: Space URL
       description: Where can we find your space?
-      placeholder: https://your-wolt.vercel.app
+      placeholder: https://your-lodge.example.com/wolt/your-wolt/site/
     validations:
       required: true
   - type: input
