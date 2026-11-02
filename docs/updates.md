@@ -4,7 +4,13 @@ Woltspace has a thin update command for ordinary uv tool installations. It uses 
 
 ## Ask a wolt
 
-Ask “Check for Woltspace updates” or “Update Woltspace.” The bundled update skill reviews crossed release notes and migrations, obtains applicable consent, then uses this command for the mechanical lifecycle. A check alone does not authorize installation.
+This is the default route, native or container: ask “Check for Woltspace updates” or “Update Woltspace.” The wolt, through the bundled update skill, checks the installed and the chosen release, reads the crossed release notes and migration guide, takes a backup fit for the change, gets the owner's consent, runs the approved native or host steps, then verifies health. A check alone does not authorize installation. Installing the package does not complete a migration, and nothing rolls back a migration that changed the lodge's data.
+
+## Release lines
+
+A release line is X.Y. An implicit update (`woltspace update`, with or without `--yes` or `--pre`, and a container `build`, `rebuild` or `--latest`) stays on the installed line: a newer patch, or the line's final release over an installed release candidate. A newer line is a migration. `update --check` reports it as `newer_line`, the update notice names it apart from patches, and it is installed only with an exact `--version VERSION` after reading its notes. A container lodge whose image or installed release cannot be read must also name `--version`.
+
+This protection reaches only lodges that run it: install the patch that brings it (the native package, and for containers the host launcher from your checkout and a rebuilt image for the notice script) before the next line's final release. Older clients that skip it still move to the newest stable release.
 
 ## Native update command
 
@@ -14,14 +20,14 @@ Check without changing anything:
 woltspace update --check
 ```
 
-After reviewing releases and migrations, update to the newest stable release or an exact reviewed release:
+After reviewing releases and migrations, update to the newest release on the installed line or an exact reviewed release:
 
 ```sh
 woltspace update
 woltspace update --version VERSION
 ```
 
-The command confirms interactively unless `--yes` is supplied. `--pre` permits the newest prerelease; `--json` returns machine-readable results. It refuses downgrades, yanked releases, containers, source/pip installs and custom uv sources.
+The command confirms interactively unless `--yes` is supplied, and names a release-line crossing in the prompt. `--pre` permits a prerelease on the installed line; `--json` returns machine-readable results. It refuses downgrades, yanked releases, containers, source/pip installs and custom uv sources.
 
 For a running lodge it records status, stops, runs `uv tool install --force` with an exact version, restarts via the newly installed executable, then verifies version and health. An initially stopped lodge remains stopped. An install failure still triggers the restart attempt, and both failures are reported.
 
@@ -56,7 +62,7 @@ Wolts that keep the lodge up to date need to run these commands without a prompt
 
 Claude's auto mode honours these rules too. `woltspace start` and `woltspace stop` are left out on purpose: they are for the person at the keyboard.
 
-What you accept with them: `update:*` also covers `--pre` and `--version X`, so a wolt can install a prerelease without asking (downgrades and yanked releases are still refused). `restart:*` lets any wolt, including one acting on text it was sent, bounce the lodge; tmux sessions survive, so the cost is a short outage.
+What you accept with them: `update:*` also covers `--pre` and `--version X`, so a wolt can install a prerelease, or another release line, without asking (downgrades and yanked releases are still refused). `restart:*` lets any wolt, including one acting on text it was sent, bounce the lodge; tmux sessions survive, so the cost is a short outage.
 
 On a machine where two lodges share one install, updating one replaces the package under the other. `update` reports this and exits 1; restart the other lodge so it loads the new version.
 

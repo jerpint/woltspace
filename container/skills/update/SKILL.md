@@ -10,7 +10,9 @@ Use `woltspace update` as the thin, uv-backed mechanical wrapper. This workflow 
 
 ## Review and authorize
 
-Start with `woltspace update --check`. Review the target's PyPI availability/withdrawal state, all crossed GitHub release notes (`vVERSION`) and migrations under `container/migrations/` at the reviewed release commit. Never infer migration absence from a patch version or downgrade: installing older code cannot reverse migrations. If context cannot be verified, report the gap.
+You are the owner's default upgrade route. Check the installed release and the one you would choose, read its notes and migration guide, take a backup fit for the change (`woltspace backup`), get the owner's consent, run only the approved native or host steps, then verify health.
+
+Start with `woltspace update --check`. It stays on the installed X.Y line; a `newer_line` in its output is a migration, installed only with an exact `--version` after its migration guide is read and the owner agrees. A container lodge's `rebuild` keeps the same rule and asks for `--version` when the installed release is unknown. Review the target's PyPI availability/withdrawal state, all crossed GitHub release notes (`vVERSION`) and migrations under `container/migrations/` at the reviewed release commit. Never infer migration absence from a patch version or downgrade: installing older code cannot reverse migrations. If context cannot be verified, report the gap.
 
 A check is not installation consent. Summarize the chosen version, breaking behavior, migration actions and downtime. Obtain approval unless applicable standing permission already covers it. New incompatible requirements need human input.
 
@@ -34,7 +36,7 @@ The command revalidates yanked and downgrade boundaries, stops only a running na
 
 Read the command's final old/new version, health and degradation report. It rechecks startup every five seconds for up to thirty seconds. Distinguish prior conditions, transient startup and new errors; a sticky connector flag alone is not proof of an outage.
 
-Migration instructions are not executed by uv. Carry out only actions covered by user permission and workspace rules, and report the rest as pending. Package installation does not mean migrations are done.
+Migration instructions are not executed by uv. Carry out only actions covered by user permission and workspace rules, and report the rest as pending. Package installation does not mean migrations are done, and do not promise a rollback after a migration changed the lodge's data.
 
 If the old release predates `woltspace update`, follow the manual uv procedure in the linked documentation once. External/container lodges stay with host tooling.
 

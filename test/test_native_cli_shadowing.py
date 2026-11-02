@@ -333,24 +333,34 @@ def _control_plane_decoy():
         process.wait(timeout=10)
 
 
-def _launch(wolts_dir, verb="start", **env):
+PIN = re.search(r"^ARG WOLTSPACE_PYPI_VERSION=(\S+)$", (ROOT / "container" / "Dockerfile").read_text(), re.M).group(1)
+
+
+def _launch(wolts_dir, verb="start", launcher=LAUNCHER, **env):
     fake_bin = wolts_dir.parent / "fake-bin"
     fake_bin.mkdir(exist_ok=True)
     # A docker that screams if the guard ever lets it through. It logs its argv,
     # lists the container once it has been run, and answers `image inspect` of
     # the lodge's image (WOLTSPACE_IMAGE, else `woltspace`) with
     # FAKE_IMAGE_LABEL, so a `start` that is let through goes all the way to
-    # `docker run`.
+    # `docker run`. The image holds release FAKE_IMAGE_VERSION (default: the
+    # pin; "none": unreadable); FAKE_NO_IMAGE=1 means no image at all, and
+    # FAKE_CONTAINER_IMAGE is the image of an existing container.
     docker = fake_bin / "docker"
     docker.write_text(
         "#!/bin/sh\necho 'DOCKER INVOKED' >&2\n"
         'echo "$*" >> "$0.log"\n'
+        'case "$*" in "image inspect"*) [ -n "$FAKE_NO_IMAGE" ] && exit 1 ;; esac\n'
         'case "$1 $*" in\n'
         '  run*) touch "$0.ran" ;;\n'
         '  ps*) [ -f "$0.ran" ] && echo "$WOLTSPACE_CONTAINER" ;;\n'
         '  "image image inspect"*" ${WOLTSPACE_IMAGE:-woltspace}") echo "$FAKE_IMAGE_LABEL" ;;\n'
+        '  "container container inspect"*) [ -n "$FAKE_CONTAINER_IMAGE" ] || exit 1; echo "$FAKE_CONTAINER_IMAGE" ;;\n'
+        '  create*) echo fake-tmp ;;\n'
+        '  cp*) [ "$FAKE_IMAGE_VERSION" = none ] && exit 1; for a; do dest=$a; done; echo "$FAKE_IMAGE_VERSION" > "$dest" ;;\n'
         "esac\nexit 0\n"
     )
+    env.setdefault("FAKE_IMAGE_VERSION", PIN)
     docker.chmod(0o755)
     (fake_bin / "sleep").write_text("#!/bin/sh\n")
     (fake_bin / "sleep").chmod(0o755)
@@ -358,7 +368,7 @@ def _launch(wolts_dir, verb="start", **env):
     # launcher prefers; the legacy one is still honoured, and setting both keeps
     # this correct on either side of the env-namespace rename.
     return subprocess.run(
-        ["bash", str(LAUNCHER), verb],
+        ["bash", str(launcher), *verb.split()],
         capture_output=True, text=True, timeout=60,
         env=_clean_env(
             wolts_dir.parent,
@@ -440,8 +450,9 @@ def test_build_needs_no_wolts_and_only_builds(tmp_path):
     result = _launch(wolts_dir, "build")
     assert result.returncode == 0, result.stdout
     calls = (tmp_path / "fake-bin" / "docker.log").read_text().splitlines()
-    # Reading the running container's version is fine; nothing else but the build.
-    assert [c.split()[0] for c in calls if not c.endswith(" cat /workspace/woltspace/.version")] == ["build"]
+    # Reading the image's version through a throwaway container is fine; nothing else but the build.
+    assert [c.split()[0] for c in calls if c.split()[0] not in ("container", "image", "create", "cp")] == ["rm", "build"]
+    assert "rm fake-tmp" in calls
 
 
 def test_a_bad_node_sudo_stops_rebuild_before_docker_changes_anything(tmp_path):
@@ -449,6 +460,103 @@ def test_a_bad_node_sudo_stops_rebuild_before_docker_changes_anything(tmp_path):
     assert result.returncode == 1
     assert "WOLTSPACE_NODE_SUDO must be true or false" in result.stderr
     assert not [c for c in calls if c[0] in ("rm", "run", "build")]
+
+
+# --------------------------------------------------------------------------
+# Every registry build keeps the installed release line unless --version names one
+# --------------------------------------------------------------------------
+
+X, Y = (int(part) for part in PIN.split(".")[:2])
+
+
+def _built(calls):
+    return [c[c.index("--build-arg") + 1] for c in calls if c[0] == "build" and "--build-arg" in c
+            and c[c.index("--build-arg") + 1].startswith("WOLTSPACE_PYPI_VERSION=")]
+
+
+@pytest.mark.parametrize("flags, installed, built", [
+    ("", PIN, PIN),
+    ("", f"{X}.{Y}.0", f"{X}.{Y}.0"),
+    ("", f"{X}.{Y}.99rc1", f"{X}.{Y}.99rc1"),  # an installed rc is kept, not left
+    ("--latest", f"{X}.{Y}.0", PIN),
+    ("--version 9.9.9", PIN, "9.9.9"),
+    ("--latest", f"{X + 1}.0.0", None),
+    ("--nightly", f"{X + 1}.0.0", None),
+    ("--branch dev", f"{X + 1}.0.0", None),
+    ("", "none", None),
+])
+@pytest.mark.parametrize("verb", ["build", "rebuild"])
+def test_build_and_rebuild_keep_the_installed_line(tmp_path, verb, flags, installed, built):
+    result, calls, _ = _docker_calls(tmp_path, f"{verb} {flags}", FAKE_IMAGE_VERSION=installed)
+    explicit = flags.startswith("--version")
+    assert (["create", "--entrypoint", "true", "woltspace"] in calls) is not explicit
+    assert calls.count(["rm", "fake-tmp"]) == (0 if explicit else 1)  # the throwaway container is always removed
+    if built is None:
+        assert result.returncode == 1
+        assert "--version X" in result.stderr
+        # Refused before the lodge's container is removed or anything is built.
+        assert not [c for c in calls if c[0] in ("build", "run") or c[:2] == ["rm", "-f"]]
+    else:
+        assert result.returncode == 0, result.stderr
+        assert _built(calls) == [f"WOLTSPACE_PYPI_VERSION={built}"]
+
+
+def test_the_running_containers_image_is_read_not_the_tag(tmp_path):
+    result, calls, _ = _docker_calls(tmp_path, "build", FAKE_CONTAINER_IMAGE="sha256:running")
+    assert result.returncode == 0, result.stderr
+    assert ["create", "--entrypoint", "true", "sha256:running"] in calls
+    assert ["cp", "-L", "fake-tmp:/workspace/woltspace/.version"] == next(c for c in calls if c[0] == "cp")[:3]
+
+
+@pytest.mark.parametrize("verb", ["start", "init", "rebuild"])
+def test_a_lodge_with_wolts_but_no_image_needs_a_named_release(tmp_path, verb):
+    result, calls, _ = _docker_calls(tmp_path / "a", verb, FAKE_NO_IMAGE="1")
+    assert result.returncode == 1
+    assert "installed release is unknown" in result.stderr
+    assert not [c for c in calls if c[0] in ("build", "run", "rm")]
+    result, calls, _ = _docker_calls(tmp_path / "b", f"{verb} --version 9.9.9", FAKE_NO_IMAGE="1")
+    assert result.returncode == 0, result.stderr
+    assert _built(calls) == ["WOLTSPACE_PYPI_VERSION=9.9.9"]
+
+
+@pytest.mark.parametrize("verb", ["init", "start", "build"])
+@pytest.mark.parametrize("scaffold", [".env", ".space/lodge.db"])
+def test_a_set_up_data_root_without_wolts_or_image_is_not_fresh(tmp_path, verb, scaffold):
+    wolts_dir = tmp_path / "wolts"
+    (wolts_dir / scaffold).parent.mkdir(parents=True, exist_ok=True)
+    (wolts_dir / scaffold).write_text("WOLTSPACE_PUBLIC_TUNNEL=false\n")
+    result = _launch(wolts_dir, verb, FAKE_NO_IMAGE="1", WOLTSPACE_NONINTERACTIVE="true")
+    log = tmp_path / "fake-bin" / "docker.log"
+    calls = [c.split() for c in log.read_text().splitlines()] if log.exists() else []
+    assert result.returncode == 1, result.stdout
+    assert "installed release is unknown" in result.stderr
+    assert not [c for c in calls if c[0] in ("build", "run", "rm")]
+
+
+def _checkout_pinning(tmp_path, pin):
+    checkout = tmp_path / "checkout"
+    (checkout / "container").mkdir(parents=True)
+    (checkout / "woltspace").write_text(LAUNCHER.read_text())
+    (checkout / ".env.example").write_text((ROOT / ".env.example").read_text())
+    dockerfile = (ROOT / "container" / "Dockerfile").read_text()
+    (checkout / "container" / "Dockerfile").write_text(dockerfile.replace(f"VERSION={PIN}\n", f"VERSION={pin}\n"))
+    return checkout / "woltspace"
+
+
+@pytest.mark.parametrize("pin", [f"{X}.{Y}.99rc1", f"{X}.{Y}.99"])
+def test_a_fresh_install_takes_only_a_final_pin(tmp_path, pin):
+    wolts_dir = tmp_path / "wolts"
+    launcher = _checkout_pinning(tmp_path, pin)
+    result = _launch(wolts_dir, "init", launcher=launcher, WOLTSPACE_NONINTERACTIVE="true", FAKE_NO_IMAGE="1")
+    log = tmp_path / "fake-bin" / "docker.log"
+    calls = [c.split() for c in log.read_text().splitlines()] if log.exists() else []
+    if "rc" in pin:
+        assert result.returncode == 1
+        assert "pins prerelease" in result.stderr
+        assert not wolts_dir.exists() and calls == []
+    else:
+        assert result.returncode == 0, result.stderr
+        assert _built(calls) == [f"WOLTSPACE_PYPI_VERSION={pin}"]
 
 
 # --------------------------------------------------------------------------

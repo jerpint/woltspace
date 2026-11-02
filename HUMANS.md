@@ -124,7 +124,7 @@ On a native lodge, ask your wolt:
 A container updates from the host, by rebuilding:
 
 ```bash
-woltspace rebuild --latest            # the version pinned in your checkout
+woltspace rebuild --latest            # the version pinned in your checkout, same X.Y line only
 woltspace rebuild --version X         # a specific release
 ```
 
@@ -291,12 +291,13 @@ rm -f ~/.woltspace/woltspace-backup-<tag>.zip
 
 ```bash
 woltspace --version        # what's installed
-woltspace update --check   # native installs: whether PyPI has a newer stable release; changes nothing
+woltspace update --check   # native installs: a newer stable release on the installed X.Y line, and any newer line; changes nothing
 ```
 
 A container stays on the version its image was built with, stamped in
 `/workspace/woltspace/.version`. `woltspace rebuild` keeps that version;
-`--latest` moves to the version pinned in your checkout, and `--version X` to X.
+`--latest` moves to the version pinned in your checkout when it is on the same
+X.Y line, and `--version X` to X, on any line. See [docs/updates.md](docs/updates.md).
 
 ## Learn more
 

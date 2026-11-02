@@ -80,6 +80,58 @@ def test_downgrade_and_yanked_refused(native, monkeypatch, capsys, arguments, pu
     assert error in json.loads(capsys.readouterr().out)["error"]
 
 
+# Implicit targets stay on the installed X.Y line; a newer line is only reported.
+@pytest.mark.parametrize(
+    ("installed", "published", "pre", "target", "newer_line"),
+    [
+        ("0.5.11", ("0.5.11", "0.5.12", "0.6.0rc1", "0.6.0"), False, "0.5.12", "0.6.0"),
+        ("0.5.11", ("0.5.11", "0.5.12", "0.5.13rc1", "0.6.0rc1"), True, "0.5.13rc1", None),
+        ("0.5.11", ("0.5.11", "0.6.0", "0.7.1"), False, "0.5.11", "0.7.1"),
+        ("0.5.11", ("0.6.0",), True, "0.5.11", "0.6.0"),
+        ("0.6.0rc1", ("0.5.12", "0.6.0rc1", "0.6.0"), False, "0.6.0", None),
+        ("0.6.1rc1", ("0.6.0",), False, "0.6.1rc1", None),
+    ],
+)
+def test_implicit_target_stays_on_the_installed_line(native, monkeypatch, capsys, installed, published, pre, target, newer_line):
+    monkeypatch.setattr(updater, "__version__", installed)
+    monkeypatch.setattr(updater, "_pypi", lambda: metadata(*published))
+    monkeypatch.setattr(updater, "_run", lambda argv: completed(argv, stdout=f"woltspace v{installed}\n"))
+    assert updater.update(args(check=True, pre=pre)) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert (payload["target"], payload["newer_line"]) == (target, newer_line)
+    assert payload["update_available"] is (target != installed)
+
+
+def test_yes_installs_the_same_line_patch_not_the_newer_line(native, monkeypatch):
+    calls = []
+    monkeypatch.setattr(updater, "_pypi", lambda: metadata("0.5.11", "0.5.12", "0.6.0rc1", "0.6.0"))
+    monkeypatch.setattr(updater, "_run", lifecycle_run(calls))
+    assert updater.update(args(yes=True)) == 0
+    assert [c for c in calls if c[:3] == ["uv", "tool", "install"]] == [["uv", "tool", "install", "--force", "woltspace==0.5.12"]]
+
+
+def test_up_to_date_text_names_the_newer_line(native, monkeypatch, capsys):
+    monkeypatch.setattr(updater, "_pypi", lambda: metadata("0.5.11", "0.6.0"))
+    monkeypatch.setattr(updater, "_run", receipt)
+    assert updater.update(args(check=True, json=False)) == 0
+    assert capsys.readouterr().out.strip() == (
+        "installed 0.5.11; target 0.5.11; up to date; 0.6.0 is a new release line: read "
+        "https://github.com/jerpint/woltspace/releases/tag/v0.6.0 and opt in with --version 0.6.0")
+
+
+def test_exact_version_crosses_the_line_and_the_prompt_says_so(native, monkeypatch, capsys):
+    calls = []
+    monkeypatch.setattr(updater, "_pypi", lambda: metadata("0.5.11", "0.6.0"))
+    monkeypatch.setattr(updater, "_run", lifecycle_run(calls))
+    monkeypatch.setattr("builtins.input", lambda: "n")
+    assert updater.update(args(version="0.6.0", yes=False)) == 1
+    assert "crosses release line 0.5 -> 0.6" in capsys.readouterr().err
+    assert not [c for c in calls if c[:3] == ["uv", "tool", "install"]]
+    monkeypatch.setattr(updater, "_run", receipt)
+    assert updater.update(args(check=True, version="0.6.0")) == 0
+    assert json.loads(capsys.readouterr().out)["update_available"] is True
+
+
 def test_non_uv_install_refused(native, monkeypatch, capsys):
     monkeypatch.setattr(updater, "_run", lambda argv: completed(argv, stdout="ruff v0.8.0\n"))
     assert updater.update(args(check=True)) == 1
