@@ -1443,8 +1443,10 @@ def test_an_app_socket_through_a_way_in_with_no_expiry_lasts_as_long_as_its_logi
     from server import ways_in
     monkeypatch.setattr(server_app, "SOCKET_RECHECK_SECONDS", 0.05)
     answers = iter([ways_in.Visitor("owner", None)] * 4)
+    seen = []
 
-    async def owner(*_args):
+    async def owner(headers, scope):
+        seen.append((headers.get("host"), headers.get("origin"), dict(scope["headers"]).get(b"host")))
         return next(answers, None)
     monkeypatch.setattr(ways_in.named("cloudflare"), "owner", owner, raising=False)
 
@@ -1460,3 +1462,5 @@ def test_an_app_socket_through_a_way_in_with_no_expiry_lasts_as_long_as_its_logi
         with pytest.raises(WebSocketDisconnect):
             socket.receive_text()
     assert next(answers, "spent") == "spent"   # asked again each time, closed when the login ended
+    # Each recheck sees the request as it came through the way in, not its local form.
+    assert len(seen) == 5 and set(seen) == {(host, f"https://{host}", host.encode())}

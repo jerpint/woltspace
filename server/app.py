@@ -840,7 +840,7 @@ class MillForwardMiddleware:
         local_headers = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in local["headers"]}
         if scope["type"] == "websocket":
             return await self._websocket(local, receive, send, local_headers, content,
-                                         expires_at=expires_at, visitor=visitor)
+                                         expires_at=expires_at, visitor=visitor, proof=(scope, headers))
         return await self._http(local, receive, send, local_headers, content, visitor=visitor)
 
     @staticmethod
@@ -910,7 +910,10 @@ class MillForwardMiddleware:
         ]
         return await response(scope, receive, send)
 
-    async def _websocket(self, scope, receive, send, headers, content, expires_at=None, visitor="owner"):
+    async def _websocket(self, scope, receive, send, headers, content, expires_at=None, visitor="owner",
+                         proof=None):
+        """`proof` is the request as it came through a way in, before its
+        rewrite to the local form: the way in rechecks what it first saw."""
         from websockets.asyncio.client import unix_connect
         ws = WebSocket(scope, receive, send)
         query = scope.get("query_string") or b""
@@ -945,7 +948,7 @@ class MillForwardMiddleware:
                 # A way in whose proof has no expiry: ask it again on the timer.
                 while True:
                     await asyncio.sleep(SOCKET_RECHECK_SECONDS)
-                    if (await _remote_visitor(scope, headers, content))[0] is None:
+                    if (await _remote_visitor(*(proof or (scope, headers)), content))[0] is None:
                         return
             while True:
                 await asyncio.sleep(SOCKET_RECHECK_SECONDS)
