@@ -283,6 +283,14 @@ def test_a_visitor_through_a_tunnel_is_not_the_owner_of_a_local_app(lodge_with_b
     assert _lodge().get("/", headers={"x-forwarded-for": "203.0.113.9"}).status_code == 403
 
 
+def test_a_browser_through_docker_is_told_how_to_open_apps(lodge_with_board):
+    """In a container the browser's connection comes from Docker, never
+    loopback: with lodge auth off the refusal says how to turn it on."""
+    response = _lodge(client=("192.168.65.1", 50000)).get("/")
+    assert response.status_code == 403 and "WOLTSPACE_LODGE_AUTH=1" in response.text
+    assert "woltspace pair" in response.text
+
+
 def test_app_websockets_go_through_the_lodge_and_the_mill(lodge_with_board):
     host = "hmr.localhost:7777"
     with _lodge(host).websocket_connect("/ws", subprotocols=["vite-hmr"],

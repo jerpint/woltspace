@@ -440,6 +440,36 @@ def _apps_check(layout: RuntimeLayout) -> DoctorCheck | None:
     )
 
 
+def _lodge_auth_on(layout: RuntimeLayout, env=None) -> bool:
+    """WOLTSPACE_LODGE_AUTH as the lodge will read it: the environment, else `.env`."""
+    env = os.environ if env is None else env
+    value = env.get("WOLTSPACE_LODGE_AUTH")
+    if value is None:
+        env_file = layout.wolts_dir / ".env"
+        if env_file.is_file():
+            from dotenv import dotenv_values
+            value = dotenv_values(env_file).get("WOLTSPACE_LODGE_AUTH")
+    return (value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _container_apps_check(layout: RuntimeLayout, env=None) -> DoctorCheck | None:
+    """A container lodge with lodge auth off refuses its own apps.
+
+    With auth off an app is the owner's only for a loopback caller that came
+    straight in; through Docker's port forwarding the browser never is one.
+    """
+    if layout.isolation == "host" or _lodge_auth_on(layout, env):
+        return None
+    if not (layout.wolts_dir / "apps").is_dir():
+        return None
+    return DoctorCheck(
+        "container-apps", "warn",
+        "lodge auth is off in a container, so apps answer 403 in the browser",
+        "Set WOLTSPACE_LODGE_AUTH=1, restart the lodge, then run `woltspace pair` and open its link "
+        "(docs/lodge-auth.md).",
+    )
+
+
 def _app_tunnels_check(layout: RuntimeLayout) -> DoctorCheck | None:
     """Per-app quick tunnels from an older lodge that are still running."""
     try:
@@ -678,8 +708,8 @@ def run_doctor(
             f"{layout.host}:{layout.port} is {'available' if available else 'already in use'}",
             "Stop the existing service or choose --port <free-port>." if not available else "",
         ))
-    for extra in (_apps_check(layout), _remote_apps_check(layout), _app_tunnels_check(layout),
-                  _shared_apps_check(layout)):
+    for extra in (_apps_check(layout), _container_apps_check(layout), _remote_apps_check(layout),
+                  _app_tunnels_check(layout), _shared_apps_check(layout)):
         if extra is not None:
             checks.append(extra)
     return checks

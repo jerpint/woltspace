@@ -231,6 +231,20 @@ def test_doctor_passes_loopback_apps(tmp_path):
     assert doctor._apps_check(_layout(tmp_path)).status == "pass"
 
 
+def test_doctor_warns_a_container_lodge_with_lodge_auth_off(tmp_path):
+    from woltspace import doctor
+    from woltspace.layout import RuntimeLayout
+    _manifest(tmp_path, "blog", "blog", "npm run dev")
+    container = RuntimeLayout.from_env({"WOLTSPACE_WOLTS_DIR": str(tmp_path), "WOLTSPACE_ISOLATION": "external"})
+    host = RuntimeLayout.from_env({"WOLTSPACE_WOLTS_DIR": str(tmp_path), "WOLTSPACE_ISOLATION": "host"})
+    check = doctor._container_apps_check(container, env={})
+    assert check.status == "warn" and "WOLTSPACE_LODGE_AUTH=1" in check.remedy
+    assert doctor._container_apps_check(host, env={}) is None
+    assert doctor._container_apps_check(container, env={"WOLTSPACE_LODGE_AUTH": "1"}) is None
+    (tmp_path / ".env").write_text("WOLTSPACE_LODGE_AUTH=1\n")
+    assert doctor._container_apps_check(container, env={}) is None
+
+
 def test_doctor_asks_for_access_settings_when_there_is_a_tunnel(tmp_path, monkeypatch):
     from woltspace import doctor
     monkeypatch.setenv("CLOUDFLARE_TUNNEL_URL", "https://owner.woltspace.test")

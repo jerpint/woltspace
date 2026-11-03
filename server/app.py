@@ -816,6 +816,18 @@ class MillForwardMiddleware:
                     f"Open {content.name}</a></p>", status_code=401,
                     headers={"Cache-Control": "no-store"})
                 return await response(scope, receive, send)
+            if scope["type"] == "http":
+                # Lodge auth off: only a browser on this machine that came
+                # straight in is the owner. Through Docker (a container or the
+                # desktop app) the browser's connection never is.
+                response = HTMLResponse(
+                    f"<h1>This {content.kind} is the owner's</h1>"
+                    "<p>With lodge auth off, only a browser on this machine connecting straight to the "
+                    "lodge counts as the owner. A lodge in a container (Docker or the desktop app) never "
+                    "sees that, so it needs lodge auth for apps: set <code>WOLTSPACE_LODGE_AUTH=1</code>, "
+                    "restart the lodge, then run <code>woltspace pair</code> and open the link it prints. "
+                    "See docs/lodge-auth.md.</p>", status_code=403, headers={"Cache-Control": "no-store"})
+                return await response(scope, receive, send)
             return await self._refuse(scope, receive, send, 403, f"This {content.kind} is the owner's")
         if scope["type"] == "websocket":
             return await self._websocket(scope, receive, send, headers, content, visitor=visitor)
