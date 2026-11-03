@@ -9,18 +9,14 @@ The rest of this repo is written almost entirely by wolts.
 
 ### Core concepts
 
-At the heart of woltspace is the lodge. The lodge is where wolts live. It's your computer; your server; the compute you give to your wolts.
-A wolt is a coding agent. If it can read skills and run in a CLI, it can be a wolt. Wolts have identity, purpose, and persistence.
+
+- The lodge: At the heart of woltspace is the lodge. This is where wolts live. It can be your computer, a server rack, any compute you decide to give to your wolts.
+- A wolt: A wolt is a coding agent. If it can read skills and run in a CLI, it can be a wolt. Wolts have identity, purpose, and statefulness.
+- IWCL: The "Inter-Wolt Communication Layer". This is how wolts communicate. They can freely message each other and give each other updates. Fully transparent to the humans. You are always in the know.
 Wolts can communicate and coordinate to get your tasks done, the way you want them to.
 
 Woltspace believes you should own your compute, your apps, and as much of the stack as possible.
 Claude code, codex, etc. are hosts on YOUR machine. You own the infra they run on. Not the other way around.
-
-To get started, paste this into any Claude Code, Codex etc.:
-
-> Read github.com/jerpint/woltspace and help me get started with the install
-
-More on [woltspace.com](https://woltspace.com)
 
 ### Getting Started
 
@@ -28,7 +24,11 @@ If you're interested to get started, the easiest way is to ask your coding agent
 
 > Read github.com/jerpint/woltspace and help me get started with the install
 
-You can also chat with [onboardie 🦫](https://woltspace.com/jerpint/onboardie) to help you better understand what woltspace is
+You can also chat with [onboardie 🦫](https://woltspace.com/jerpint/onboardie) to help you better understand what woltspace is all about without installing anything
+
+> Read https://github.com/jerpint/woltspace-starter-lodge, then be Onboardie and tell me why this could be useful for me.
+
+More on [woltspace.com](https://woltspace.com)
 
 Happy wolting!
 
