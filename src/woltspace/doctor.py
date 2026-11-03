@@ -406,9 +406,12 @@ def _apps_check(layout: RuntimeLayout) -> DoctorCheck | None:
     apps_dir = layout.wolts_dir / "apps"
     if not apps_dir.is_dir():
         return None
+    _graft_runtime_lib(layout)
+    from app_names import app_name_ok
     names: dict[str, list[str]] = {}
     wide: list[str] = []
     reserved: list[str] = []
+    unserved: list[str] = []
     for manifest in sorted(apps_dir.glob("*/woltspace.json")):
         try:
             data = json.loads(manifest.read_text())
@@ -422,12 +425,18 @@ def _apps_check(layout: RuntimeLayout) -> DoctorCheck | None:
             wide.append(name)
         if name.startswith("site-"):
             reserved.append(name)
+        elif not (app_name_ok(name) and app_name_ok(manifest.parent.name)):
+            # An app's name is a host label: 0.5 also took capitals and `_`.
+            unserved.append(name if name == manifest.parent.name else f"{name} (folder {manifest.parent.name})")
     shared = {name: dirs for name, dirs in names.items() if len(dirs) > 1}
     problems = []
     if wide:
         problems.append(f"listen on every interface (0.0.0.0): {', '.join(sorted(set(wide)))}")
     if reserved:
         problems.append(f"use the reserved site- prefix and aren't served: {', '.join(sorted(set(reserved)))}")
+    if unserved:
+        problems.append("have names an address can't hold, so they aren't served: "
+                        + ", ".join(sorted(set(unserved))))
     if shared:
         problems.append("share a name: " + "; ".join(
             f"{name} in {', '.join(dirs)}" for name, dirs in sorted(shared.items())))
@@ -436,7 +445,8 @@ def _apps_check(layout: RuntimeLayout) -> DoctorCheck | None:
     return DoctorCheck(
         "apps", "warn", "apps that " + " and apps that ".join(problems),
         "Pass `--host $HOST` (the lodge sets HOST=127.0.0.1) instead of 0.0.0.0, so an app is "
-        "reachable from this machine only; give each app its own name, not starting with site-.",
+        "reachable from this machine only; give each app its own name, not starting with site-; "
+        "rename an app (its folder and its manifest's name) to lowercase letters, digits and dashes.",
     )
 
 

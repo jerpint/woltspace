@@ -225,6 +225,16 @@ def test_doctor_names_wide_binds_and_shared_names(tmp_path):
     assert "--host $HOST" in check.remedy
 
 
+def test_doctor_names_apps_0_6_does_not_serve(tmp_path):
+    from woltspace import doctor
+    _manifest(tmp_path, "My_Notes", "My_Notes", "npm run dev")
+    _manifest(tmp_path, "board", "Board", "npm run dev")
+    _manifest(tmp_path, "3d-viewer", "3d-viewer", "npm run dev")
+    check = doctor._apps_check(_layout(tmp_path))
+    assert check.status == "warn" and "My_Notes" in check.detail and "Board (folder board)" in check.detail
+    assert "3d-viewer" not in check.detail and "lowercase" in check.remedy
+
+
 def test_doctor_passes_loopback_apps(tmp_path):
     from woltspace import doctor
     _manifest(tmp_path, "blog", "blog", "astro dev --port $PORT --host $HOST")
