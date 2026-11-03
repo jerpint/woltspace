@@ -215,6 +215,28 @@ def test_app_websockets_go_through_the_mill(tmp_path, echo_app):
             pass
 
 
+@pytest.fixture
+def board_on_ipv6():
+    """An app whose dev server bound `localhost` and got ::1 only."""
+    class V6(ThreadingHTTPServer):
+        address_family = socket.AF_INET6
+    try:
+        server = V6(("::1", 0), _Handler)
+    except OSError:
+        pytest.skip("no IPv6 loopback here")
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    _Seen.requests = []
+    yield server.server_address[1]
+    server.shutdown()
+
+
+def test_an_app_listening_on_ipv6_loopback_only_is_reached(tmp_path, board_on_ipv6):
+    client = _mill(tmp_path, running={"board": board_on_ipv6})
+    assert client.get("/", headers=OWNER).text == "hello from board"
+    posted = client.post("/x", content=b"12345", headers={**OWNER, "origin": f"http://{APP}"})
+    assert posted.text == "got 5"   # the body went whole to the second loopback
+
+
 # --- Through the lodge's port -------------------------------------------------------------
 
 def _short_dir() -> Path:

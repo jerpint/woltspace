@@ -10,7 +10,7 @@ port to that socket, and says who the visitor is in IDENTITY_HEADER after
 stripping any copy the visitor sent. The Mill serves the owner, or anyone on
 an app the owner shared, and answers:
 
-- a running app: proxied to its process on 127.0.0.1;
+- a running app: proxied to its process on 127.0.0.1, or ::1 if that refuses;
 - a static app: GET and HEAD for files under its real folder.
 
 Wolt sites stay on the lodge at `/wolt/<name>/site/` for now.
@@ -48,6 +48,9 @@ OWNER = "owner"
 # Anyone, on an app the owner (or a wolt they asked) shared.
 PUBLIC = "public"
 _STATIC_METHODS = {"GET", "HEAD"}
+# Where an app's process listens: IPv4 loopback first, then IPv6, for a dev
+# server that bound `localhost` and got ::1 (Vite on macOS does).
+APP_LOOPBACKS = ("127.0.0.1", "[::1]")
 # A unix socket path must fit sockaddr_un (104 bytes on macOS, 108 on Linux).
 SOCKET_PATH_MAX = 100
 
@@ -169,7 +172,7 @@ class Mill:
         return await self._app(scope, receive, send, headers, refuse, app_host.name)
 
     async def _app(self, scope, receive, send, headers, refuse, name: str):
-        """An app: proxied to its process on 127.0.0.1, or a static app's files."""
+        """An app: proxied to its process on 127.0.0.1 (or ::1), or a static app's files."""
         if scope["type"] == "websocket":
             if not _origin_is_this_app(headers):
                 return await refuse(403, "bad-origin", "Invalid websocket origin")
@@ -220,13 +223,21 @@ class Mill:
         # The raw target, as sent: decoding it would turn %3F or %23 into a
         # query or a fragment.
         raw_path = (scope.get("raw_path") or scope.get("path", "/").encode()).decode("latin-1")
-        url = f"http://127.0.0.1:{port}{raw_path}" + ("?" + query.decode("latin-1") if query else "")
+        target = raw_path + ("?" + query.decode("latin-1") if query else "")
         client = httpx.AsyncClient(timeout=APP_PROXY_TIMEOUT)
         try:
-            req = client.build_request(scope.get("method", "GET"), url,
-                                       headers=upstream_request_headers(raw, port),
-                                       content=request.stream() if has_body else None)
-            resp = await client.send(req, stream=True, follow_redirects=False)
+            for index, loopback in enumerate(APP_LOOPBACKS):
+                req = client.build_request(scope.get("method", "GET"), f"http://{loopback}:{port}{target}",
+                                           headers=upstream_request_headers(raw, port),
+                                           content=request.stream() if has_body else None)
+                try:
+                    resp = await client.send(req, stream=True, follow_redirects=False)
+                    break
+                except httpx.ConnectError:
+                    # Refused before a byte of the body was read: the next
+                    # loopback gets the request whole.
+                    if index == len(APP_LOOPBACKS) - 1:
+                        raise
         except httpx.ConnectError:
             await client.aclose()
             response = HTMLResponse(f"<h1>Cannot reach app '{name}'</h1>", status_code=502)
@@ -264,12 +275,20 @@ class Mill:
         protocols = [p.strip() for p in headers.get("sec-websocket-protocol", "").split(",") if p.strip()]
         query = scope.get("query_string") or b""
         raw_path = (scope.get("raw_path") or scope.get("path", "/").encode()).decode("latin-1")
-        url = f"ws://127.0.0.1:{port}{raw_path}" + ("?" + query.decode("latin-1") if query else "")
-        try:
-            upstream = await websockets.connect(
-                url, subprotocols=protocols or None, max_size=APP_WS_MAX_MESSAGE, proxy=None,
-                additional_headers=websocket_upstream_headers(raw, port))
-        except Exception:
+        target = raw_path + ("?" + query.decode("latin-1") if query else "")
+        upstream = None
+        for loopback in APP_LOOPBACKS:
+            try:
+                upstream = await websockets.connect(
+                    f"ws://{loopback}:{port}{target}", subprotocols=protocols or None,
+                    max_size=APP_WS_MAX_MESSAGE, proxy=None,
+                    additional_headers=websocket_upstream_headers(raw, port))
+                break
+            except OSError:
+                continue  # refused here: try the other loopback
+            except Exception:
+                break
+        if upstream is None:
             _log(scope, headers, 502, "upstream-ws-down")
             return await send({"type": "websocket.close", "code": 1011})
         try:

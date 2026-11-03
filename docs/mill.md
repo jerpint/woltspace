@@ -57,7 +57,7 @@ flowchart TD
 
 ## What an app gets
 
-- **Running apps:** the Mill proxies to the app's process on `127.0.0.1`, both ways streamed. That covers HTTP, uploads, server-sent events and WebSockets with their subprotocol. The app's own cookies and `Authorization` pass through. The lodge's and Access's credentials never do.
+- **Running apps:** the Mill proxies to the app's process on `127.0.0.1`, or on `::1` when that refuses (a dev server that bound `localhost` may get IPv6 only), both ways streamed. That covers HTTP, uploads, server-sent events and WebSockets with their subprotocol. The app's own cookies and `Authorization` pass through. The lodge's and Access's credentials never do.
 - **Static apps** (no `start` command): the Mill serves the app's real `dist/` folder if there is one, else its folder, `GET` and `HEAD` only. A symlinked root, symlinked files leading outside it, `..`, encoded separators and anything whose real path has a dot-named part (`.git`, `.env`) answer `404`. Every file carries `nosniff`, a sandbox that keeps the app's own origin and lets ordinary pages use forms, new tabs, dialogs and downloads (`sandbox allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-downloads`), and `Cache-Control: private, no-store`, so a revoked share leaves nothing cached.
 - **In the lodge's frames:** with lodge auth on, an app opens in its own tab from `/apps/open?app=<name>`. The lodge's split view can't show it in a frame: the app's cookie isn't sent to a cross-site frame over http.
 - **WebSockets** need an `Origin` naming the app itself, so a native client without one is refused. The app sees `Host: 127.0.0.1:<port>` on a WebSocket and `localhost:<port>` on HTTP.
