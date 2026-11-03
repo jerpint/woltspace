@@ -203,8 +203,56 @@ _MIGRATIONS: list[tuple[int, tuple[str, ...]]] = [
             keys    INTEGER NOT NULL
         )""",
     )),
+    (6, (
+        # Session policies to record version 2, where "auto" is the engine's
+        # own Auto and the old "auto" (no checks at all) is "bypass". First a
+        # missing policy or a bare string becomes a version 1 object, then
+        # every version 1 object becomes version 2. Breaking: an older build
+        # would read "bypass" as unknown.
+        """UPDATE sessions SET record = json_set(record, '$.execution_policy', json_object(
+            'mode', coalesce(nullif(json_extract(record, '$.execution_policy'), ''), 'auto'),
+            'isolation', 'external', 'policy_version', 1))
+        WHERE coalesce(json_type(record, '$.execution_policy'), 'null') IN ('null', 'text')""",
+        """UPDATE sessions SET record = json_set(record,
+            '$.execution_policy.mode', CASE json_extract(record, '$.execution_policy.mode')
+                WHEN 'prompt' THEN 'prompt' ELSE 'bypass' END,
+            '$.execution_policy.isolation',
+                coalesce(json_extract(record, '$.execution_policy.isolation'), 'external'),
+            '$.execution_policy.policy_version', 2)
+        WHERE json_type(record, '$.execution_policy') = 'object'
+            AND coalesce(json_extract(record, '$.execution_policy.policy_version'), 1) = 1
+            AND coalesce(json_extract(record, '$.execution_policy.mode'), 'auto') IN ('auto', 'prompt')""",
+    )),
+    (7, (
+        # Conversation history (conversation_log.py): text the inbox admitted and notify
+        # sent, while woltspace.json enables it. Mailbox ids are plain integers, never
+        # foreign keys: inbox pruning never reaches the archive. size is the retained
+        # UTF-8, original_size the text's own (larger only when cut to a prefix).
+        """CREATE TABLE IF NOT EXISTS conversation_log (
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            at                REAL NOT NULL,
+            kind              TEXT NOT NULL,
+            sender_mailbox    INTEGER,
+            sender_name       TEXT NOT NULL,
+            recipient_mailbox INTEGER,
+            recipient_name    TEXT NOT NULL,
+            human             INTEGER NOT NULL,
+            body              TEXT NOT NULL,
+            size              INTEGER NOT NULL,
+            original_size     INTEGER NOT NULL,
+            outcome           TEXT
+        )""",
+        "CREATE INDEX IF NOT EXISTS conversation_log_sender ON conversation_log(sender_mailbox, id)",
+        "CREATE INDEX IF NOT EXISTS conversation_log_recipient ON conversation_log(recipient_mailbox, id)",
+        # The archive's running totals, one row, changed in the write that changes them.
+        """CREATE TABLE IF NOT EXISTS conversation_usage (
+            id    INTEGER PRIMARY KEY CHECK (id = 1),
+            rows  INTEGER NOT NULL,
+            bytes INTEGER NOT NULL
+        )""",
+    )),
 ]
-_BREAKING: set[int] = set()
+_BREAKING: set[int] = {6}
 
 
 class SchemaTooNew(sqlite3.DatabaseError):
