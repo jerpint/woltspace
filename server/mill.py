@@ -1,21 +1,21 @@
-"""The Mill: wolt sites, each on an origin of its own, in a process of its own.
+"""The Mill: apps, each on an origin of its own, in a process of its own.
 
-A page a wolt wrote must never run with the lodge's origin, where its script
-could call the lodge's API as the owner. The Mill serves sites on their own
-hosts (`<wolt>.sites.localhost`) and has no lodge routes at all.
+An app's page must never run with the lodge's origin, where its script could
+call the lodge's API as the owner. The Mill serves apps on their own hosts
+(`<app>.localhost`) and has no lodge routes at all.
 
 It listens only on a unix socket, `<data root>/.space/run/mill/mill.sock`, in
-a folder only the owner can open. The lodge forwards site hosts from its one
+a folder only the owner can open. The lodge forwards app hosts from its one
 port to that socket, and says who the visitor is in IDENTITY_HEADER after
-stripping any copy the visitor sent. The Mill serves the owner only (shared
-sites come with remote access), refuses everything before opening a file, and
-answers:
+stripping any copy the visitor sent. The Mill serves the owner, or anyone on
+an app the owner shared, and answers:
 
-- GET and HEAD for files under the wolt's real `wolt/site` folder;
-- the owner's reload socket at `/_woltspace/livereload`, from the site's own
-  pages only.
+- a running app: proxied to its process on 127.0.0.1;
+- a static app: GET and HEAD for files under its real folder.
 
-If the Mill is down, the lodge answers 502 for sites and keeps serving itself.
+Wolt sites stay on the lodge at `/wolt/<name>/site/` for now.
+
+If the Mill is down, the lodge answers 502 for apps and keeps serving itself.
 """
 
 from __future__ import annotations
@@ -26,10 +26,10 @@ import socket
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import quote, urlsplit
+from urllib.parse import urlsplit
 
 from fastapi import WebSocket
-from fastapi.responses import HTMLResponse, PlainTextResponse, Response
+from fastapi.responses import HTMLResponse
 
 from .config import WOLTS_DIR
 from .app_proxy import (
@@ -40,15 +40,14 @@ from .app_proxy import (
     upstream_request_headers,
     websocket_upstream_headers,
 )
-from .content_hosts import anchored_site_root, find_wolt_dir, parse_app_host, parse_site_host
-from .site_livereload import hub as livereload_hub, serve_site_livereload
-from .site_server import LIVERELOAD_PATH, SITE_HEADERS, SiteContext, serve_site
+from .content_hosts import parse_app_host
+from .static_files import STATIC_HEADERS, StaticContext, serve_static
 
 IDENTITY_HEADER = "x-woltspace-mill-identity"
 OWNER = "owner"
-# Anyone, on an app the owner (or a wolt they asked) shared. Never a site.
+# Anyone, on an app the owner (or a wolt they asked) shared.
 PUBLIC = "public"
-_SITE_METHODS = {"GET", "HEAD"}
+_STATIC_METHODS = {"GET", "HEAD"}
 # A unix socket path must fit sockaddr_un (104 bytes on macOS, 108 on Linux).
 SOCKET_PATH_MAX = 100
 
@@ -76,8 +75,8 @@ def _log(scope, headers, status: int, reason: str) -> None:
           f"method={method} status={status} decision={reason}", file=sys.stderr, flush=True)
 
 
-def _origin_is_this_site(headers: dict[str, str]) -> bool:
-    """Origin names exactly this host and port, over http (sites are local)."""
+def _origin_is_this_app(headers: dict[str, str]) -> bool:
+    """Origin names exactly this host and port, over http (the Mill's hosts are local)."""
     try:
         origin = urlsplit(headers.get("origin", ""))
         request = urlsplit(f"//{headers.get('host', '')}")
@@ -94,27 +93,13 @@ def _origin_is_this_site(headers: dict[str, str]) -> bool:
     )
 
 
-def _old_address_redirect(scope, wolt: str) -> Response | None:
-    """A page's link to its own site's old address (`/wolt/<wolt>/site/...`) goes
-    to that page here, so pages written before sites had their own origin keep
-    working. The target stays a path on this site, whatever follows the prefix."""
-    prefix = f"/wolt/{wolt}/site"
-    path = scope.get("path", "")
-    if path != prefix and not path.startswith(prefix + "/"):
-        return None
-    target = "/" + quote(path[len(prefix):].lstrip("/\\"), safe="/")
-    if query := scope.get("query_string", b"").decode("latin-1"):
-        target += f"?{query}"
-    return Response(status_code=308, headers={**SITE_HEADERS, "location": target})
-
-
 async def _refuse(scope, receive, send, headers, status: int, reason: str, message: str, **extra):
     _log(scope, headers, status, reason)
     if scope["type"] == "websocket":
         await send({"type": "websocket.close", "code": 1008})
         return
     response = HTMLResponse(f"<h1>{message}</h1>", status_code=status,
-                            headers=dict(SITE_HEADERS, **extra))
+                            headers=dict(STATIC_HEADERS, **extra))
     await response(scope, receive, send)
 
 
@@ -124,7 +109,6 @@ async def _lifespan(receive, send):
         if message["type"] == "lifespan.startup":
             await send({"type": "lifespan.startup.complete"})
         elif message["type"] == "lifespan.shutdown":
-            await livereload_hub.shutdown()
             await send({"type": "lifespan.shutdown.complete"})
             return
 
@@ -179,60 +163,19 @@ class Mill:
             scope, receive, send, headers, status, reason, message, **extra)
 
         hosts = [v for k, v in scope.get("headers", []) if k.lower() == b"host"]
-        site = parse_site_host(headers.get("host", "")) if len(hosts) == 1 else None
-        if site is None:
-            app_host = parse_app_host(headers.get("host", "")) if len(hosts) == 1 else None
-            if app_host is not None:
-                return await self._app(scope, receive, send, headers, refuse, app_host.name)
+        app_host = parse_app_host(headers.get("host", "")) if len(hosts) == 1 else None
+        if app_host is None:
             return await refuse(404, "unknown-host", "Not found")
-        if scope["type"] == "http":
-            if scope.get("method", "GET").upper() not in _SITE_METHODS:
-                return await refuse(405, "method", "Sites are read-only", allow="GET, HEAD")
-        elif scope.get("path", "") != LIVERELOAD_PATH:
-            return await refuse(404, "no-such-socket", "Not found")
-        elif not _origin_is_this_site(headers):
-            return await refuse(403, "bad-origin", "Invalid websocket origin")
-        # A service worker would outlive the site and its access; refused
-        # whatever the script is called.
-        if "service-worker" in headers:
-            return await refuse(403, "service-worker", "Service workers are not allowed on sites")
-        if headers.get(IDENTITY_HEADER) != OWNER:
-            return await refuse(403, "not-owner", "This site is the owner's")
-
-        wolt_dir = find_wolt_dir(self.wolts_dir, site.label)
-        root = anchored_site_root(wolt_dir) if wolt_dir is not None else None
-        if root is None:
-            _log(scope, headers, 404, "unknown-site")
-            if scope["type"] == "websocket":
-                return await send({"type": "websocket.close", "code": 1008})
-            response = PlainTextResponse("Not found", status_code=404, headers=SITE_HEADERS)
-            return await response(scope, receive, send)
-
-        if scope["type"] == "http":
-            ctx = SiteContext(wolt_name=wolt_dir.name, wolt_dir=wolt_dir, root=root, owner=True)
-            response = serve_site(scope, ctx)
-            if response.status_code == 404:
-                response = _old_address_redirect(scope, wolt_dir.name) or response
-            _log(scope, headers, response.status_code, "owner")
-            return await response(scope, receive, send)
-
-        async def still_there() -> bool:
-            current = find_wolt_dir(self.wolts_dir, site.label)
-            return current is not None and anchored_site_root(current) == root
-
-        _log(scope, headers, 101, "owner")
-        await serve_site_livereload(WebSocket(scope, receive, send), str(root),
-                                    still_authorized=still_there)
-
+        return await self._app(scope, receive, send, headers, refuse, app_host.name)
 
     async def _app(self, scope, receive, send, headers, refuse, name: str):
         """An app: proxied to its process on 127.0.0.1, or a static app's files."""
         if scope["type"] == "websocket":
-            if not _origin_is_this_site(headers):
+            if not _origin_is_this_app(headers):
                 return await refuse(403, "bad-origin", "Invalid websocket origin")
         elif scope.get("method", "GET").upper() not in _READ_METHODS and (
                 headers.get("sec-fetch-site", "").lower() == "cross-site"
-                or (headers.get("origin") and not _origin_is_this_site(headers))):
+                or (headers.get("origin") and not _origin_is_this_app(headers))):
             # A browser write must come from the app's own page.
             return await refuse(403, "cross-site", "Cross-site request rejected")
         identity = headers.get(IDENTITY_HEADER)
@@ -256,14 +199,13 @@ class Mill:
         root = static_app_root(self.apps.app_dir(name))
         if scope["type"] == "websocket" or root is None:
             return await refuse(404, "no-static-root", "Not found")
-        if scope.get("method", "GET").upper() not in _SITE_METHODS:
+        if scope.get("method", "GET").upper() not in _STATIC_METHODS:
             return await refuse(405, "method", "A static app is read-only", allow="GET, HEAD")
         # A static app's folder may be a whole repository: no dotfiles (.git,
         # .env), at any depth.
         if any(part.startswith(".") for part in scope.get("path", "/").split("/") if part):
             return await refuse(404, "dotfile", "Not found")
-        ctx = SiteContext(wolt_name=name, wolt_dir=root, root=root, owner=False, hide_dotfiles=True)
-        response = serve_site(scope, ctx)
+        response = serve_static(scope, StaticContext(root=root))
         _log(scope, headers, response.status_code, "static-app")
         return await response(scope, receive, send)
 

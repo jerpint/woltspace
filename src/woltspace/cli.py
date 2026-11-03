@@ -1145,12 +1145,6 @@ def _connect(args) -> int:
                      subtitle_text="to move it, ask the owner, then run this again with --replace")
         return 1
     result = connect_cloudflare.apply(layout, connection)
-    if result["remote_sites_held_by"]:
-        lore.warn("sites through the tunnel stay off: rename these apps first, the name is reserved: "
-                  + ", ".join(result["remote_sites_held_by"]))
-    elif not result["remote_sites"]:
-        lore.warn("sites through the tunnel stay off: turn them on once you know no app ever used a site- name "
-                  "on this domain (docs/mill.md)")
     import urllib.error
     import urllib.request
     try:

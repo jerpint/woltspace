@@ -8,9 +8,9 @@ the lodge or the Mill depends on which way a request came:
 1. `lodge_hosts()`: the names this way gives the lodge itself, whose requests
    go to the lodge's routes. With lodge auth on, they need a key, a paired
    browser, or this way's proof of the owner.
-2. `content_host(host)`: whether a Host names a wolt's site or an app through
-   this way, as a `PublicHost`. Each site and app must get an authority (host
-   and port) of its own, so each keeps its own origin.
+2. `content_host(host)`: whether a Host names an app through this way, as a
+   `PublicHost`. Each app must get an authority (host and port) of its own,
+   so each keeps its own origin.
 3. `owner(headers, scope)`: whether this request is the owner, proven this
    way's own way. Return a `Visitor`, or None for anyone else. Only "owner"
    exists today; a shared app lets anyone else in as "public" whatever the
@@ -20,8 +20,11 @@ the lodge or the Mill depends on which way a request came:
    request and whichever way it came, so nobody can forge them to an app.
 
 `public_base(lodge_host, kind, name)` says where a browser that reached the
-lodge at `lodge_host` through this way opens a site or app (for `/sites/open`
-and `/apps/open`), or None when `lodge_host` isn't this way's.
+lodge at `lodge_host` through this way opens an app (for `/apps/open`), or
+None when `lodge_host` isn't this way's.
+
+Wolt sites aren't content hosts: they stay on the lodge at `/wolt/<name>/site/`,
+so through a way in they're the lodge's own pages.
 
 Ways in are the built-ins below plus any installed package that declares an
 entry point in the `woltspace.ways_in` group, whose object is a way in (or a
@@ -38,8 +41,8 @@ from typing import Protocol
 
 @dataclass(frozen=True)
 class PublicHost:
-    kind: str        # "site" or "app"
-    name: str        # the wolt, for a site; the app's name, for an app
+    kind: str        # "app" (the only kind so far)
+    name: str        # the app's name
     authority: str   # the public host[:port], as the browser sends it
 
 
@@ -68,9 +71,9 @@ def _split(host_header: str):
 
 
 class CloudflareAccess:
-    """Cloudflare: the lodge at the tunnel's host, sites at
-    `site-<wolt>.<domain>` and apps at `<app>.<domain>`, and Cloudflare
-    Access's token, checked for the apps' audience and the owner's email."""
+    """Cloudflare: the lodge at the tunnel's host, apps at `<app>.<domain>`,
+    and Cloudflare Access's token, checked for the apps' audience and the
+    owner's email."""
 
     name = "cloudflare"
     credential_headers = frozenset({
@@ -96,7 +99,7 @@ class CloudflareAccess:
         return {h for h in hosts if h}
 
     def content_host(self, host_header: str) -> PublicHost | None:
-        from .content_hosts import parse_app_host, parse_site_host
+        from .content_hosts import parse_app_host
         split = _split(host_header)
         tunnel = self._tunnel()
         domain = tunnel.get_tunnel_domain().lower().rstrip(".")
@@ -106,11 +109,6 @@ class CloudflareAccess:
         if host == tunnel.get_tunnel_hostname().lower().rstrip(".") or not host.endswith(f".{domain}"):
             return None
         label = host.removesuffix(f".{domain}")
-        if label.startswith("site-"):
-            wolt = label.removeprefix("site-")
-            if parse_site_host(f"{wolt}.sites.localhost") is None:
-                return None
-            return PublicHost("site", wolt, host)
         if parse_app_host(f"{label}.localhost") is None:
             return None
         return PublicHost("app", label, host)
@@ -143,7 +141,7 @@ class CloudflareAccess:
         tunnel = self._tunnel()
         domain = tunnel.get_tunnel_domain().lower().rstrip(".")
         if lodge_host and domain and lodge_host == tunnel.get_tunnel_hostname().lower().rstrip("."):
-            return f"https://{'site-' + name if kind == 'site' else name}.{domain}"
+            return f"https://{name}.{domain}" if kind == "app" else None
         return None
 
 
@@ -224,7 +222,7 @@ def content_host(host_header: str):
     """(way, PublicHost) for the first way in that claims this host, or (None, None)."""
     for way in all_ways():
         public = _ask(way, "content_host", host_header)
-        if isinstance(public, PublicHost) and public.kind in ("site", "app"):
+        if isinstance(public, PublicHost) and public.kind == "app":
             return way, public
     return None, None
 

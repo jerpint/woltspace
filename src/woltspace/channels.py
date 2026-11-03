@@ -528,9 +528,9 @@ def _registry(layout: RuntimeLayout | None = None):
 
 
 class MillConnector:
-    """The Mill: wolt sites on origins of their own, on a unix socket.
+    """The Mill: apps on origins of their own, on a unix socket.
 
-    The lodge forwards `<wolt>.sites.localhost` to it. It never listens on a
+    The lodge forwards `<app>.localhost` to it. It never listens on a
     TCP port, so nothing but the lodge (and later the lodge's own ways in)
     reaches it.
     """
@@ -563,11 +563,11 @@ class MillConnector:
         return ConnectorPlan(
             name=self.name,
             enabled=True,
-            detail=f"wolt sites on {socket}",
+            detail=f"apps on {socket}",
             command=(sys.executable, "-m", "server.mill", "--socket", str(socket)),
             cwd=str(layout.install_root),
             env=child_env,
-            remedy="Wolt sites are down without it; the lodge itself still runs.",
+            remedy="Apps are down without it; the lodge itself still runs.",
             process_signature=("-m", "server.mill"),
         )
 

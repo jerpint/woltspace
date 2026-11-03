@@ -459,21 +459,6 @@ def _app_tunnels_check(layout: RuntimeLayout) -> DoctorCheck | None:
     )
 
 
-def _wolt_sites_check(layout: RuntimeLayout) -> DoctorCheck | None:
-    """A wolt's site needs a name that fits in a host; say which ones don't."""
-    import re
-    names = sorted(p.parent.parent.name for p in layout.wolts_dir.glob("*/wolt/site") if p.is_dir())
-    bad = [name for name in names if not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", name.lower())]
-    labels = [name.lower() for name in names]
-    bad += [name for name in names if labels.count(name.lower()) > 1 and name not in bad]
-    if not bad:
-        return None
-    return DoctorCheck(
-        "wolt-sites", "warn", f"these wolts' sites have no address: {', '.join(bad)}",
-        "A site's address is the wolt's name: only letters, digits and dashes, unique ignoring case.",
-    )
-
-
 def _shared_apps_check(layout: RuntimeLayout) -> DoctorCheck | None:
     """Apps anyone with the link can use: shown every time, so a share is never forgotten."""
     try:
@@ -557,7 +542,7 @@ def _access_settings_problem(raw) -> str:
 
 
 def _remote_apps_check(layout: RuntimeLayout) -> DoctorCheck | None:
-    """Apps and sites through a tunnel need Access settings the lodge accepts."""
+    """Apps through a tunnel need Access settings the lodge accepts."""
     import json
     if not _tunnel_url(layout):
         return None
@@ -571,7 +556,7 @@ def _remote_apps_check(layout: RuntimeLayout) -> DoctorCheck | None:
         return DoctorCheck("remote-apps", "pass", "Access settings for apps through the tunnel")
     return DoctorCheck(
         "remote-apps", "warn",
-        f"apps and wolt sites through the tunnel are refused: {problem}",
+        f"apps through the tunnel are refused: {problem}",
         'Set "ways_in": {"cloudflare": {...}} in woltspace.json (team_domain, apps_aud, owner_email), with an '
         "Access application covering *.<your domain>; see container/migrations/v0.6.0.md.",
     )
@@ -693,7 +678,7 @@ def run_doctor(
             f"{layout.host}:{layout.port} is {'available' if available else 'already in use'}",
             "Stop the existing service or choose --port <free-port>." if not available else "",
         ))
-    for extra in (_apps_check(layout), _wolt_sites_check(layout), _remote_apps_check(layout), _app_tunnels_check(layout),
+    for extra in (_apps_check(layout), _remote_apps_check(layout), _app_tunnels_check(layout),
                   _shared_apps_check(layout)):
         if extra is not None:
             checks.append(extra)

@@ -40,7 +40,7 @@ ACCESS_COOKIES = frozenset({"CF_Authorization", "CF_AppSession"})
 # The lodge's own credentials (container/lib/lodge_auth.py): a paired
 # browser's cookies and a lodge key. An app or tool never sees them, and can't
 # set those cookies either.
-LODGE_COOKIES = frozenset({"woltspace-lodge", "__Host-woltspace-lodge", "woltspace-site"})
+LODGE_COOKIES = frozenset({"woltspace-lodge", "__Host-woltspace-lodge", "woltspace-app"})
 PRIVATE_COOKIES = ACCESS_COOKIES | LODGE_COOKIES
 
 

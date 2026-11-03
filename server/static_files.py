@@ -1,15 +1,11 @@
-"""Static file serving for a wolt's site on its own origin, in the Mill.
+"""Static file serving for a static app on its own origin, in the Mill.
 
-The Mill has already decided that the visitor may see this site. This module
-only turns a request into bytes from the site's canonical root. The reserved
-`/_woltspace/` namespace holds the owner's reload socket (site_livereload)
-and nothing a site contains can shadow it, so a site file named `settings` is
-a file named settings.
+The Mill has already decided that the visitor may see this app. This module
+only turns a request into bytes from the app's canonical root.
 
 Every response carries the same policy headers: `nosniff`, the response
-sandbox (`allow-same-origin` is this site's own origin, so fetch, storage and
-its reload socket work), and `private, no-store`, so a revoked share leaves
-nothing in a cache.
+sandbox (`allow-same-origin` is the app's own origin, so fetch and storage
+work), and `private, no-store`, so a revoked share leaves nothing in a cache.
 """
 
 from __future__ import annotations
@@ -24,12 +20,9 @@ from urllib.parse import unquote_to_bytes
 
 from fastapi.responses import PlainTextResponse, RedirectResponse, Response, StreamingResponse
 
-RESERVED_PREFIX = "/_woltspace"
-LIVERELOAD_PATH = "/_woltspace/livereload"
-
-SITE_HEADERS = {
+STATIC_HEADERS = {
     "x-content-type-options": "nosniff",
-    # The site's own origin, with what ordinary pages need: forms, new tabs,
+    # The app's own origin, with what ordinary pages need: forms, new tabs,
     # dialogs and downloads. Its script still can't reach the lodge's origin.
     "content-security-policy": (
         "sandbox allow-scripts allow-same-origin allow-forms allow-popups "
@@ -38,37 +31,22 @@ SITE_HEADERS = {
     "cache-control": "private, no-store",
 }
 
-# An HTML page bigger than this is served as-is, without the reload client.
-HTML_INJECT_MAX = 4 * 1024 * 1024
 _CHUNK = 64 * 1024
-
-# Owner only: reconnects with backoff, reloads on the one event the server
-# sends. Sent to nobody else, so a shared viewer's page never opens a socket.
-RELOAD_CLIENT = (
-    '<script>(function(){var p=location.protocol==="https:"?"wss:":"ws:",d=1000;'
-    'function c(){var ws=new WebSocket(p+"//"+location.host+"' + LIVERELOAD_PATH + '");'
-    'ws.onopen=function(){d=1000};'
-    'ws.onmessage=function(e){try{if(JSON.parse(e.data).type==="reload")location.reload()}catch(_){}};'
-    'ws.onclose=function(){setTimeout(c,d);d=Math.min(d*2,30000)}}c()})()</script>'
-)
 
 
 @dataclass(frozen=True)
-class SiteContext:
-    wolt_name: str      # the wolt's directory name
-    wolt_dir: Path
-    root: Path          # canonical site root (realpath, anchored)
-    owner: bool
+class StaticContext:
+    root: Path          # canonical root (realpath, anchored)
     # A static app's folder may be a whole repository: nothing whose real
     # path, under the root, has a dot-named part (.git, .env) is served,
     # however the request reached it (a symlink included).
-    hide_dotfiles: bool = False
+    hide_dotfiles: bool = True
 
 
 _ENCODED_SEPARATOR = re.compile(rb"%(?:2f|5c)", re.I)
 
 
-def split_site_path(raw_path: bytes) -> tuple[list[str], bool] | None:
+def split_static_path(raw_path: bytes) -> tuple[list[str], bool] | None:
     """Percent-decode a request target into path segments.
 
     Returns (segments, trailing_slash), or None when the target cannot name a
@@ -104,7 +82,7 @@ def resolve_in_root(root: Path, segments: list[str]) -> str | None:
 
 
 def _with_policy(response: Response) -> Response:
-    for key, value in SITE_HEADERS.items():
+    for key, value in STATIC_HEADERS.items():
         response.headers[key] = value
     return response
 
@@ -180,7 +158,7 @@ def _file_response(scope, realpath: str, *, media_type: str | None = None) -> Re
         for key, value in scope.get("headers", [])
     }
     etag = f'W/"{st.st_mtime_ns:x}-{st.st_size:x}"'
-    base = dict(SITE_HEADERS, etag=etag, **{"accept-ranges": "bytes"})
+    base = dict(STATIC_HEADERS, etag=etag, **{"accept-ranges": "bytes"})
     if headers.get("if-none-match", "").strip() == etag:
         os.close(fd)
         return Response(status_code=304, headers=base)
@@ -218,41 +196,13 @@ def _file_response(scope, realpath: str, *, media_type: str | None = None) -> Re
     return StreamingResponse(body(), status_code=status, headers=base, media_type=media)
 
 
-def _html_response(scope, realpath: str, ctx: SiteContext) -> Response:
-    opened = _open_regular(realpath)
-    if opened is None:
-        return not_found()
-    fd, st = opened
-    if st.st_size > HTML_INJECT_MAX:
-        os.close(fd)
-        return _file_response(scope, realpath, media_type="text/html; charset=utf-8")
-    try:
-        with os.fdopen(fd, "rb") as handle:
-            raw = handle.read()
-    except OSError:
-        return not_found()
-    text = raw.decode("utf-8", errors="replace")
-    if ctx.owner:
-        idx = text.lower().rfind("</body>")
-        text = text + RELOAD_CLIENT if idx == -1 else text[:idx] + RELOAD_CLIENT + text[idx:]
-    body = text.encode("utf-8")
-    response = Response(
-        b"" if scope.get("method", "GET").upper() == "HEAD" else body,
-        media_type="text/html; charset=utf-8",
-        headers=dict(SITE_HEADERS, **{"content-length": str(len(body))}),
-    )
-    return response
-
-
-def serve_site(scope, ctx: SiteContext) -> Response:
-    """Answer a GET/HEAD for a site file; the caller has done every check."""
+def serve_static(scope, ctx: StaticContext) -> Response:
+    """Answer a GET/HEAD for a file; the caller has done every check."""
     raw_path = scope.get("raw_path") or scope.get("path", "/").encode("utf-8")
-    parsed = split_site_path(raw_path)
+    parsed = split_static_path(raw_path)
     if parsed is None:
         return not_found()
     segments, trailing = parsed
-    if segments and segments[0] == RESERVED_PREFIX[1:]:
-        return not_found()  # the reload socket is the namespace's only member
     target = resolve_in_root(ctx.root, segments)
     if target is None:
         return not_found()
@@ -282,6 +232,4 @@ def serve_site(scope, ctx: SiteContext) -> Response:
     if ctx.hide_dotfiles and any(
             part.startswith(".") for part in Path(os.path.relpath(target, ctx.root)).parts):
         return not_found()
-    if target.lower().endswith((".html", ".htm")):
-        return _html_response(scope, target, ctx)
     return _file_response(scope, target)
