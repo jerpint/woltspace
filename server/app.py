@@ -2788,6 +2788,7 @@ def _sharing_upkeep() -> None:
         try:
             app_sharing.settle_retired(WOLTS_DIR, PORT)
             app_sharing.sweep_orphans(WOLTS_DIR, PORT)
+            app_sharing.revive_dropped(WOLTS_DIR, PORT)
         except Exception as exc:
             print(f"[sharing] upkeep failed: {type(exc).__name__}: {exc}")
 

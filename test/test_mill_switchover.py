@@ -793,6 +793,26 @@ def test_restore_never_overwrites_a_newer_share(lodge):
     assert 102 in tunnels.stopped        # restore's stale tunnel
 
 
+def test_a_tunnel_that_drops_while_the_lodge_runs_gets_one_new_launch(tmp_path):
+    tunnels = _Tunnels(alive=True)
+    _share(tmp_path, "board", tunnels=tunnels)
+    _share(tmp_path, "notes", tunnels=tunnels)
+    tunnels.stopped.append(102)          # notes' tunnel exited
+    actions = app_sharing.revive_dropped(tmp_path, 7777, start=tunnels.start, stop=tunnels.stop,
+                                         is_ours=tunnels.is_ours)
+    assert actions == [{"name": "notes", "action": "restarted", "tunnel_url": TUNNEL}]
+    assert app_sharing.shared(tmp_path, "notes")["tunnel_pid"] == 103
+
+    def fails(**_kw):
+        raise RuntimeError("no cloudflared")
+    tunnels.stopped.append(103)          # and again, with no cloudflared to start
+    app_sharing.revive_dropped(tmp_path, 7777, start=fails, stop=tunnels.stop, is_ours=tunnels.is_ours)
+    notes = app_sharing.shared(tmp_path, "notes")
+    assert notes["tunnel_url"] is None and notes["tunnel_pid"] is None   # no dead link listed
+    assert app_sharing.revive_dropped(tmp_path, 7777, start=fails, stop=tunnels.stop,
+                                      is_ours=tunnels.is_ours) == []      # nothing retried until boot
+
+
 def test_restore_keeps_a_live_tunnel_and_restarts_a_dead_one(tmp_path):
     tunnels = _Tunnels(alive=True)
     _share(tmp_path, "board", tunnels=tunnels)

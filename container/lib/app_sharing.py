@@ -664,6 +664,20 @@ def restore(wolts_dir, lodge_port: int, *, start=None, stop=None, is_ours=None,
     return actions
 
 
+def revive_dropped(wolts_dir, lodge_port: int, *, start=None, stop=None, is_ours=None) -> list[dict]:
+    """While the lodge runs: a share whose quick tunnel was running and has
+    since exited gets one new launch (its address changes). If that fails too,
+    the share keeps no dead address, and the next boot tries again."""
+    start, stop = start or start_cloudflared, stop or stop_cloudflared
+    is_ours = is_ours or is_sharing_tunnel
+    actions = []
+    for name, record in all_shared(wolts_dir).items():
+        token, pid = record.get("token", ""), record.get("tunnel_pid")
+        if pid and not is_ours(pid, name, lodge_port, token):
+            actions.append(_relaunch(wolts_dir, name, token, lodge_port, start=start, stop=stop, is_ours=is_ours))
+    return actions
+
+
 def stuck_tunnels(wolts_dir, lodge_port: int, *, is_ours=None) -> list[dict]:
     """Retired tunnels still running (for `woltspace doctor`)."""
     is_ours = is_ours or is_sharing_tunnel
