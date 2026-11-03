@@ -1,4 +1,6 @@
-"""Tests for wolt sites — direct serving (container/lib/sites.py + /wolt/{name}/site route)."""
+"""Tests for wolt sites: the site folder (container/lib/sites.py) and the old
+address, which redirects to the site's own origin (served by the Mill;
+serving and traversal are tested in test_mill.py)."""
 
 import json
 import sys
@@ -65,88 +67,29 @@ class TestEnsureSite:
         assert "newwolt" in (sdir / "index.html").read_text()
 
 
-class TestServeSite:
-    def test_serves_index(self, client):
-        resp = client.get("/wolt/testwolt/site/")
-        assert resp.status_code == 200
-        assert "<h1>test</h1>" in resp.text
-
-    def test_injects_livereload_script(self, client):
-        resp = client.get("/wolt/testwolt/site/")
-        assert "/wolt/testwolt/site/livereload" in resp.text
-        # Injected before </body>, not appended after </html>
-        assert resp.text.index("livereload") < resp.text.index("</body>")
-
-    def test_serves_nested_page(self, client):
-        resp = client.get("/wolt/testwolt/site/sub/page.html")
-        assert resp.status_code == 200
-        assert "sub page" in resp.text
-
-    def test_serves_asset_without_injection(self, client):
-        resp = client.get("/wolt/testwolt/site/style.css")
-        assert resp.status_code == 200
-        assert "text/css" in resp.headers["content-type"]
-        assert "livereload" not in resp.text
-
-    def test_directory_redirects_to_trailing_slash(self, client):
-        """Relative links inside sub/index.html need the canonical dir URL."""
-        (sites.site_dir("testwolt") / "sub" / "index.html").write_text("<h1>sub index</h1>")
-        resp = client.get("/wolt/testwolt/site/sub", follow_redirects=False)
-        assert resp.status_code == 308
-        assert resp.headers["location"] == "/wolt/testwolt/site/sub/"
-
-    def test_asset_not_cached(self, client):
-        """Livereload's location.reload() must refetch edited assets."""
-        resp = client.get("/wolt/testwolt/site/style.css")
-        assert "no-cache" in resp.headers["cache-control"]
-
-    def test_head_request(self, client):
-        resp = client.head("/wolt/testwolt/site/style.css")
-        assert resp.status_code == 200
-
-    def test_missing_file_404(self, client):
-        assert client.get("/wolt/testwolt/site/nope.html").status_code == 404
-
-    def test_unknown_wolt_404_self_refreshes(self, client):
-        """Viewport can load the URL before the wolt dir exists (boot race)."""
-        resp = client.get("/wolt/ghost/site/")
-        assert resp.status_code == 404
-        assert "location.reload" in resp.text
+class TestOldAddress:
+    @pytest.mark.parametrize("path,target", [
+        ("/wolt/testwolt/site/", "/sites/open?wolt=testwolt&path=/"),
+        ("/wolt/testwolt/site/sub/page.html", "/sites/open?wolt=testwolt&path=/sub/page.html"),
+        ("/wolt/TestWolt/site/style.css", "/sites/open?wolt=testwolt&path=/style.css"),
+    ])
+    def test_redirects_to_the_sites_own_origin(self, client, path, target):
+        resp = client.get(path, follow_redirects=False)
+        assert resp.status_code == 303 and resp.headers["location"] == target
+        assert "<" not in resp.text  # serves nothing of the site itself
 
     def test_read_does_not_scaffold_a_missing_site(self, client, tmp_wolts):
-        wolt = tmp_wolts / "freshwolt" / "wolt"
-        wolt.mkdir(parents=True)
-        (wolt / "wolt.json").write_text(json.dumps({"name": "freshwolt", "type": "otter"}))
-        resp = client.get("/wolt/freshwolt/site/")
-        assert resp.status_code == 404
-        assert not (wolt / "site").exists()
-
-
-class TestPathTraversal:
-    def test_dotdot_is_blocked(self, client):
-        resp = client.get("/wolt/testwolt/site/%2e%2e/memory/identity.md")
-        assert resp.status_code == 404
-        assert "SECRET" not in resp.text
-
-    def test_encoded_traversal_to_root_blocked(self, client):
-        resp = client.get("/wolt/testwolt/site/%2e%2e/%2e%2e/%2e%2e/%2e%2e/etc/passwd")
-        assert resp.status_code == 404
-
-    def test_symlink_escape_blocked(self, client, tmp_wolts):
-        site = tmp_wolts / "testwolt" / "wolt" / "site"
-        (site / "sneaky.md").symlink_to(tmp_wolts / "testwolt" / "wolt" / "memory" / "identity.md")
-        resp = client.get("/wolt/testwolt/site/sneaky.md")
-        assert resp.status_code == 404
-        assert "SECRET" not in resp.text
+        client.get("/wolt/freshwolt/site/", follow_redirects=False)
+        assert not (tmp_wolts / "freshwolt" / "wolt" / "site").exists()
 
 
 class TestSitesApi:
     def test_lists_wolts_with_sites(self, client):
         resp = client.get("/sites")
         assert resp.status_code == 200
-        assert {"wolt": "testwolt", "url": "/wolt/testwolt/site/"} in resp.json()
+        assert {"wolt": "testwolt", "url": "/sites/open?wolt=testwolt&path=/"} in resp.json()
 
     def test_site_detail(self, client):
         resp = client.get("/sites/testwolt")
         assert resp.json()["dir_exists"] is True
-        assert resp.json()["url"] == "/wolt/testwolt/site/"
+        assert resp.json()["url"] == "/sites/open?wolt=testwolt&path=/"

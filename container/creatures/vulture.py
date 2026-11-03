@@ -42,6 +42,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from env_compat import get_env
+import lodge_auth
 from sessions import (
     SessionRegistry, claim_resume_id, recover_resume_id, stamp_resume_id,
     still_as_seen, stop_and_settle, stored_resume_id, taken_resume_ids,
@@ -87,7 +88,8 @@ def _send_notify(message: str):
             ["curl", "-s", "-X", "POST",
              os.environ.get("WOLTSPACE_API", "http://localhost:7777") + "/notify",
              "-H", "Content-Type: application/json",
-             "-d", payload],
+             "-d", payload, "-K", "-"],
+            input=lodge_auth.curl_config(),
             capture_output=True, text=True, timeout=10,
         )
         resp = json.loads(result.stdout) if result.stdout else {}
@@ -142,6 +144,7 @@ def _rest_via_api(session_name: str, idle_since: int) -> bool:
         data=json.dumps({"idle_since": idle_since}).encode(), method="POST",
         headers={"Content-Type": "application/json"},
     )
+    lodge_auth.sign(req)
     try:
         with urlrequest.urlopen(req, timeout=15) as response:
             return 200 <= response.status < 300

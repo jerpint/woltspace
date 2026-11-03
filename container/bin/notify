@@ -12,6 +12,7 @@ import sys
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+import lodge_auth  # noqa: E402
 import outbox  # noqa: E402
 import voice_notes  # noqa: E402
 from creature_types import emoji_from  # noqa: E402
@@ -278,7 +279,10 @@ def main(argv: list[str] | None = None) -> int:
             "Content-Type: application/json",
             "-d",
             json.dumps(payload),
+            "-K",
+            "-",
         ],
+        input=lodge_auth.curl_config(),
         capture_output=True,
         text=True,
         check=False,
