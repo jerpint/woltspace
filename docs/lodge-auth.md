@@ -94,7 +94,7 @@ With lodge auth off there's no grant: the lodge opens a local app for a visitor 
 
 With lodge auth on, your login through a way in opens the lodge, so a phone doesn't need pairing. It works only on that way's own lodge host, and a login is something a browser sends by itself, so a write or socket must also carry `Origin` exactly `https://<the lodge's host>`.
 
-**One limit:** with two Access applications, the lodge's token has a different audience from `apps_aud`. It isn't accepted, and that browser pairs instead.
+**Two Access applications:** if the lodge has an Access application of its own, put its AUD in `ways_in.cloudflare.lodge_aud`. The lodge's host then accepts that audience, and app hosts keep accepting `apps_aud` only.
 
 ## What to watch for
 

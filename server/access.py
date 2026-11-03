@@ -9,10 +9,12 @@ Settings live in woltspace.json:
     "ways_in": {"cloudflare": {
         "team_domain": "<team>.cloudflareaccess.com",
         "apps_aud": "<the AUD of the Access app covering *.<domain>>",
-        "owner_email": "<the owner's email>"}}
+        "owner_email": "<the owner's email>",
+        "lodge_aud": "<optional: the AUD of the lodge's own Access app>"}}
 
 One Access application can cover both the lodge and its apps, or the lodge can
-have its own. Without settings, nothing through the tunnel reaches an app.
+have its own: then `lodge_aud` is its AUD, and the lodge's host accepts that
+audience instead of `apps_aud`. Without settings, nothing through the tunnel reaches an app.
 """
 
 from __future__ import annotations
@@ -41,6 +43,10 @@ class AccessSettings:
     team_domain: str
     apps_aud: str
     owner_email: str
+    lodge_aud: str = ""  # the lodge's own Access app, if it has one
+
+    def audience_for(self, lodge: bool) -> str:
+        return self.lodge_aud if lodge and self.lodge_aud else self.apps_aud
 
 
 def access_settings_dict(settings: AccessSettings | None) -> dict | None:
@@ -103,7 +109,7 @@ def _load_access_settings_uncached(wolts_dir: Path) -> AccessSettings | None:
         raise RuntimeError("woltspace.json access settings are invalid") from exc
 
 
-# `lodge_aud`, from earlier settings, is accepted and ignored.
+# `lodge_aud` is optional: only a lodge with an Access app of its own has one.
 _ACCESS_KEYS = {"team_domain", "apps_aud", "owner_email"}
 
 
@@ -113,6 +119,7 @@ def validate_access_settings(raw: object) -> AccessSettings:
     team_domain = str(raw["team_domain"]).strip().lower().rstrip(".")
     apps_aud = str(raw["apps_aud"]).strip()
     owner_email = str(raw["owner_email"]).strip().lower()
+    lodge_aud = str(raw.get("lodge_aud") or "").strip()
     if (not _DOMAIN_RE.fullmatch(team_domain) or "." not in team_domain
             or ".." in team_domain):
         raise ValueError("team_domain must be a domain name without a scheme, path, or port")
@@ -120,7 +127,9 @@ def validate_access_settings(raw: object) -> AccessSettings:
         raise ValueError("apps_aud must be a non-empty Access audience")
     if not _EMAIL_RE.fullmatch(owner_email):
         raise ValueError("owner_email must be an email address")
-    return AccessSettings(team_domain, apps_aud, owner_email)
+    if len(lodge_aud) > 512:
+        raise ValueError("lodge_aud must be an Access audience")
+    return AccessSettings(team_domain, apps_aud, owner_email, lodge_aud)
 
 
 class AccessTokenVerifier:

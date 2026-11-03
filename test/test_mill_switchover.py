@@ -1384,3 +1384,29 @@ def test_a_broken_way_in_opens_nothing(lodge_auth_on, monkeypatch):
     monkeypatch.setattr(ways_in.named("cloudflare"), "owner", broken, raising=False)
     client = _through_tunnel(LODGE_HOST)
     assert client.get("/tunnel", headers={"cf-access-jwt-assertion": "good"}).status_code == 401
+
+
+def test_a_lodge_with_its_own_access_app_opens_for_that_apps_token(lodge_auth_on, monkeypatch):
+    """Two Access applications: the lodge's host takes the lodge's audience,
+    an app's host takes the apps' one, and neither takes the other's."""
+    two = AccessSettings("team.cloudflareaccess.com", "apps-aud", "owner@example.com", "lodge-aud")
+    monkeypatch.setattr(access, "load_access_settings", lambda root: two)
+
+    async def verify(token, settings, audience):
+        if token == f"good-for-{audience}":
+            return {"email": "owner@example.com", "exp": time.time() + 600}
+        raise ValueError("bad token")
+    monkeypatch.setattr(access.access_token_verifier, "verify", verify)
+    lodge = _through_tunnel(LODGE_HOST)
+    assert lodge.get("/tunnel", headers={"cf-access-jwt-assertion": "good-for-lodge-aud"}).status_code == 200
+    assert lodge.get("/tunnel", headers={"cf-access-jwt-assertion": "good-for-apps-aud"}).status_code == 401
+    app = _through_tunnel(f"board.{DOMAIN}")
+    assert app.get("/", headers={"cf-access-jwt-assertion": "good-for-apps-aud"}).text == "board says hi"
+    assert app.get("/", headers={"cf-access-jwt-assertion": "good-for-lodge-aud"}).status_code in (401, 403)
+
+
+def test_lodge_aud_is_kept_and_optional():
+    raw = {"team_domain": "t.cloudflareaccess.com", "apps_aud": "b", "owner_email": "o@example.com"}
+    assert access.validate_access_settings(raw).audience_for(lodge=True) == "b"
+    with_lodge = access.validate_access_settings({**raw, "lodge_aud": "a"})
+    assert with_lodge.audience_for(lodge=True) == "a" and with_lodge.audience_for(lodge=False) == "b"

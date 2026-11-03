@@ -115,8 +115,9 @@ class CloudflareAccess:
 
     async def owner(self, headers: dict[str, str], scope: dict) -> Visitor | None:
         """Cloudflare Access let the visitor in; the lodge checks the token it
-        attached (signature, audience, issuer, expiry) against the apps'
-        audience and the owner's email. Without Access settings, nobody."""
+        attached (signature, audience, issuer, expiry) against the owner's
+        email and the audience of the Access app in front of this host: the
+        lodge's own if it has one, else the apps'. Without settings, nobody."""
         from pathlib import Path
 
         from . import access
@@ -129,7 +130,10 @@ class CloudflareAccess:
         if settings is None or not token:
             return None
         try:
-            claims = await access.access_token_verifier.verify(token, settings, settings.apps_aud)
+            from .content_hosts import split_host
+            host = (split_host(headers.get("host", "")) or ("", None))[0]
+            audience = settings.audience_for(host in self.lodge_hosts())
+            claims = await access.access_token_verifier.verify(token, settings, audience)
         except Exception:
             return None
         if str(claims.get("email") or "").strip().lower() != settings.owner_email:
