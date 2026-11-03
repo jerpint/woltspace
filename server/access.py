@@ -133,12 +133,24 @@ def validate_access_settings(raw: object) -> AccessSettings:
 
 
 class AccessTokenVerifier:
-    def __init__(self, ttl_seconds: int = 3600, forced_refresh_interval: int = 60):
+    """Cloudflare's signing keys, cached for an hour.
+
+    If Cloudflare's certs can't be fetched, the last good keys stay in use (for
+    at most `stale_limit` seconds past their hour) and the next try waits
+    `retry_seconds`, so an outage doesn't hold every request for the fetch's
+    timeout. With no good keys at all, requests fail at once until then."""
+
+    def __init__(self, ttl_seconds: int = 3600, forced_refresh_interval: int = 60,
+                 retry_seconds: int = 60, stale_limit: int = 24 * 3600):
         self.ttl_seconds = ttl_seconds
         self.forced_refresh_interval = forced_refresh_interval
+        self.retry_seconds = retry_seconds
+        self.stale_limit = stale_limit
         self._team_domain = ""
         self._keys: dict[str, object] = {}
         self._expires_at = 0.0
+        self._fresh_until = 0.0  # end of the last good fetch's hour
+        self._down_team, self._down_until = "", 0.0
         self._last_forced_at = 0.0
         self._lock = asyncio.Lock()
 
@@ -155,8 +167,26 @@ class AccessTokenVerifier:
             raise jwt.InvalidTokenError("Access certificate response contained no keys")
         self._team_domain = team_domain
         self._keys = keys
-        self._expires_at = time.monotonic() + self.ttl_seconds
+        self._expires_at = self._fresh_until = time.monotonic() + self.ttl_seconds
+        self._down_team, self._down_until = "", 0.0
         return keys
+
+    async def _refresh_or_last(self, team_domain: str) -> dict[str, object]:
+        now = time.monotonic()
+        usable = (self._team_domain == team_domain and self._keys
+                  and now < self._fresh_until + self.stale_limit)
+        if self._down_team == team_domain and now < self._down_until:
+            if usable:
+                return self._keys
+            raise jwt.InvalidTokenError("Access certificates unavailable")
+        try:
+            return await self._refresh(team_domain)
+        except Exception:
+            self._down_team, self._down_until = team_domain, now + self.retry_seconds
+            if usable:
+                self._expires_at = self._down_until
+                return self._keys
+            raise
 
     async def _get_keys(self, team_domain: str, force: bool = False) -> dict[str, object]:
         if (not force and self._team_domain == team_domain and self._keys
@@ -172,7 +202,7 @@ class AccessTokenVerifier:
                 return self._keys
             if force:
                 self._last_forced_at = now
-            return await self._refresh(team_domain)
+            return await self._refresh_or_last(team_domain)
 
     async def verify(self, token: str, settings: AccessSettings, audience: str) -> dict:
         try:
