@@ -47,7 +47,7 @@ SESSIONS = [
     {"name": "ots-cedar-c3d4e5", "alive": False, "status": "stopped", "last_activity": NOW - 3600},
 ]
 APPS = [
-    {"name": "blog", "emoji": "📝", "running": True, "tunnel_url": "https://blog.example"},
+    {"name": "blog", "emoji": "📝", "running": True, "shared": {"domain_url": "https://blog.example"}},
     {"name": "wiki", "emoji": None, "running": True, "tunnel_url": None},
     {"name": "game", "emoji": "🎮", "running": False},
 ]
