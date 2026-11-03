@@ -139,7 +139,7 @@ by the platform runtime.
 | `WOLTSPACE_INIT_WOLT_NAME` | Which wolt a fresh non-interactive `init` should **create**. A different question from `WOLTSPACE_WOLT_NAME`, which names the wolt a shell already belongs to — see the note below. | the host launcher | unset (the lodge asks) |
 | `WOLTSPACE_BRANCH` | Build arg naming the branch the image installs from. | `container/Dockerfile` | `main` |
 | `WOLTSPACE_PYPI_VERSION` | Build arg: the `woltspace` version the image installs. | `container/Dockerfile` | the release being built |
-| `WOLTSPACE_TUI_VERSION` | Build arg: the `@woltspace/tui` version the image installs. The tui declares the minimum `woltspace` version it needs; woltspace does not check the tui's version, so the two are installed and upgraded on their own. | `container/Dockerfile` | `latest` |
+| `WOLTSPACE_TUI_VERSION` | Build arg: the `@woltspace/tui` version the image installs. The tui declares the minimum `woltspace` version it needs; woltspace does not check the tui's version, so the two are installed and upgraded on their own. | `container/Dockerfile` | the release being built |
 | `WOLTSPACE_NODE_SUDO` | Build arg: `false` builds an image where `node` cannot become root (no sudoers rule, no `sudo`). A session can then no longer `apt-get install`, nor install into the root-owned global npm/uv dirs; bake such tools into the image. The launcher passes it through from the launching shell on every build, so set it for every `build` and `rebuild`. The image records the value as the label `woltspace.node_sudo`; when it says `false`, the launcher runs the container with `--security-opt no-new-privileges`, so no setuid binary can raise a process's privileges either. | `container/Dockerfile`, the host launcher | `true` |
 | `WOLTSPACE_CLAUDE_MANAGED_SETTINGS` | Build arg: a path inside the build context (the checkout for `--local`, `container/` otherwise) installed as `/etc/claude-code/managed-settings.json`, root-owned 0644: the Claude Code settings no user or project file can override. Must be valid JSON. Passed through from the launching shell on every build. | `container/Dockerfile`, the host launcher | unset (none) |
 | `HOST_UID` / `HOST_GID` | The host user the container's `node` user is matched to, so files a wolt writes are readable on the host. | `container_entrypoint.run_root_phase` | the invoking user |
@@ -298,6 +298,10 @@ most 500 characters, sent only when set) is a hint on how to speak. Server,
 model and key stay the lodge's. The voice must be one the lodge's speech server
 knows (`coral` is OpenAI's); one it refuses sends the message as text. The
 hint goes to OpenAI only.
+For both on the lodge's own machine, [Wocal](https://github.com/woltspace/wocal)
+is one local server with both endpoints, added as an app (Apple Silicon Macs,
+native lodges); its readme walks a wolt through pointing `transcription` and
+`speech` at it.
 
 **Harnesses** — `CLAUDE_CONFIG_DIR`, `CLAUDE_CODE_OAUTH_TOKEN`,
 `CLAUDE_CODE_DISABLE_AUTO_MEMORY`, `CODEX_HOME`, `OPENCODE_CONFIG_DIR` and the

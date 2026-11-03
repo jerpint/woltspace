@@ -20,6 +20,10 @@ Python **0.5.25** and **@woltspace/tui 0.5.4** are published together.
 
 ## Upgrade notes
 
+Updates now stay on the installed release line; a newer line is a migration
+you choose with `--version`. Ask your wolt to upgrade: see
+[docs/updates.md](https://github.com/jerpint/woltspace/blob/main/docs/updates.md).
+
 Take a backup first, with the release you are leaving:
 
 ```sh

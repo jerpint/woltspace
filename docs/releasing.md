@@ -10,9 +10,12 @@ The workflow uses OIDC Trusted Publishing, without persistent upload secrets.
 Tags and GitHub releases are created only after both pinned registry versions
 are available and their downloads verify.
 The TUI release is created first without becoming Latest; the primary Python
-release becomes Latest last, because lodge update checks read releases/latest.
+release becomes Latest last. Latest doesn't select versions for `woltspace
+update` or a default `uv tool install`, which choose from PyPI.
 Pre-release versions (`0.6.0rc1`, `0.6.0b1`, `0.6.0.dev0`) are published as
-GitHub pre-releases and never become Latest, even from `main`. A pre-release
+GitHub pre-releases and never become Latest, even from `main`. A retry corrects
+one already public as an ordinary release, and the run fails if it is still
+Latest afterwards. Other Python version spellings stop at planning. A pre-release
 TUI version is refused while planning, because the npm step has no dist-tag
 yet; publish release candidates with `registry=python`.
 
@@ -115,10 +118,10 @@ a maintenance branch is never marked Latest.
 
 If the workflow itself needs fixing, rerunning the old job would run the old
 broken workflow again. Merge a reviewed workflow fix, then dispatch the fixed
-workflow on `main` with **resume_run_id set to the original publishing run ID**.
-Select the remaining registry and confirm the original versions. Recovery
-admits only a completed main publishing run from this repository with successful
-validation and artifact preparation. It downloads that run's retained approved
+workflow on the branch that published with **resume_run_id set to the original
+publishing run ID**. Select the remaining registry and confirm the original
+versions. Recovery admits only a completed publishing run of that branch from
+this repository with successful validation and artifact preparation. It downloads that run's retained approved
 manifest and artifacts instead of rebuilding. The source commit and digests
 remain those originally approved, even when the recovery workflow is newer.
 Artifact verification must still match the current source's shipped contents.

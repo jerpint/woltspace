@@ -1363,7 +1363,7 @@ def build_session_command(name: str, prompt: str = "", *, resume: bool = False) 
     run-session.sh reads everything else — dir, wolt, model, harness, adapter
     routing — from the registry, so the session must already exist there.
     """
-    cmd = f"{RUN_SESSION_SCRIPT} {shlex.quote(name)}"
+    cmd = f"{shlex.quote(str(RUN_SESSION_SCRIPT))} {shlex.quote(name)}"
     if resume:
         cmd += " --resume"
     if prompt:

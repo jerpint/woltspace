@@ -7,6 +7,7 @@ Usage: uv run pytest test/test_wolf.py -v
 """
 
 import json
+import subprocess
 import os
 import sys
 from datetime import datetime
@@ -521,6 +522,56 @@ class TestFireWolfTool:
 # ---------------------------------------------------------------------------
 # check_update tool (from core.py)
 # ---------------------------------------------------------------------------
+
+def _check_update(tmp_path, tags, installed):
+    """Run check-update.sh against fake tags and an install root holding `installed`; return the notices."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    refs = "".join(f"x\\trefs/tags/{tag}\\n" for tag in tags)
+    (bin_dir / "git").write_text(f"#!/bin/sh\nprintf '{refs}'\n")
+    (bin_dir / "notify").write_text(f'#!/bin/sh\ncat >> "{tmp_path}/notified"; echo >> "{tmp_path}/notified"\n')
+    for tool in bin_dir.iterdir():
+        tool.chmod(0o755)
+    install = tmp_path / "install"
+    install.mkdir(exist_ok=True)
+    if installed:
+        (install / ".version").write_text(installed + "\n")
+    script = Path(__file__).resolve().parents[1] / "container" / "cron" / "check-update.sh"
+    env = {"PATH": f"{bin_dir}:/usr/bin:/bin", "WOLTSPACE_WOLTS_DIR": str(tmp_path), "WOLTSPACE_DIR": str(install)}
+    notified = tmp_path / "notified"
+    notified.unlink(missing_ok=True)
+    result = subprocess.run(["bash", str(script)], env=env, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    return notified.read_text().splitlines() if notified.exists() else []
+
+
+def test_check_update_script_never_announces_a_release_candidate(tmp_path):
+    assert _check_update(tmp_path, ["v0.5.25", "v0.6.0rc1", "tui-v0.9.0"], "0.5.25") == []
+
+
+def test_check_update_tells_a_patch_from_a_new_line_and_stamps_each(tmp_path):
+    tags = ["v0.5.24", "v0.5.25", "v0.6.0"]
+    patch, line = _check_update(tmp_path, tags, "0.5.24")
+    assert "(0.5.24 -> 0.5.25)" in patch
+    assert "0.6.0 is a new release line (installed 0.5.24)" in line and "migration" in line
+    assert _check_update(tmp_path, tags, "0.5.24") == []  # each notice once
+    # A later patch is not hidden by the newer line's stamp.
+    [later] = _check_update(tmp_path, [*tags, "v0.5.26"], "0.5.24")
+    assert "(0.5.24 -> 0.5.26)" in later
+    platform = tmp_path / ".space" / "platform"
+    assert (platform / "woltspace-version").read_text().strip() == "v0.5.26"
+    assert (platform / "woltspace-newer-line").read_text().strip() == "v0.6.0"
+
+
+def test_check_update_reads_the_installed_release_not_the_last_notice(tmp_path):
+    stamp = tmp_path / ".space" / "platform" / "woltspace-version"
+    stamp.parent.mkdir(parents=True)
+    stamp.write_text("v0.5.25")  # the last notice, not what is installed
+    [rc_final] = _check_update(tmp_path, ["v0.5.25", "v0.6.0"], "0.6.0rc1")
+    assert "(0.6.0rc1 -> 0.6.0)" in rc_final
+    [unknown] = _check_update(tmp_path / "native", ["v0.5.25"], "")
+    assert "installed release is unknown" in unknown
+
 
 class TestCheckUpdateTool:
     """Unit: the check_update tool exposed to the dog."""

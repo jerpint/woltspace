@@ -184,6 +184,15 @@ class TestCommandBuilding:
         cmd = build_session_command("test-4", "")
         assert cmd.rstrip().endswith("test-4")
 
+    def test_script_path_with_space(self):
+        # e.g. uv's default tool dir on macOS has a space in it.
+        import sessions
+        from bot.core import build_session_command
+        script = Path("/opt/tool dir/woltspace/bin/run-session.sh")
+        with patch.object(sessions, "RUN_SESSION_SCRIPT", script):
+            cmd = build_session_command("test-5", "hi")
+        assert shlex.split(cmd) == [str(script), "test-5", "hi"]
+
 
 # ---------------------------------------------------------------------------
 # History sanitization

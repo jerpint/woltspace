@@ -157,9 +157,10 @@ uv tool install 'woltspace==<WOLTSPACE_PYPI_VERSION>'   # the control plane
 npm  install -g '@woltspace/tui@<WOLTSPACE_TUI_VERSION>'            # optional terminal cockpit
 ```
 
-`WOLTSPACE_TUI_VERSION` defaults to `latest`: the two artifacts are versioned
-independently, and the tui is the half that knows which lodges it can talk to.
-Pass an explicit version to reproduce an older image.
+Both default to the versions pinned in the Dockerfile, which match that
+checkout's release. The two artifacts are versioned independently, and the tui
+is the half that knows which lodges it can talk to. Pass an explicit version to
+build another one.
 
 Everything else in the Dockerfile is environment and isolation: the OS, the
 harness CLIs (claude, codex, opencode), tmux, `cloudflared`, worktui, a non-root

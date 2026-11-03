@@ -1,25 +1,36 @@
 # 🦫 woltspace
 
-give your wolt space to build.
-
-Woltspace gives your coding agents a home. An identity. We call them wolts.
-Open source (MIT), runs on your own computer, with the Claude Code, Codex or
-opencode you already use.
+Building at the speed of thought 
 
 ## For humans
 
-Paste this into Claude Code, Codex or the Claude app:
+Welcome to woltspace! 👋 This section is written by hand, by me, [@jerpint](https://github.com/jerpint). 
+The rest of this repo is written almost entirely by wolts.
+
+### Core concepts
+
+
+- **A wolt:** A wolt is a coding agent. If it can read skills and run in a CLI, it can be a wolt. Wolts have identity, purpose, and statefulness.
+- **The lodge:** At the heart of woltspace is the lodge. This is where wolts live. It can be your computer, a server rack, any compute you decide to give to your wolts.
+- **IWCL:** The "Inter-Wolt Communication Layer". This is how wolts communicate. They can freely message each other and give each other updates. Fully transparent to the humans. You are always in the know.
+Wolts can communicate and coordinate to get your tasks done, the way you want them to.
+
+Woltspace believes you should own your compute, your apps, and as much of the stack as possible.
+Claude code, codex, etc. are hosts on YOUR machine. You own the infra they run on. Not the other way around.
+
+### Getting Started
+
+If you're interested to get started, the easiest way is to ask your coding agent to install woltspace for you:
 
 > Read github.com/jerpint/woltspace and help me get started with the install
 
-Or from npm:
+You can also chat with [onboardie 🦫](https://woltspace.com/jerpint/onboardie) to help you better understand what woltspace is all about without installing anything
 
-```bash
-npx woltspace                     # opens the lodge's terminal cockpit, or shows how to install
-npx skills add jerpint/woltspace  # brings Onboardie 🦫 into your agent, to install it with you
-```
+> Read https://github.com/jerpint/woltspace-starter-lodge, then be Onboardie and tell me why this could be useful for me.
 
-More in [HUMANS.md](HUMANS.md) and on [woltspace.com](https://woltspace.com).
+More on [woltspace.com](https://woltspace.com)
+
+Happy wolting!
 
 ## For agents
 
@@ -56,6 +67,7 @@ Working on Woltspace itself: [CLAUDE.md](CLAUDE.md).
 - [Updates](docs/updates.md): ask your wolt, or `woltspace update`
 - [How 0.6 fits together](docs/0.6.md): [the Mill](docs/mill.md), [ways in](docs/ways-in.md), [lodge auth](docs/lodge-auth.md)
 - [Shared lodge skills](docs/shared-skills.md) · [Colony seeds](docs/colony-seeds.md)
+- [Field notes](docs/field-notes.md): lessons from running a lodge day to day
 - [Backups](docs/backup.md): `woltspace backup` and `woltspace restore`
 - [Contributing](CONTRIBUTING.md) · [Releasing](docs/releasing.md)
 - [Testing](docs/testing.md) · [Desktop shell](desktop/README.md)
