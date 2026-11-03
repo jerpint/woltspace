@@ -1221,7 +1221,7 @@ def _columns(conn: sqlite3.Connection, table: str) -> set[str]:
 # Pending mail may then run a second time: the old lodge must stay stopped.
 # Only an offline copy is supported. A layout this check cannot read, or usage
 # charged without mail, is refused before anything in the copy is touched.
-_KNOWN_SCHEMA = 5  # lodge_db's newest migration this check understands
+_KNOWN_SCHEMA = 7  # lodge_db's newest migration this check understands; 7's archive is passive text
 # The inbox tables exactly as lodge_db's migration 5 makes them; any other
 # layout (a table or column more or less) is one this check cannot read.
 _INBOX_COLUMNS = {

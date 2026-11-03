@@ -40,6 +40,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
+import conversation_log
 import lodge_db
 
 MAX_PAYLOAD_BYTES = 32 * 1024  # of UTF-8
@@ -208,6 +209,8 @@ class Store:
     def __init__(self, wolts_dir, limits: Limits):
         self.root = wolts_dir
         self.limits = limits
+        # Conversation history: each new admission is archived in its own write.
+        self.archive = conversation_log.enabled(wolts_dir)
 
     # -- readers and mailboxes, for the launcher and the lodge -----------------
 
@@ -405,6 +408,25 @@ class Store:
                 (mailbox, cutoff)).fetchall()
         return {state: 0 for state in ("queued", "claimed", "held", "acknowledged")} | dict(rows)
 
+    def history(self, token: str, before: int | None = None, limit: int = 20,
+                max_bytes: int = 64 * 1024) -> dict:
+        """The archived conversation this reader's mailbox sent or received
+        (conversation_log.history), newest first; before: the previous page's next.
+        Reads only: nothing is claimed, acknowledged, pruned or woken."""
+        reader = _hash(token)
+        if before is not None:
+            _count(before, "before", 1)
+        if type(limit) is not int or not 1 <= limit <= conversation_log.MAX_LIMIT:
+            raise Invalid(f"limit must be an int from 1 to {conversation_log.MAX_LIMIT}")
+        if type(max_bytes) is not int or not 4096 <= max_bytes <= conversation_log.MAX_BYTES:
+            raise Invalid(f"max_bytes must be an int from 4096 to {conversation_log.MAX_BYTES}")
+        with self._read() as conn:
+            conn.execute("BEGIN")  # one snapshot: the reader is checked in the read it allows
+            mailbox, _ = self._reader(conn, reader)
+            page = conversation_log.history(conn, mailbox, before, limit, max_bytes, self.archive)
+            conn.execute("COMMIT")
+        return page
+
     def events(self, after: int = 0, limit: int | None = None) -> Page:
         _count(after, "after", 0)
         limit = self.limits.page if limit is None else min(_count(limit, "limit", 1), self.limits.page)
@@ -461,6 +483,11 @@ class Store:
             self._charge(conn, mailbox, 1, len(payload), 1)
             self._event(conn, seq, "queued", None)
             self._note(conn, mailbox, seq, priority, route or {}, now)
+            if self.archive:  # the admitted text as it is queued, in this same commit
+                conversation_log.append(
+                    conn, kind="inbox", text=body, at=now, human=priority == HUMAN, sender_name=name,
+                    sender_mailbox=int(sender[8:]) if sender.startswith("mailbox:") else None,
+                    recipient_mailbox=mailbox, recipient_name=to)
             return self._status(conn, "m.seq=?", (seq,))
 
     @staticmethod
