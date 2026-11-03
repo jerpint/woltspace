@@ -1282,15 +1282,36 @@ def set_tier_defaults(harness: str, tiers: dict) -> dict:
     return {tier: tier_default_model(harness, tier) for tier, _ in PICKER_TIERS}
 
 
-def build_command(harness: str | None, mode: str, **kwargs) -> str:
+def build_command(harness: str | None, mode: str, native: dict | None = None, **kwargs) -> str:
     """Build the full shell command for a harness.
 
     mode: "spawn" (fresh session), "resume", or "login".
     kwargs: session_id, session_name, model, prompt, resume_id — each harness
     uses the subset it supports.
+    native: the launch attempt's native locator (native_adapters.prepare), or
+    None for the original command, unchanged.
     """
     entry = get_harness(harness)
-    return entry["command"](entry, mode, **kwargs)
+    command = entry["command"](entry, mode, **kwargs)
+    if not native or mode == "login":
+        return command
+    return _with_native(resolve_harness(harness), command, native)
+
+
+def _with_native(harness: str, command: str, native: dict) -> str:
+    """Carry the attempt to the engine: claude's listener settings, pi's extension, an env prefix for all.
+
+    codex, opencode and hermes keep their argv; their wrappers see the env and
+    run the engine against the session's own backend (native/launch.py).
+    """
+    from native_adapters import ASSETS, launch_env
+    parts = shlex.split(command)
+    if harness == "claude":
+        parts[1:1] = ["--settings", str(Path(native["addr"]) / "settings.json")]
+    elif harness == "pi":
+        parts[1:1] = ["-e", str(ASSETS / "pi_hint.js")]
+    env = [f"{key}={value}" for key, value in launch_env(native).items()]
+    return " ".join(shlex.quote(p) for p in ["env", *env, *parts])
 
 
 def _as_handle(session: str | dict | RuntimeHandle) -> RuntimeHandle:

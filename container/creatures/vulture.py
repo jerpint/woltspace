@@ -43,7 +43,7 @@ from pathlib import Path
 
 from env_compat import get_env
 from sessions import (
-    SessionRegistry, claim_resume_id, recover_resume_id, stamp_resume_id,
+    SessionRegistry, _schedule_pickup, claim_resume_id, recover_resume_id, stamp_resume_id,
     still_as_seen, stop_and_settle, stored_resume_id, taken_resume_ids,
 )
 from harnesses import session_has_agent_process
@@ -220,7 +220,8 @@ def _settle_if_still_dead(reg: SessionRegistry, wolt: str, name: str, now: int,
     if data is not None and data.get("status") == "running" and not stored_resume_id(data):
         claim_resume_id(reg, data, lambda d: stamp_resume_id(reg, wolt, name, d["harness_session_id"]))
     current = reg.get(name, wolt=wolt, check_alive=False)
-    if current is None or current.get("status") != "running" or not still_dead(current):
+    if (current is None or current.get("status") != "running" or current.get("launching")
+            or not still_dead(current)):
         return None
     settled = []
     if stop is None:
@@ -231,6 +232,8 @@ def _settle_if_still_dead(reg: SessionRegistry, wolt: str, name: str, now: int,
                           lambda record: settled.append(_settle_dead(record, now, reason)),
                           wolt=wolt):
         return None
+    if settled:  # a death: mail it was preferred for now wakes another session
+        _schedule_pickup(wolt)
     return settled[0] if settled else None
 
 

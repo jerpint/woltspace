@@ -19,7 +19,14 @@ export WOLTSPACE_DIR="$PWD"
 python -m pytest -q test/test_release_workflow.py test/test_lodge_skills.py test/test_skills_sync.py \
   test/test_session_target_api.py test/test_execution_policy.py \
   test/test_auto_grants_cli.py test/test_lodge_grants.py test/test_wolf_runs.py \
-  test/test_backup.py \
+  test/test_iwcl_cli.py test/test_native_cli_shadowing.py test/test_cli_lore.py test/test_wolf_cli.py \
+  test/test_notify_cli.py test/test_dig_cli.py test/test_update_cli.py test/test_native_session_cli.py \
+  test/test_backup.py test/test_inbox.py test/test_inbox_api.py test/test_inbox_core_independent.py \
+  test/test_inbox_wake.py test/test_inbox_paste.py test/test_inbox_review_fixes.py test/test_inbox_flow.py test/test_inbox_flow_independent.py \
+  test/test_inbox_stop_independent.py test/test_inbox_rearm_order_independent.py \
+  test/test_inbox_unknown_independent.py test/test_inbox_summary.py test/test_native_adapters.py \
+  test/test_iwcl_inbox.py test/test_chat_lodge_inbox.py test/test_inbox_notice.py \
+  test/test_restore_guard.py test/test_restore_guard_independent.py \
   test/test_native_doctor.py \
   test/test_outbox.py test/test_notification_types.py test/test_notify_file_core.py \
   test/test_notify_file_telegram.py test/test_notify_file_route.py \

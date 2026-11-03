@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import runpy
 import subprocess
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -64,7 +65,7 @@ def test_session_send_reads_multiline_message_from_stdin(monkeypatch):
     monkeypatch.delenv("WOLT_NAME", raising=False)
     monkeypatch.delenv("WOLT_SESSION", raising=False)
 
-    def fake_req(method, path, body=None):
+    def fake_req(method, path, body=None, **_):  # hint= and headers= too, as _req takes them
         sent.update(method=method, path=path, body=body)
         return 200, {"ok": True, "session": "target-maple-a1b2c3"}
 
@@ -73,8 +74,8 @@ def test_session_send_reads_multiline_message_from_stdin(monkeypatch):
         "sys.stdin",
         io.StringIO('literal `whoami` $(id) $HOME * "quotes"\n\nlast\n'),
     )
-    args = argparse.Namespace(
-        target="target-maple-a1b2c3", message=[], from_="", json=False
+    args = argparse.Namespace(  # as the CLI's own parser builds it: --key is always there
+        target="target-maple-a1b2c3", message=[], from_="", json=False, key="k1"
     )
 
     client["cmd_session_send"](args)
@@ -86,6 +87,7 @@ def test_session_send_reads_multiline_message_from_stdin(monkeypatch):
             "text": 'literal `whoami` $(id) $HOME * "quotes"\n\nlast\n',
             "from_wolt": "",
             "from_session": "",
+            "key": "k1",
         },
     }
 
@@ -298,16 +300,17 @@ def test_native_cli_delegates_whole_session_noun(tmp_path, monkeypatch):
         ),
     )
 
-    result = cli._session(
+    result = cli._delegate(
         argparse.Namespace(
-            session_args=["send", "target-maple-a1b2c3", "--json"]
+            command="session", noun_args=["send", "target-maple-a1b2c3", "--json"]
         )
     )
 
     assert result == 0
-    assert executed == {
-        "executable": str(client),
+    assert executed == {  # the interpreter running this CLI, not the client's shebang
+        "executable": sys.executable,
         "argv": [
+            sys.executable,
             str(client),
             "session",
             "send",
@@ -323,4 +326,4 @@ def test_native_parser_passes_session_help_to_bundled_client():
 
     args = build_parser().parse_args(["session", "send", "--help"])
 
-    assert args.session_args == ["send", "--help"]
+    assert args.noun_args == ["send", "--help"]

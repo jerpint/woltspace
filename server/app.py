@@ -9,7 +9,9 @@ import subprocess
 import threading
 import time
 import contextlib
+import hashlib
 import unicodedata
+import uuid
 from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -111,9 +113,14 @@ from apps import (
     unshare_app,
 )
 from sites import ensure_site, site_dir
+import inbox
 import wolfcore
 import wolt_archive
 from site_shell import inject_shell, load_site_config, memory_payload, shell_manifest, shell_tags, shell_wanted
+from . import inbox_routes
+from .inbox_routes import router as inbox_router
+from notify_prompt import session_send_reply_instruction
+from starlette.concurrency import run_in_threadpool
 from .state import (
     bot_log,
     get_current_meta,
@@ -245,6 +252,11 @@ async def lifespan(app: FastAPI):
     _start_file_watcher()
     _start_tool_gc()
     tunnel_mgr.start_tunnel()
+    try:  # mail admitted just before a crash still gets its wake
+        import inbox_wake
+        await asyncio.to_thread(inbox_wake.reconcile, WOLTS_DIR)
+    except Exception as exc:
+        print(f"[inbox] wake reconcile failed: {type(exc).__name__}: {exc}")
     try:
         import connector_host
         await connector_host.start(WOLTS_DIR)
@@ -268,6 +280,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None)
+app.include_router(inbox_router)  # off unless woltspace.json enables the inbox
 
 
 @app.get("/health")
@@ -899,6 +912,62 @@ async def memory_read(request: Request):
 
 # --- Session messaging ---
 
+# With the lodge inbox on, messages are mail (`woltspace session send` with the
+# session's inbox reader), never pasted into a live session.
+OUTCOME_WAIT, OUTCOME_POLL = 10.0, 0.2
+
+
+async def _terminal_mail(request: Request, wolt: str, session: str = ""):
+    """With the inbox on, a send that carries no inbox reader (a terminal, a script) is
+    mail for the target's wolt from the lodge's "terminal" provider, at agent priority:
+    never a paste. A reader on this route is refused, never downgraded. The sender's
+    names are attribution text only. A named session is the wake's first choice when it
+    is that wolt's and not stopped. Answers with this message's own wake outcome, waited
+    for off the event loop for at most OUTCOME_WAIT."""
+    if inbox_routes.TOKEN_HEADER.lower() in {k.lower() for k in request.headers.keys()}:
+        return JSONResponse({"ok": False, "status": "inbox", "error": "use_inbox_send"}, status_code=409)
+    try:
+        body = await request.json()
+        assert isinstance(body, dict)
+    except Exception:
+        return JSONResponse({"error": "JSON object body required"}, status_code=400)
+    text, key = body.get("text"), body.get("key") or f"terminal-{uuid.uuid4().hex}"
+    if not isinstance(text, str) or not text or not isinstance(key, str):
+        return JSONResponse({"error": "text required"}, status_code=400)
+    from_wolt, from_session = str(body.get("from_wolt") or ""), str(body.get("from_session") or "")
+    # The reply instruction's delimiter comes from the key: a re-run with it is the same message.
+    delimiter = "WOLTSPACE_IWCL_" + hashlib.sha256(key.encode()).hexdigest()[:16].upper()
+    header = f"[message from {from_wolt}" + (f", session={from_session}" if from_session else "") + "]"
+    try:
+        reply = f"\n{session_send_reply_instruction(from_session, delimiter)}" if from_session else ""
+    except ValueError:
+        reply = ""
+    from sessions import SessionRegistry
+    record = SessionRegistry(WOLTS_DIR).get(session, check_alive=False) if session else None
+    route = {"session": session if record and record.get("wolt") == wolt
+             and record.get("status") not in ("stopped", "archived") else None, "chat": None}
+    store = inbox.Store(WOLTS_DIR, inbox.LIMITS)
+    try:
+        status = await run_in_threadpool(store.admit, "terminal", key, wolt, f"{header}\n{text}{reply}", route=route)
+    except inbox.InboxError as exc:
+        return JSONResponse({"ok": False, "status": "not_queued", "error": exc.code, "wolt": wolt, "key": key},
+                            status_code=inbox_routes._HTTP.get(exc.code, 409))
+    import inbox_wake
+    await run_in_threadpool(inbox_wake.notify_admitted, WOLTS_DIR, status)
+    answer = {"wolt": wolt, "key": key, "seq": status.seq}
+    for _ in range(int(OUTCOME_WAIT / OUTCOME_POLL)):
+        facts = await run_in_threadpool(store.wake_facts, wolt)
+        got = next((o for o in (facts or {}).get("wake", {}).get("outcomes", []) if o.get("seq") == status.seq), None)
+        if got:
+            if got.get("how") in ("hinted", "resumed", "started", "busy"):
+                status = "busy" if got.get("how") == "busy" else "notified"
+                return {"ok": True, "status": status, "session": got.get("session"), **answer}
+            return JSONResponse({"ok": False, "status": "cant_wake", "reason": got.get("reason") or got.get("how"),
+                                 **answer}, status_code=409)
+        await asyncio.sleep(OUTCOME_POLL)
+    return {"ok": True, "status": "pending", **answer}
+
+
 async def _deliver_or_resume(safe: str, text: str, body: dict):
     result = await asyncio.to_thread(
         deliver_message,
@@ -1053,6 +1122,10 @@ async def release_hold(session_id: str):
 async def session_message(session_id: str, request: Request):
     """Deliver to a running session, or resume a resting one on contact."""
     safe = sanitize_session(session_id)
+    if inbox.enabled(WOLTS_DIR):
+        from sessions import SessionRegistry
+        record = SessionRegistry(WOLTS_DIR).get(safe, check_alive=False) or {}
+        return await _terminal_mail(request, record.get("wolt") or safe.rsplit("-", 3)[0], safe)
     body = await request.json()
     text = body.get("text")
     if not text:
@@ -1142,6 +1215,8 @@ async def wolt_message(name: str, request: Request):
     This is the ergonomic entry point: senders address `codexw`, not a slug.
     """
     safe_wolt = "".join(c for c in name if c.isalnum() or c in "-_")
+    if inbox.enabled(WOLTS_DIR):
+        return await _terminal_mail(request, safe_wolt)
     from sessions import SessionRegistry
     registry = SessionRegistry(WOLTS_DIR)
     session_id = resolve_active_session(safe_wolt, registry=registry)
@@ -3057,6 +3132,15 @@ async def connectors_page(request: Request):
     """Show lodge address and messaging connector health."""
     return templates.TemplateResponse(request, "connectors.html", context={
         "active_nav": "connectors",
+        "cache_bust": int(time.time()),
+    })
+
+
+@app.get("/inbox")
+async def inbox_page(request: Request):
+    """Each agent's mailbox by counts, read from /inbox/summary; never message text."""
+    return templates.TemplateResponse(request, "inbox.html", context={
+        "active_nav": "inbox",
         "cache_bust": int(time.time()),
     })
 
