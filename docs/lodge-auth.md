@@ -10,13 +10,14 @@ With it **off**, anything that gets through to the port is treated as the owner.
 |---|---|---|
 | A web page writing to the lodge across sites | Refused | Refused |
 | A web page using DNS rebinding | Refused (the `Host` check) | Refused |
-| A wolt's site or an app, in your browser | Its write is refused, as another origin, and it can't put the lodge in a frame | Refused |
+| An app, in your browser | Its write is refused, as another origin, and it can't put the lodge in a frame | Refused |
+| A wolt's site, in your browser | Acts as you: it's a lodge page | Acts as you, once your browser is paired: it's a lodge page |
 | Another user on the machine | Acts as you | Refused: the keys are `0600` |
 | A wolt's tools | Everything you can do | Reads, and only the writes in `WOLT_WRITES`: no lodge settings, no auto mode. It may share an app, when asked; every share is logged |
 | A program running as you | Acts as you | **Can read the keys, so still acts as you** |
 | A browser elsewhere, through Cloudflare | Stopped by Access alone | Stopped by Access, then checked again by the lodge |
 
-The first three don't depend on lodge auth. They come from the origin checks on every request and from the Mill. So lodge auth is about **other programs on the machine and how much a wolt's tools may do**, and it adds a second check behind a way in. It's not a sandbox: see the "running as you" row.
+The first three don't depend on lodge auth. They come from the origin checks on every request and from the Mill. A wolt's site is the exception: in 0.6 it stays on the lodge's origin, so it gets what the lodge gives your browser. Giving sites an origin of their own is a later change. So lodge auth is about **other programs on the machine and how much a wolt's tools may do**, and it adds a second check behind a way in. It's not a sandbox: see the "running as you" row.
 
 ## Who gets in
 
@@ -69,25 +70,25 @@ sequenceDiagram
   L-->>B: A cookie, good for 30 days
 ```
 
-`woltspace pair --forget` unpairs every browser, closes every site session, and ends those browsers' open terminals within 30 seconds.
+`woltspace pair --forget` unpairs every browser, closes every app session, and ends those browsers' open terminals within 30 seconds.
 
-### Opening a site with lodge auth on
+### Opening an app with lodge auth on
 
-A site has its own origin, so the lodge's cookie never reaches it. It gets its own, through a one-time grant:
+A wolt's site is a lodge page, so a paired browser opens it like any other. An app has its own origin, so the lodge's cookie never reaches it. It gets its own, through a one-time grant:
 
 ```mermaid
 sequenceDiagram
   participant B as Your paired browser
   participant L as The lodge
-  participant S as mywolt.sites.localhost
-  B->>L: /sites/open?wolt=mywolt
-  L-->>B: Redirect with a one-time grant<br/>one minute, this site only
-  B->>S: /_woltspace/grant?code=...
-  S-->>B: A cookie for this site only, good for 12 hours
-  B->>S: The page, through the Mill
+  participant A as notes.localhost
+  B->>L: /apps/open?app=notes
+  L-->>B: Redirect with a one-time grant<br/>one minute, this app only
+  B->>A: /_woltspace/grant?code=...
+  A-->>B: A cookie for this app only, good for 12 hours
+  B->>A: The page, through the Mill
 ```
 
-Apps work the same way, and a site's grant never opens an app. With lodge auth off there's no grant: the lodge opens a local site or app for a visitor on this machine who came straight in.
+With lodge auth off there's no grant: the lodge opens a local app for a visitor on this machine who came straight in.
 
 ## Through a way in
 
@@ -97,6 +98,6 @@ With lodge auth on, your login through a way in opens the lodge, so a phone does
 
 ## What to watch for
 
-- **Containers need it for sites.** With lodge auth off, a local site or app opens only for a loopback caller, and a browser's connection into a container doesn't come from the container's loopback. So a container lodge's sites and apps answer `403` unless lodge auth is on or you reach them through a way in.
+- **Containers need it for apps.** With lodge auth off, a local app opens only for a loopback caller, and a browser's connection into a container doesn't come from the container's loopback. So a container lodge's apps answer `403` unless lodge auth is on or you reach them through a way in. Sites are lodge pages and open as before.
 - **Raw `curl` to the lodge gets `401`.** The `woltspace` CLI and a wolt's tools send their key for you.
 - **Turning it on needs a pairing,** or a login through a way in, before your browser can open the lodge again.

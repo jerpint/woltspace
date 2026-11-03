@@ -14,6 +14,7 @@ Apps are things you ship — apps, tools, services. They live at `wolts/apps/{na
 | | Site (`wolt/site/`) | App (`wolts/apps/`) |
 |---|---|---|
 | **Purpose** | Your private workspace | Something you ship |
+| **Address** | `/wolt/<name>/site/`, a page of the lodge | `http://<name>.localhost:7777/`, an origin of its own |
 | **Visibility** | The owner only | The owner only, locally and through the lodge's tunnel |
 | **Complexity** | Static HTML/CSS/JS, lightweight | Own server, deps, manifest |
 | **Created by** | Wolts, freely | User opts in |

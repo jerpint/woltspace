@@ -1,6 +1,6 @@
 # Writing a way in
 
-A **way in** is how a browser somewhere else reaches the lodge, its wolts' sites and its apps: a tunnel, a VPN, a proxy. Cloudflare is the built-in one. Anyone can add another (Tailscale, a self-hosted proxy, anything) as a small Python object, without changing the lodge or the Mill.
+A **way in** is how a browser somewhere else reaches the lodge (wolt sites are lodge pages) and its apps: a tunnel, a VPN, a proxy. Cloudflare is the built-in one. Anyone can add another (Tailscale, a self-hosted proxy, anything) as a small Python object, without changing the lodge or the Mill.
 
 The code is `server/ways_in.py`. Its Cloudflare class, `CloudflareAccess`, is the worked example.
 
@@ -9,13 +9,13 @@ The code is `server/ways_in.py`. Its Cloudflare class, `CloudflareAccess`, is th
 | | Method | Answers |
 |---|---|---|
 | 1 | `lodge_hosts()` | The names this way gives the **lodge itself** (`owner.example.com`). Requests to them go to the lodge's own routes. |
-| 2 | `content_host(host)` | Whether a `Host` header names a **wolt's site or an app** through this way: a `PublicHost(kind, name, authority)`, or `None`. |
+| 2 | `content_host(host)` | Whether a `Host` header names an **app** through this way: a `PublicHost("app", name, authority)`, or `None`. |
 | 3 | `owner(headers, scope)` | Whether this request is **the owner**, proven this way's own way: a `Visitor("owner", expires_at)`, or `None` for anyone else. It opens the content this way serves, and the lodge at this way's `lodge_hosts()` when lodge auth is on. |
 | 4 | `credential_headers` | The headers this way uses to say who the visitor is. They're **stripped before anything reaches an app**, on every request, whichever way it came. |
-| 5 | `public_base(lodge_host, kind, name)` | Where a browser that reached the lodge at `lodge_host` through this way opens a site or app (for `/sites/open` and `/apps/open`), or `None`. |
+| 5 | `public_base(lodge_host, kind, name)` | Where a browser that reached the lodge at `lodge_host` through this way opens an app (for `/apps/open`), or `None`. |
 
 The lodge does the rest the same way whichever way a request came:
-- it sends sites and apps to the Mill;
+- it sends apps to the Mill;
 - it strips the lodge's and Access's credentials and your `credential_headers`;
 - it checks that a write or WebSocket carries an `Origin` exactly `https://<authority>`;
 - it closes WebSockets at `expires_at`;
@@ -26,7 +26,7 @@ flowchart TD
   R([Request from elsewhere]) --> W
   subgraph W[Your way in answers]
     Q1[Is this host the lodge?<br>lodge_hosts]:::new
-    Q2[Is it a site or app?<br>content_host]:::new
+    Q2[Is it an app?<br>content_host]:::new
     Q3[Is this the owner?<br>owner]:::new
     Q4[Which headers carry identity?<br>credential_headers]:::new
     Q5[Where does a browser open it?<br>public_base]:::new
@@ -35,7 +35,7 @@ flowchart TD
   subgraph L[The lodge does the rest, for every way in]
     A[Checks Origin on writes and sockets]:::ok
     B[Strips every credential]:::ok
-    C[Sends sites and apps to the Mill]:::ok
+    C[Sends apps to the Mill]:::ok
     D[Closes sockets at expiry]:::ok
   end
   classDef ok fill:#dfe9df,stroke:#3A6644,color:#2a2622
@@ -44,7 +44,7 @@ flowchart TD
 
 ## Rules a way in must keep
 
-- **Each site and app gets an authority of its own.** An origin is scheme, host and port, and two sites on one origin could read each other's storage and script. A subdomain each (`<app>.example.com`) is best. A port each on one host (`machine.example.ts.net:8443`) gives each its own origin, but **cookies ignore ports**: every app on that host sees, and can set, cookies for the others and the lodge. The lodge strips its own cookies before an app and keeps an app's `Set-Cookie` host-only, but apps' own cookies aren't isolated from each other. Say so to users of such a way in. A path each (`/apps/<app>/`) doesn't work.
+- **Each app gets an authority of its own.** An origin is scheme, host and port, and two apps on one origin could read each other's storage and script. A subdomain each (`<app>.example.com`) is best. A port each on one host (`machine.example.ts.net:8443`) gives each its own origin, but **cookies ignore ports**: every app on that host sees, and can set, cookies for the others and the lodge. The lodge strips its own cookies before an app and keeps an app's `Set-Cookie` host-only, but apps' own cookies aren't isolated from each other. Say so to users of such a way in. A path each (`/apps/<app>/`) doesn't work.
 - **`authority` is exactly what the browser sends**, host plus `:port` when it isn't 443. The lodge compares `Origin` against `https://<authority>`.
 - **`owner()` fails closed.** Anything unexpected (a missing header, an error, a request that didn't come through your proxy) returns `None`. Return "owner" only for the owner's verified identity, never for "anyone signed in".
 - **Trust only what your proxy sets, through a boundary that holds.** If your way in names the visitor in a header (as Tailscale Serve does with `Tailscale-User-Login`), anyone who can reach the lodge's port can send that header, including any other process on the machine. "From loopback" alone proves nothing. Use a boundary another local process can't cross:
@@ -82,10 +82,10 @@ In tests, `ways_in.register(way)` adds one directly. `test/test_mill_switchover.
 
 ## Sketch: Tailscale
 
-Tailscale gives a machine one name on the tailnet (`machine.tailnet.ts.net`) and no wildcard subdomains. So a Tailscale way in would give each site and app **its own HTTPS port** on that name, which is still an origin of its own:
+Tailscale gives a machine one name on the tailnet (`machine.tailnet.ts.net`) and no wildcard subdomains. So a Tailscale way in would give each app **its own HTTPS port** on that name, which is still an origin of its own:
 
 - **Lodge:** `tailscale serve --https=443 http://localhost:7777` → `lodge_hosts()` is `{"machine.tailnet.ts.net"}`.
-- **Each app or site:** `tailscale serve --https=<port> http://localhost:7777`, with the proxy sending `Host: machine.tailnet.ts.net:<port>`. `content_host` maps each port to its app or site, from a small table the plugin keeps.
+- **Each app:** `tailscale serve --https=<port> http://localhost:7777`, with the proxy sending `Host: machine.tailnet.ts.net:<port>`. `content_host` maps each port to its app, from a small table the plugin keeps.
 - **Owner:** Tailscale Serve adds `Tailscale-User-Login` for tailnet users. Don't trust the header alone: confirm with tailscaled's LocalAPI `whois` that the connection really is that tailnet user, and accept only the owner's login.
 - **Cookies:** with one host and a port each, apps share cookies across ports (see the rules above). Tell users, and prefer Tailscale Services or a domain of your own if you need full isolation.
 - **`credential_headers`:** `tailscale-user-login`, `tailscale-user-name`, `tailscale-user-profile-pic`, `tailscale-app-capabilities`.
