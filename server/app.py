@@ -808,12 +808,17 @@ class MillForwardMiddleware:
         visitor = _local_visitor(scope, headers, content.grant_label)
         if visitor is None:
             if scope["type"] == "http" and lodge_auth.enabled():
-                lodge = f"http://localhost{f':{port}' if port else ''}"
+                # The lodge's own address as `woltspace pair` and `start` print
+                # it, where the owner's browser is paired, on the port used here.
+                from woltspace.layout import RuntimeLayout
+                lodge_host = urlsplit(RuntimeLayout.from_env().endpoint).netloc.rsplit(":", 1)[0]
+                lodge = f"http://{lodge_host}{f':{port}' if port else ''}"
                 target = _safe_next(scope.get("path", "/"))
                 link = f"{lodge}{content.open_path}&path={quote(target, safe='/')}"
+                # Its own tab: in the lodge's frame a cross-site grant can't keep its cookie.
                 response = HTMLResponse(
-                    f"<h1>Open this {content.kind} from the lodge</h1><p><a href=\"{link}\">"
-                    f"Open {content.name}</a></p>", status_code=401,
+                    f"<h1>Open this {content.kind} from the lodge</h1><p><a href=\"{link}\" "
+                    f"target=\"_blank\" rel=\"noopener\">Open {content.name}</a></p>", status_code=401,
                     headers={"Cache-Control": "no-store"})
                 return await response(scope, receive, send)
             if scope["type"] == "http":

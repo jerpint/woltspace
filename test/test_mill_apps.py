@@ -306,6 +306,7 @@ def test_with_auth_on_an_app_opens_from_the_lodge(lodge_with_board, monkeypatch)
     keys = lodge_auth.ensure_keys(root)
     refused = _lodge().get("/")
     assert refused.status_code == 401 and "/apps/open?app=board" in refused.text
+    assert 'href="http://127.0.0.1:7777/apps/open?app=board' in refused.text and 'target="_blank"' in refused.text
     assert _lodge("localhost:7777").get(
         "/apps/open?app=board", headers={"x-woltspace-key": keys["wolt"]}).status_code == 403
     opened = _lodge("localhost:7777").get("/apps/open?app=board&path=/x", follow_redirects=False,
