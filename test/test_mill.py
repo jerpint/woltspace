@@ -236,6 +236,35 @@ def test_a_stopped_mill_leaves_the_lodge_up(wolts, monkeypatch):
     assert _lodge().get("/version").status_code == 200
 
 
+def test_a_mill_that_drops_the_connection_is_down_not_a_crash(wolts, monkeypatch):
+    """The Mill closes the socket without a reply: the lodge says the Mill is
+    down (502), as it does when the Mill isn't there at all."""
+    import socket as socket_lib
+    import threading
+    monkeypatch.setattr(server_app, "WOLTS_DIR", wolts)
+    path = _short_dir() / "drop.sock"
+    listener = socket_lib.socket(socket_lib.AF_UNIX, socket_lib.SOCK_STREAM)
+    listener.bind(str(path))
+    listener.listen(4)
+
+    def drop():
+        for _ in range(4):
+            try:
+                conn, _ = listener.accept()
+            except OSError:
+                return
+            conn.recv(65536)
+            conn.close()
+    threading.Thread(target=drop, daemon=True).start()
+    monkeypatch.setattr(server_app.mill_server, "socket_path", lambda _root: path)
+    monkeypatch.delenv("WOLTSPACE_LODGE_AUTH", raising=False)
+    try:
+        response = _lodge(APP).get("/data.txt")
+        assert response.status_code == 502 and "Mill" in response.text
+    finally:
+        listener.close()
+
+
 # --- With lodge auth on --------------------------------------------------------------------
 
 @pytest.fixture

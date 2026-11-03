@@ -880,14 +880,16 @@ class MillForwardMiddleware:
                 content=Request(scope, receive).stream() if has_body else None,
             )
             resp = await client.send(req, stream=True, follow_redirects=False)
-        except (httpx.ConnectError, FileNotFoundError, ConnectionRefusedError):
-            await client.aclose()
-            response = HTMLResponse("<h1>The Mill isn't running, so apps are down</h1>"
-                                    "<p>The lodge itself still works.</p>", status_code=502)
-            return await response(scope, receive, send)
         except httpx.TimeoutException:
             await client.aclose()
             response = HTMLResponse("<h1>The Mill did not answer in time</h1>", status_code=504)
+            return await response(scope, receive, send)
+        except (httpx.TransportError, FileNotFoundError, ConnectionRefusedError):
+            # Not there, or gone before it answered (a dropped connection, a
+            # half-sent reply): either way the Mill is down, not the lodge.
+            await client.aclose()
+            response = HTMLResponse("<h1>The Mill isn't running, so apps are down</h1>"
+                                    "<p>The lodge itself still works.</p>", status_code=502)
             return await response(scope, receive, send)
         except BaseException:
             await client.aclose()  # cancelled, or any other failure before a response
