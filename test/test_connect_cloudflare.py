@@ -97,6 +97,26 @@ def test_another_access_team_keeps_nothing_of_the_last_one(tmp_path):
     assert "lodge_aud" not in saved and saved["team_domain"] == "team.cloudflareaccess.com"
 
 
+def test_a_settings_save_made_meanwhile_is_kept(tmp_path):
+    """Connect holds the lock every woltspace.json writer holds, so it reads
+    after another writer's save, never before it."""
+    import sys
+    import threading
+    sys.path.insert(0, str(layout(tmp_path).runtime_lib))
+    from settings_files import settings_lock, write_json_atomic
+    settings = tmp_path / "woltspace.json"
+    settings.write_text(json.dumps({"harness": {"default": "claude"}}))
+    done = threading.Event()
+    with settings_lock(settings):
+        worker = threading.Thread(target=lambda: (connect.apply(layout(tmp_path), connect.decode(code())), done.set()))
+        worker.start()
+        assert not done.wait(0.3)  # connect waits for the lock
+        write_json_atomic(settings, {"harness": {"default": "codex"}})
+    worker.join(5)
+    config = json.loads(settings.read_text())
+    assert config["harness"] == {"default": "codex"} and "cloudflare" in config["ways_in"]
+
+
 def test_a_failed_save_never_leaves_a_tunnel_without_access_settings(tmp_path, monkeypatch):
     real = connect._write_private
 

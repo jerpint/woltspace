@@ -119,6 +119,30 @@ def apply(layout: RuntimeLayout, connection: Connection) -> dict:
     write fails, the lodge has Access settings and no tunnel, never a tunnel
     without them, and running it again finishes the job."""
     settings = layout.wolts_dir / "woltspace.json"
+    with _settings_lock(layout, settings):
+        _save_access(settings, connection)
+
+    env_file = layout.wolts_dir / ".env"
+    text = env_file.read_text() if env_file.is_file() else ""
+    _write_private(env_file, _with_values(text, {
+        "WOLTSPACE_PUBLIC_TUNNEL": "true",
+        "CLOUDFLARE_TUNNEL_URL": connection.url,
+        "CLOUDFLARE_TUNNEL_TOKEN": connection.tunnel_token,
+    }), 0o600)
+    return {"url": connection.url, "owner_email": connection.owner_email}
+
+
+def _settings_lock(layout: RuntimeLayout, settings: Path):
+    """The lock every writer of woltspace.json holds from its read to its
+    rename (container/lib/settings_files.py), so a save made meanwhile by the
+    lodge or a bot isn't undone by this one."""
+    from .doctor import _graft_runtime_lib
+    _graft_runtime_lib(layout)
+    from settings_files import settings_lock
+    return settings_lock(settings)
+
+
+def _save_access(settings: Path, connection: Connection) -> None:
     config = json.loads(settings.read_text()) if settings.is_file() else {}
     ways_in = config.get("ways_in") if isinstance(config.get("ways_in"), dict) else {}
     # A setting the code doesn't carry (a separate `lodge_aud`) stays while the
@@ -134,12 +158,3 @@ def apply(layout: RuntimeLayout, connection: Connection) -> dict:
     config["ways_in"] = ways_in
     mode = settings.stat().st_mode & 0o777 if settings.is_file() else 0o644
     _write_private(settings, json.dumps(config, indent=2) + "\n", mode)
-
-    env_file = layout.wolts_dir / ".env"
-    text = env_file.read_text() if env_file.is_file() else ""
-    _write_private(env_file, _with_values(text, {
-        "WOLTSPACE_PUBLIC_TUNNEL": "true",
-        "CLOUDFLARE_TUNNEL_URL": connection.url,
-        "CLOUDFLARE_TUNNEL_TOKEN": connection.tunnel_token,
-    }), 0o600)
-    return {"url": connection.url, "owner_email": connection.owner_email}
