@@ -113,6 +113,16 @@ def test_ranges_and_head(wolts):
     assert head.status_code == 200 and head.headers["content-length"] == "10" and head.content == b""
 
 
+def test_a_resumed_download_gets_the_whole_file(wolts):
+    """If-Range can't match a weak ETag: the whole file, never bytes spliced
+    onto a copy that may be stale."""
+    client = _mill(wolts)
+    etag = client.get("/data.txt", headers=OWNER).headers["etag"]
+    for validator in (etag, "Tue, 03 Nov 2026 00:00:00 GMT"):
+        whole = client.get("/data.txt", headers={**OWNER, "range": "bytes=2-4", "if-range": validator})
+        assert whole.status_code == 200 and whole.text == "0123456789"
+
+
 def test_a_static_app_is_read_only(wolts):
     assert _mill(wolts).post("/data.txt", headers=OWNER).status_code == 405
 

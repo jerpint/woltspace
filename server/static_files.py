@@ -148,7 +148,7 @@ def _parse_range(value: str, size: int) -> tuple[int, int] | None | bool:
 
 
 def _file_response(scope, realpath: str, *, media_type: str | None = None) -> Response:
-    """Stream a regular file: HEAD, If-None-Match and a single Range honoured."""
+    """Stream a regular file: HEAD, If-None-Match and a single Range (not with If-Range) honoured."""
     opened = _open_regular(realpath)
     if opened is None:
         return not_found()
@@ -163,7 +163,10 @@ def _file_response(scope, realpath: str, *, media_type: str | None = None) -> Re
         os.close(fd)
         return Response(status_code=304, headers=base)
     start, end, status = 0, st.st_size - 1, 200
-    if "range" in headers:
+    # If-Range needs a strong validator to match, and this ETag is weak (no
+    # Last-Modified is sent either): a resumed download whose copy may be stale
+    # always gets the whole file, never new bytes spliced onto old ones.
+    if "range" in headers and "if-range" not in headers:
         wanted = _parse_range(headers["range"], st.st_size)
         if wanted is False:
             os.close(fd)
