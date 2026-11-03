@@ -137,6 +137,24 @@ def test_every_assignment_of_a_key_is_replaced_and_quoted_values_are_left_alone(
     assert "old" not in (tmp_path / ".env").read_text().replace("-----BEGIN", "")
 
 
+@pytest.mark.parametrize("old", [
+    "export\tCLOUDFLARE_TUNNEL_TOKEN=old\n",
+    "'CLOUDFLARE_TUNNEL_TOKEN'=old\n",
+    "OTHER='first\\'\nCLOUDFLARE_TUNNEL_TOKEN=inside-other\nend'\nCLOUDFLARE_TUNNEL_TOKEN=old\n",
+])
+def test_the_env_file_is_read_the_way_dotenv_reads_it(tmp_path, old):
+    """Whatever dotenv takes as a binding is one: an export with a tab, a
+    quoted key, an escaped single quote keeping a value open across lines."""
+    from dotenv import dotenv_values
+    (tmp_path / ".env").write_text(old)
+    before = dotenv_values(tmp_path / ".env")
+    connect.apply(layout(tmp_path), connect.decode(code()))
+    env = dotenv_values(tmp_path / ".env")
+    assert env["CLOUDFLARE_TUNNEL_TOKEN"] == SECRET
+    assert {k: env[k] for k in before if not k.startswith("CLOUDFLARE_")} == \
+        {k: v for k, v in before.items() if not k.startswith("CLOUDFLARE_")}
+
+
 def test_the_address_is_saved_as_https_and_its_name(tmp_path):
     connect.apply(layout(tmp_path), connect.decode(code(url="https://Lodge.Ery.woltspace.app/")))
     assert "CLOUDFLARE_TUNNEL_URL=https://lodge.ery.woltspace.app\n" in (tmp_path / ".env").read_text()

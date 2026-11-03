@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import io
 import json
 import os
 import tempfile
@@ -93,50 +94,27 @@ def _write_private(path: Path, text: str, mode: int) -> None:
 
 
 def _with_values(text: str, values: dict[str, str]) -> str:
-    """The env file with these keys set. Only whole `KEY=` lines change, and
-    never a line inside a quoted value that spans several lines. dotenv takes
-    the last of a repeated key, so each key is set where it first appears and
-    every later assignment of it goes."""
-    lines = text.splitlines()
+    """The env file with these keys set. The file is split with dotenv's own
+    parser, so a binding is exactly what dotenv reads (quoted or multi-line
+    values, `export`, quoted keys) and nothing inside another value changes.
+    dotenv takes the last of a repeated key, so each key is set where it first
+    appears and every later binding of it goes."""
+    from dotenv.parser import parse_stream
     out: list[str] = []
     done: set[str] = set()
-    quote = ""  # the quote a value spanning lines is still waiting for
-    dropping = False  # that value belongs to a key set here: its lines go too
-    for line in lines:
-        if quote:
-            if not dropping:
-                out.append(line)
-            if _closes(line, quote):
-                quote = ""
-            continue
-        key, eq, value = line.partition("=")
-        key = key.strip().removeprefix("export ").strip()
-        value = value.lstrip()
-        if eq and value[:1] in ("'", '"') and not _closes(value[1:], value[0]):
-            quote = value[0]
-        dropping = bool(eq and key in values)
-        if dropping:
+    for binding in parse_stream(io.StringIO(text)):
+        key = binding.key
+        if key in values and not binding.error:
             if key not in done:
-                out.append(f"{key}={values[key]}")
+                tail = "\n" if binding.original.string.endswith("\n") else ""
+                out.append(f"{key}={values[key]}{tail}")
                 done.add(key)
-            continue  # a later assignment of a key set above
-        out.append(line)
-    out += [f"{key}={value}" for key, value in values.items() if key not in done]
-    return "\n".join(out) + "\n"
-
-
-def _closes(text: str, quote: str) -> bool:
-    """Whether `text` holds the closing `quote`. dotenv lets a backslash
-    escape a double quote, never a single one."""
-    escaped = False
-    for char in text:
-        if escaped:
-            escaped = False
-        elif char == "\\" and quote == '"':
-            escaped = True
-        elif char == quote:
-            return True
-    return False
+            continue  # a later binding of a key set above
+        out.append(binding.original.string)
+    body = "".join(out)
+    if body and not body.endswith("\n"):
+        body += "\n"
+    return body + "".join(f"{key}={value}\n" for key, value in values.items() if key not in done)
 
 
 def _known_urls(layout: RuntimeLayout) -> list[str]:
