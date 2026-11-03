@@ -94,14 +94,14 @@ def _mill(tmp_path, **kw) -> TestClient:
 
 # --- Naming ----------------------------------------------------------------------------
 
-@pytest.mark.parametrize("host,name", [("board.localhost:7777", "board"), ("my_app.localhost", "my_app"),
+@pytest.mark.parametrize("host,name", [("board.localhost:7777", "board"), ("1app.localhost", "1app"),
                                        ("BOARD.localhost", "board")])
 def test_app_hosts_name_an_app(host, name):
     assert parse_app_host(host).name == name
 
 
 @pytest.mark.parametrize("host", ["localhost:7777", "softie.sites.localhost", "a.b.localhost",
-                                  "1app.localhost", "board.woltspace.test", "-x.localhost"])
+                                  "my_app.localhost", "board.woltspace.test", "-x.localhost"])
 def test_anything_else_is_not_an_app(host):
     assert parse_app_host(host) is None
 

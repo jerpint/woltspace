@@ -17,7 +17,7 @@ The old address `/app/<name>/...` redirects to `/apps/open`. Inside one of the l
 
 `https://<app>.<your domain>/` goes through the lodge's port to the Mill. That needs `ways_in.cloudflare` settings in `woltspace.json` (see `container/migrations/v0.6.0.md`); without them no app opens through the tunnel. The lodge first checks the Cloudflare Access token: signature, audience (the apps' Access application), issuer and expiry, for the owner's email. The token never goes further. A write or WebSocket must come from the app's own public page (`Origin: https://<its host>`; a write without an Origin is refused too), checked before the request is rewritten to its local form.
 
-An app named `site-…` isn't served, locally or through the tunnel (`woltspace doctor` names it): the prefix stays reserved, so no app takes a name a wolt's site may need later.
+An app named `site-…` isn't served, locally or through the tunnel (`woltspace doctor` names it): the prefix stays reserved, so no app takes a name a wolt's site may need later. An app's name is a host label, so the Mill opens and sharing shares the same names: lowercase letters, digits and dashes, no dash at either end (`container/lib/app_names.py`).
 
 From the lodge reached through the tunnel, `/apps/open` sends the browser to the app's public address.
 

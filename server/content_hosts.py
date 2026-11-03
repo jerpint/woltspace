@@ -16,12 +16,11 @@ prefix stays reserved, so no app takes a name a wolt's site may need later.
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
-_APP_LABEL_RE = re.compile(r"[a-z][a-z0-9_-]{0,62}")
-SITE_PREFIX = "site-"
+from . import config as _config  # noqa: F401  (puts container/lib on sys.path)
+from app_names import SITE_PREFIX, app_name_ok  # noqa: E402,F401
 
 
 @dataclass(frozen=True)
@@ -41,9 +40,7 @@ class LocalAppNaming:
         if not host.endswith(self.suffix):
             return None
         label = host.removesuffix(self.suffix)
-        if label.startswith(SITE_PREFIX):
-            return None  # reserved for wolt sites
-        return label if _APP_LABEL_RE.fullmatch(label) else None
+        return label if app_name_ok(label) else None  # `site-` stays reserved
 
 
 LOCAL_APPS = LocalAppNaming()
