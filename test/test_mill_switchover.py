@@ -1430,3 +1430,33 @@ def test_lodge_aud_is_kept_and_optional():
     assert access.validate_access_settings(raw).audience_for(lodge=True) == "b"
     with_lodge = access.validate_access_settings({**raw, "lodge_aud": "a"})
     assert with_lodge.audience_for(lodge=True) == "a" and with_lodge.audience_for(lodge=False) == "b"
+
+
+def test_an_app_socket_through_a_way_in_with_no_expiry_lasts_as_long_as_its_login(lodge, monkeypatch):
+    """A way in may prove the owner without an expiry: the app's socket is
+    then rechecked on the timer, not closed at once."""
+    import asyncio
+
+    import websockets.asyncio.client as ws_client
+    from starlette.websockets import WebSocketDisconnect
+
+    from server import ways_in
+    monkeypatch.setattr(server_app, "SOCKET_RECHECK_SECONDS", 0.05)
+    answers = iter([ways_in.Visitor("owner", None)] * 4)
+
+    async def owner(*_args):
+        return next(answers, None)
+    monkeypatch.setattr(ways_in.named("cloudflare"), "owner", owner, raising=False)
+
+    async def connect(*_args, **_kwargs):
+        return SimpleNamespace(subprotocol=None, close=lambda *a, **k: asyncio.sleep(0))
+
+    async def relay(_ws, _upstream):
+        await asyncio.sleep(60)
+    monkeypatch.setattr(ws_client, "unix_connect", connect)
+    monkeypatch.setattr(server_app, "relay_websocket", relay)
+    host = f"board.{DOMAIN}"
+    with _through_tunnel(host).websocket_connect("/ws", headers={"host": host, "origin": f"https://{host}"}) as socket:
+        with pytest.raises(WebSocketDisconnect):
+            socket.receive_text()
+    assert next(answers, "spent") == "spent"   # asked again each time, closed when the login ended

@@ -936,9 +936,15 @@ class MillForwardMiddleware:
                     await asyncio.sleep(SOCKET_RECHECK_SECONDS)
                     if app_sharing.current_share(WOLTS_DIR, content.name, content.token) is None:
                         return
-            if content.remote:
-                await asyncio.sleep(max(0.0, (expires_at or time.time()) - time.time()))
+            if content.remote and expires_at is not None:
+                await asyncio.sleep(max(0.0, expires_at - time.time()))
                 return
+            if content.remote:
+                # A way in whose proof has no expiry: ask it again on the timer.
+                while True:
+                    await asyncio.sleep(SOCKET_RECHECK_SECONDS)
+                    if (await _remote_visitor(scope, headers, content))[0] is None:
+                        return
             while True:
                 await asyncio.sleep(SOCKET_RECHECK_SECONDS)
                 if _local_visitor(scope, headers, label) is None:
