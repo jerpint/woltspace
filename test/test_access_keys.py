@@ -76,3 +76,32 @@ def test_old_keys_stop_being_trusted_after_a_day(clock):
     clock.now += 3600 + 24 * 3600 + 1
     with pytest.raises(OSError):
         asyncio.run(v._get_keys(TEAM))
+
+
+def _token(key, **claims):
+    import time
+    now = int(time.time())
+    body = {"aud": "apps-aud", "iss": f"https://{TEAM}", "email": "o@example.com",
+            "iat": now, "exp": now + 600, **claims}
+    return jwt.encode(body, key, algorithm="RS256", headers={"kid": "k1"})
+
+
+@pytest.mark.parametrize("ahead,ok", [(30, True), (300, False)])
+def test_a_login_from_a_clock_a_little_ahead_is_accepted(ahead, ok):
+    import time
+
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    private = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    v = access.AccessTokenVerifier()
+
+    async def keys(_team, force=False):
+        return {"k1": private.public_key()}
+    v._get_keys = keys
+    settings = access.AccessSettings(TEAM, "apps-aud", "o@example.com")
+    now = int(time.time())
+    token = _token(private, iat=now + ahead, nbf=now + ahead)
+    if ok:
+        assert asyncio.run(v.verify(token, settings, "apps-aud"))["email"] == "o@example.com"
+    else:
+        with pytest.raises(jwt.PyJWTError):
+            asyncio.run(v.verify(token, settings, "apps-aud"))

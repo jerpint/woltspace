@@ -132,6 +132,9 @@ def validate_access_settings(raw: object) -> AccessSettings:
     return AccessSettings(team_domain, apps_aud, owner_email, lodge_aud)
 
 
+CLOCK_LEEWAY_SECONDS = 60
+
+
 class AccessTokenVerifier:
     """Cloudflare's signing keys, cached for an hour.
 
@@ -223,6 +226,9 @@ class AccessTokenVerifier:
             audience=audience,
             issuer=f"https://{settings.team_domain}",
             options={"require": ["exp", "iat", "aud", "iss"]},
+            # A lodge's clock a little behind Cloudflare's mustn't refuse a
+            # login that was just issued.
+            leeway=CLOCK_LEEWAY_SECONDS,
         )
         try:
             return jwt.decode(token, key, **kwargs)
