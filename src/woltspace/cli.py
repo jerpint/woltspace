@@ -1144,7 +1144,12 @@ def _connect(args) -> int:
         lore.failure(f"this lodge is already at {current}",
                      subtitle_text="to move it, ask the owner, then run this again with --replace")
         return 1
-    result = connect_cloudflare.apply(layout, connection)
+    try:
+        result = connect_cloudflare.apply(layout, connection)
+    except OSError as exc:
+        lore.failure(f"couldn't save the connection: {exc.strerror or type(exc).__name__}",
+                     subtitle_text="fix that, then run this again with the same code")
+        return 1
     import urllib.error
     import urllib.request
     try:

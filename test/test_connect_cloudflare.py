@@ -79,6 +79,23 @@ def test_it_leaves_everything_else_alone_and_can_run_twice(tmp_path):
     assert ((tmp_path / ".env").read_text(), (tmp_path / "woltspace.json").read_text()) == first
 
 
+def test_a_failed_save_never_leaves_a_tunnel_without_access_settings(tmp_path, monkeypatch):
+    real = connect._write_private
+
+    def full_disk(path, text, mode):
+        if path.name == ".env":
+            raise OSError(28, "No space left on device")
+        real(path, text, mode)
+    monkeypatch.setattr(connect, "_write_private", full_disk)
+    with pytest.raises(OSError):
+        connect.apply(layout(tmp_path), connect.decode(code()))
+    assert not (tmp_path / ".env").exists()
+    monkeypatch.setattr(connect, "_write_private", real)
+    connect.apply(layout(tmp_path), connect.decode(code()))   # the same code again finishes it
+    assert f"CLOUDFLARE_TUNNEL_TOKEN={SECRET}" in (tmp_path / ".env").read_text()
+    assert "cloudflare" in json.loads((tmp_path / "woltspace.json").read_text())["ways_in"]
+
+
 def test_a_domain_in_use_is_found_wherever_the_lodge_reads_it(tmp_path, monkeypatch):
     used = "https://other.ery.woltspace.app"
     (tmp_path / ".env").write_text(f"export CLOUDFLARE_TUNNEL_URL={used}\n")
