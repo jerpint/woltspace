@@ -22,7 +22,7 @@ def start_cloudflared(port: int, host_header: str | None = "localhost") -> dict:
         host_header: value for --http-host-header (None to skip)
 
     Returns:
-        {"url": str, "pid": int, "log_file": str}
+        {"url": str, "pid": int}  (the log it read the address from is gone)
 
     Raises:
         RuntimeError: if tunnel fails to start within 15s
@@ -69,7 +69,7 @@ def start_cloudflared(port: int, host_header: str | None = "localhost") -> dict:
             pass
         raise RuntimeError("cloudflared tunnel failed to start — is cloudflared installed?")
 
-    return {"url": url, "pid": proc.pid, "log_file": log_file}
+    return {"url": url, "pid": proc.pid}
 
 
 CLOUDFLARED_NEEDLE = "cloudflared"

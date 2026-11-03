@@ -547,7 +547,7 @@ class MillConnector:
                 "not the platform entrypoint; a guest never runs the Mill",
                 remedy="Run the control plane through `woltspace start`.",
             )
-        socket = Path(os.environ.get("WOLTSPACE_MILL_SOCKET")
+        socket = Path(values.get("WOLTSPACE_MILL_SOCKET")
                       or layout.wolts_dir / ".space" / "run" / "mill" / "mill.sock")
         child_env = export_both({
             "WOLTSPACE_WOLTS_DIR": str(layout.wolts_dir),

@@ -5,7 +5,7 @@ description: Set up a new app from scratch. Use when starting a fresh app — sc
 
 # New App Setup
 
-An app is something you ship — an app, a tool, a service. It has its own server, dependencies, and manifest. It can be public. Apps live at `wolts/apps/{name}/` and are served at `/app/{name}/`.
+An app is something you ship — an app, a tool, a service. It has its own server, dependencies, and manifest. The owner can share it. Apps live at `wolts/apps/{name}/` and are served at `http://{name}.localhost:7777/`.
 
 **Apps are an escalation, not a default.** Wolts should start with their site (`wolt/site/`) for lightweight work. Only create an app when the work needs its own server, dependencies, or is meant to be shared. Always confirm with the user before creating an app.
 
@@ -68,8 +68,7 @@ This is **required** — the platform only discovers apps that have `woltspace.j
   "install": "npm install",
   "start": "node server.js --port $PORT --host $HOST",
   "keeper": "{your-wolt-name}",
-  "emoji": "🦊",
-  "public": false
+  "emoji": "🦊"
 }
 ```
 
@@ -86,7 +85,7 @@ This is **required** — the platform only discovers apps that have `woltspace.j
 | `start` | no | Start command. Use `$PORT` — the platform expands it. Add `--host $HOST`: the platform sets it to `127.0.0.1`, and the Mill reaches the app there. **Null = app can't be started from the lodge.** |
 | `source` | no | Origin URL if cloned/forked |
 | `emoji` | no | Display emoji (auto-assigned if omitted) |
-| `public` | no | If `true`, the app is shared publicly when started. With a named tunnel: served at `{name}.{domain}` (e.g. `corework.woltspace.com`). Without: a random quick tunnel URL. Default: `false`. |
+| `public` | no | Ignored since 0.6: sharing is `woltspace app share`, never a manifest field. Leave it out. |
 
 **Important:** `project.json` and `app.json` are NOT recognized. Only `woltspace.json` works.
 
