@@ -19,7 +19,8 @@ export WOLTSPACE_DIR="$PWD"
 python -m pytest -q test/test_release_workflow.py test/test_lodge_skills.py test/test_skills_sync.py \
   test/test_session_target_api.py test/test_execution_policy.py \
   test/test_auto_grants_cli.py test/test_lodge_grants.py test/test_wolf_runs.py \
-  test/test_backup.py \
+  test/test_backup.py test/test_inbox.py test/test_inbox_actor.py test/test_inbox_binding.py test/test_inbox_binding_independent.py \
+  test/test_session_guard.py test/test_session_guard_independent.py test/test_restore_guard.py test/test_restore_guard_independent.py \
   test/test_native_doctor.py \
   test/test_outbox.py test/test_notification_types.py test/test_notify_file_core.py \
   test/test_notify_file_telegram.py test/test_notify_file_route.py \

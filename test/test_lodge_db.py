@@ -33,6 +33,20 @@ def test_connect_creates_the_file_and_sets_the_pragmas(tmp_path):
         conn.close()
 
 
+def test_a_durable_writer_is_full_from_before_its_schema_and_begin(tmp_path, monkeypatch):
+    seen = []
+    ensure = lodge_db.ensure_schema
+    def spy(conn):
+        seen.append((conn.in_transaction, conn.execute("PRAGMA synchronous").fetchone()[0]))
+        ensure(conn)
+    monkeypatch.setattr(lodge_db, "ensure_schema", spy)
+    with lodge_db.write(tmp_path, durable=True) as conn:
+        seen.append((None, conn.execute("PRAGMA synchronous").fetchone()[0]))
+    with lodge_db.write(tmp_path) as conn:
+        seen.append((None, conn.execute("PRAGMA synchronous").fetchone()[0]))
+    assert seen == [(False, 2), (None, 2), (False, 1), (None, 1)]  # FULL, then NORMAL
+
+
 def test_schema_is_created_once_and_each_migration_recorded(tmp_path):
     for _ in range(2):
         conn = lodge_db.connect(tmp_path)
@@ -56,6 +70,30 @@ def test_a_migration_that_lands_late_still_runs(tmp_path, monkeypatch):
     assert {"two", "three"} <= tables
     assert lodge_db.applied_migrations(conn) == [1, 2, 3]
     conn.close()
+
+
+def test_migration_6_adds_empty_inbox_binding_columns_and_keeps_every_row(tmp_path, monkeypatch):
+    known = lodge_db._MIGRATIONS
+    six = dict(known)[6]
+    monkeypatch.setattr(lodge_db, "_MIGRATIONS", [m for m in known if m[0] != 6])
+    with lodge_db.write(tmp_path) as conn:
+        conn.execute("INSERT INTO sessions(name, wolt, status, created_at, record, updated_at)"
+                     " VALUES ('s1', 'pal', 'running', 1, '{}', 1)")
+        conn.execute("INSERT INTO inbox_messages(key, recipient, conversation, body, size, digest,"
+                     " state, created_at) VALUES ('k1', 'pal', 'c1', x'00', 1, x'00', 'queued', 1)")
+    monkeypatch.setattr(lodge_db, "_MIGRATIONS", [m for m in known if m[0] != 6] + [(6, six + ("nonsense",))])
+    with pytest.raises(sqlite3.OperationalError):
+        lodge_db.connect(tmp_path)  # a failing migration leaves nothing of itself
+    monkeypatch.setattr(lodge_db, "_MIGRATIONS", known)
+    for _ in range(2):
+        with closing(lodge_db.connect(tmp_path)) as conn:
+            assert 6 in lodge_db.applied_migrations(conn)
+            assert [tuple(r) for r in conn.execute(
+                "SELECT name, status, inbox_incarnation, inbox_revision FROM sessions")] == [
+                ("s1", "running", None, None)]
+            assert [tuple(r) for r in conn.execute("SELECT key, state, request_kind FROM inbox_messages")
+                    ] == [("k1", "queued", None)]
+            assert conn.execute("SELECT value FROM meta WHERE key='min_schema'").fetchone()[0] == "0"
 
 
 def _newer_build(monkeypatch, tmp_path, extra, breaking):
