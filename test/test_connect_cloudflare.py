@@ -60,7 +60,7 @@ def test_it_saves_everything_the_lodge_needs(tmp_path):
     config = json.loads((tmp_path / "woltspace.json").read_text())
     assert config["ways_in"]["cloudflare"] == {
         "team_domain": "team.cloudflareaccess.com", "apps_aud": "aud-tag", "owner_email": "ery@example.com"}
-    assert config["mill"]["remote_sites"] is True
+    assert "mill" not in config
 
 
 def test_it_leaves_everything_else_alone_and_can_run_twice(tmp_path):
@@ -71,35 +71,9 @@ def test_it_leaves_everything_else_alone_and_can_run_twice(tmp_path):
     first = (tmp_path / ".env").read_text(), (tmp_path / "woltspace.json").read_text()
     assert first[0].startswith("A=1\nKEY=\"-----BEGIN\nCLOUDFLARE_NOT_THIS=2\n-----END\"\nCLOUDFLARE_TUNNEL_URL=https://lodge.ery")
     config = json.loads(first[1])
-    assert config["telegram"] == {"x": 1} and config["mill"] == {"other": 2, "remote_sites": True}
+    assert config["telegram"] == {"x": 1} and config["mill"] == {"other": 2}
     connect.apply(layout(tmp_path), connect.decode(code()))
     assert ((tmp_path / ".env").read_text(), (tmp_path / "woltspace.json").read_text()) == first
-
-
-def test_an_app_holding_a_reserved_name_keeps_remote_sites_off(tmp_path):
-    (tmp_path / "apps" / "site-old").mkdir(parents=True)
-    result = connect.apply(layout(tmp_path), connect.decode(code()))
-    assert result["remote_sites_held_by"] == ["site-old"]
-    assert "mill" not in json.loads((tmp_path / "woltspace.json").read_text())
-
-
-def _settings(root):
-    return json.loads((root / "woltspace.json").read_text())
-
-
-def test_a_code_doesnt_decide_a_domain_the_lodge_already_used_is_clean(tmp_path):
-    (tmp_path / ".env").write_text("CLOUDFLARE_TUNNEL_URL=https://other.ery.woltspace.app\n")
-    result = connect.apply(layout(tmp_path), connect.decode(code()))
-    assert result["remote_sites"] is False and "remote_sites" not in _settings(tmp_path).get("mill", {})
-
-
-@pytest.mark.parametrize("env", ["", "CLOUDFLARE_TUNNEL_URL=https://lodge.ery.woltspace.app\n",
-                                 "CLOUDFLARE_TUNNEL_URL=https://old.elsewhere.example.com\n"])
-def test_a_code_never_overrides_the_owners_refusal(tmp_path, env):
-    (tmp_path / ".env").write_text(env)
-    (tmp_path / "woltspace.json").write_text(json.dumps({"mill": {"remote_sites": False}}))
-    connect.apply(layout(tmp_path), connect.decode(code()))
-    assert _settings(tmp_path)["mill"]["remote_sites"] is False
 
 
 def test_a_domain_in_use_is_found_wherever_the_lodge_reads_it(tmp_path, monkeypatch):
@@ -112,13 +86,6 @@ def test_a_domain_in_use_is_found_wherever_the_lodge_reads_it(tmp_path, monkeypa
     monkeypatch.setattr("woltspace.lifecycle.read_tunnel_url", lambda _layout: "")
     monkeypatch.setenv("CLOUDFLARE_TUNNEL_URL", used)
     assert connect.current_url(layout(tmp_path)) == used
-    assert connect.apply(layout(tmp_path), connect.decode(code()))["remote_sites"] is False
-
-
-def test_moving_to_a_new_domain_turns_remote_sites_on(tmp_path):
-    (tmp_path / ".env").write_text("CLOUDFLARE_TUNNEL_URL=https://old.elsewhere.example.com\n")
-    connect.apply(layout(tmp_path), connect.decode(code()))
-    assert _settings(tmp_path)["mill"]["remote_sites"] is True
 
 
 def _run(tmp_path, monkeypatch, capsys, *args, stdin=None):

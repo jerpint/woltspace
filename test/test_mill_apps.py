@@ -249,7 +249,7 @@ def _lodge(host=APP, client=("127.0.0.1", 50000)) -> TestClient:
 
 def test_an_app_on_the_lodges_port_goes_through_the_mill(lodge_with_board):
     response = _lodge().post("/upload", content=b"y" * 5000, headers={
-        "origin": f"http://{APP}", "cookie": "app=1; woltspace-lodge-7777=t; woltspace-site=s",
+        "origin": f"http://{APP}", "cookie": "app=1; woltspace-lodge-7777=t; woltspace-app=s",
         "x-woltspace-key": "k", mill_server.IDENTITY_HEADER: "forged"})
     assert response.status_code == 200 and response.text == "got 5000"
     _method, _path, sent = _Seen.requests[-1]
@@ -286,9 +286,9 @@ def test_with_auth_on_an_app_opens_from_the_lodge(lodge_with_board, monkeypatch)
     granted = app.get(grant.split("7777", 1)[1], follow_redirects=False)
     assert granted.headers["location"] == "/x"
     assert app.get("/").text == "hello from board"
-    # A site's grant doesn't open an app of the same name, and the reverse.
-    site_code = lodge_auth.new_site_grant(root, "board")
-    assert _lodge().get(f"/_woltspace/grant?code={site_code}").status_code == 403
+    # A grant for another label doesn't open this app.
+    other_code = lodge_auth.new_app_grant(root, "board")
+    assert _lodge().get(f"/_woltspace/grant?code={other_code}").status_code == 403
 
 
 def test_auth_off_opening_an_app_just_redirects(lodge_with_board):

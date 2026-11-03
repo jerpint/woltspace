@@ -1,6 +1,6 @@
-"""The switch-over: sites and apps through the tunnel go to the Mill once
-Cloudflare Access vouches for the owner; old addresses redirect; nothing of a
-wolt's runs on the lodge's origin."""
+"""The switch-over: apps through the tunnel go to the Mill once Cloudflare
+Access vouches for the owner; old app addresses redirect; wolt sites stay the
+lodge's own pages."""
 
 import json
 import sys
@@ -150,15 +150,14 @@ def test_a_write_from_the_apps_public_page_is_its_own_page(lodge):
     assert foreign.status_code == 403
 
 
-def _remote_sites_on(root):
-    (root / "woltspace.json").write_text(json.dumps({"mill": {"remote_sites": True}}))
-
-
-def test_a_wolts_site_through_the_tunnel(lodge):
-    _remote_sites_on(lodge)
-    response = _through_tunnel(f"site-softie.{DOMAIN}").get("/", headers={"cf-access-jwt-assertion": "good"})
+def test_a_wolts_site_through_the_tunnel_is_a_lodge_page(lodge, monkeypatch):
+    import sites
+    monkeypatch.setattr(sites, "WOLTS_DIR", lodge)
+    response = _through_tunnel(LODGE_HOST).get("/wolt/softie/site/")
     assert response.status_code == 200 and "softie's site" in response.text
-    assert _through_tunnel(f"site-softie.{DOMAIN}").get("/").status_code == 403
+    # No host of its own: a site- name through the tunnel is neither the lodge nor an app.
+    refused = _through_tunnel(f"site-softie.{DOMAIN}").get("/", headers={"cf-access-jwt-assertion": "good"})
+    assert refused.status_code != 200 and "softie's site" not in refused.text
 
 
 def test_the_lodge_through_the_tunnel_is_still_the_lodge(lodge):
@@ -166,15 +165,12 @@ def test_the_lodge_through_the_tunnel_is_still_the_lodge(lodge):
 
 
 def test_opening_from_the_lodge_through_the_tunnel_goes_to_the_public_address(lodge):
-    _remote_sites_on(lodge)
     lodge_client = _through_tunnel(LODGE_HOST)
-    site = lodge_client.get("/sites/open?wolt=softie&path=/a.html", follow_redirects=False)
-    assert site.headers["location"] == f"https://site-softie.{DOMAIN}/a.html"
     app = lodge_client.get("/apps/open?app=board&path=/x", follow_redirects=False)
     assert app.headers["location"] == f"https://board.{DOMAIN}/x"
 
 
-def test_site_names_are_reserved_for_sites():
+def test_site_names_stay_reserved_from_apps():
     from server.content_hosts import parse_app_host
     assert parse_app_host("site-softie.localhost:7777") is None
 
@@ -203,14 +199,6 @@ def test_sparks_run_opaque_whether_or_not_auth_is_on(monkeypatch):
     monkeypatch.setattr(server_app, "get_spark_with_chain", spark)
     csp = _local().get("/history/abc").headers["content-security-policy"]
     assert csp.startswith("sandbox") and "allow-same-origin" not in csp
-
-
-def test_the_lodge_root_never_serves_a_wolts_files(tmp_path, monkeypatch):
-    site = tmp_path / "site"
-    site.mkdir()
-    (site / "evil.html").write_text("<script>fetch('/sessions')</script>")
-    monkeypatch.setattr(server_app, "SITE_DIR", site)
-    assert "<script>" not in _local().get("/evil.html").text
 
 
 # --- doctor ---------------------------------------------------------------------------------
@@ -392,18 +380,6 @@ def test_a_websocket_through_the_tunnel_needs_the_public_origin(lodge):
                 pass
 
 
-def test_remote_sites_are_off_until_the_owner_turns_them_on(lodge, monkeypatch):
-    client = _through_tunnel(f"site-softie.{DOMAIN}")
-    assert client.get("/", headers={"cf-access-jwt-assertion": "good"}).status_code == 503
-    assert _through_tunnel(LODGE_HOST).get("/sites/open?wolt=softie", follow_redirects=False).status_code == 503
-    _remote_sites_on(lodge)
-    assert client.get("/", headers={"cf-access-jwt-assertion": "good"}).status_code == 200
-    # An app that holds the name keeps it from the site.
-    monkeypatch.setattr(server_app, "get_app",
-                        lambda name: SimpleNamespace(can_start=lambda: True) if name == "site-softie" else None)
-    assert client.get("/", headers={"cf-access-jwt-assertion": "good"}).status_code == 503
-
-
 @pytest.fixture
 def tunnel_records(monkeypatch):
     import apps
@@ -545,8 +521,7 @@ def test_a_lodge_under_its_own_name_has_its_content_there(monkeypatch):
     assert way.lodge_hosts() >= {"lodge.owner.woltspace.test"}
     assert way.content_host("lodge.owner.woltspace.test") is None
     assert way.content_host("deck.owner.woltspace.test") == ways_in.PublicHost("app", "deck", "deck.owner.woltspace.test")
-    assert way.content_host("site-softie.owner.woltspace.test") == ways_in.PublicHost(
-        "site", "softie", "site-softie.owner.woltspace.test")
+    assert way.content_host("site-softie.owner.woltspace.test") is None
     assert way.content_host("deck.woltspace.test") is None
     assert way.content_host("a.deck.owner.woltspace.test") is None
     assert way.public_base("lodge.owner.woltspace.test", "app", "deck") == "https://deck.owner.woltspace.test"
@@ -1020,11 +995,8 @@ def test_a_way_in_can_only_ever_prove_the_owner(lodge, testnet, monkeypatch, pro
         return Visitor(identity, expires())
     monkeypatch.setattr(testnet, "owner", owner)
     monkeypatch.setattr(testnet, "content_host", lambda host: {
-        "board.testnet.example": PublicHost("app", "board", host),
-        "softie.testnet.example": PublicHost("site", "softie", host)}.get(host))
-    _remote_sites_on(lodge)
+        "board.testnet.example": PublicHost("app", "board", host)}.get(host))
     assert _via_testnet().get("/").status_code == 403
-    assert _via_testnet("softie.testnet.example").get("/").status_code == 403
 
 
 def test_a_way_in_that_raises_lets_nobody_in(lodge, testnet, monkeypatch):
@@ -1279,22 +1251,19 @@ def test_with_lodge_auth_on_nobody_else_opens_the_lodge(lodge_auth_on, headers):
     assert _through_tunnel(LODGE_HOST).get("/tunnel", headers=headers).status_code == 401
 
 
-def test_the_owners_login_opens_sites_and_apps_from_the_lodge(lodge_auth_on):
-    _remote_sites_on(lodge_auth_on)
+def test_the_owners_login_opens_apps_from_the_lodge(lodge_auth_on):
     client = _through_tunnel(LODGE_HOST)
     login = {"cf-access-jwt-assertion": "good"}
     app = client.get("/apps/open?app=board&path=/x", headers=login, follow_redirects=False)
     assert app.status_code == 303 and app.headers["location"] == f"https://board.{DOMAIN}/x"
-    site = client.get("/sites/open?wolt=softie", headers=login, follow_redirects=False)
-    assert site.status_code == 303 and site.headers["location"] == f"https://site-softie.{DOMAIN}/"
 
 
-def test_a_wolts_key_still_cant_open_a_site_or_app(lodge_auth_on):
+def test_a_wolts_key_still_cant_open_an_app(lodge_auth_on):
     import lodge_auth
     key = lodge_auth.ensure_keys(lodge_auth_on)[lodge_auth.WOLT]
     client = TestClient(server_app.app, base_url="http://localhost:7777", client=("127.0.0.1", 50000))
-    for path in ("/apps/open?app=board", "/sites/open?wolt=softie"):
-        assert client.get(path, headers={lodge_auth.KEY_HEADER: key}, follow_redirects=False).status_code == 403
+    response = client.get("/apps/open?app=board", headers={lodge_auth.KEY_HEADER: key}, follow_redirects=False)
+    assert response.status_code == 403
 
 
 def test_a_name_sharing_cant_hold_says_so_and_changes_nothing(lodge):
@@ -1326,7 +1295,7 @@ def test_only_the_lodges_own_pages_can_frame_it(lodge):
 def test_a_forgotten_browsers_socket_closes(lodge_auth_on, monkeypatch):
     import lodge_auth
     from starlette.websockets import WebSocketDisconnect
-    monkeypatch.setattr(server_app, "SITE_SOCKET_RECHECK_SECONDS", 0.05)
+    monkeypatch.setattr(server_app, "SOCKET_RECHECK_SECONDS", 0.05)
     token = lodge_auth.redeem_pairing_code(lodge_auth_on, lodge_auth.new_pairing_code(lodge_auth_on))
     client = _local()
     headers = {"cookie": f"{lodge_auth.cookie_name('localhost:7777', False)}={token}",
@@ -1340,7 +1309,7 @@ def test_a_forgotten_browsers_socket_closes(lodge_auth_on, monkeypatch):
 def test_a_way_ins_socket_with_no_expiry_lasts_as_long_as_its_login(lodge_auth_on, monkeypatch):
     import lodge_auth
     from starlette.websockets import WebSocketDisconnect
-    monkeypatch.setattr(server_app, "SITE_SOCKET_RECHECK_SECONDS", 0.05)
+    monkeypatch.setattr(server_app, "SOCKET_RECHECK_SECONDS", 0.05)
     answers = iter([(lodge_auth.OWNER, None)] * 3)
 
     async def through_way_in(scope, headers, host):
@@ -1352,16 +1321,6 @@ def test_a_way_ins_socket_with_no_expiry_lasts_as_long_as_its_login(lodge_auth_o
             socket.receive_text()
     # It was asked again each time, and closed only when the login ended.
     assert next(answers, "spent") == "spent"
-
-
-def test_doctor_names_a_wolt_whose_site_has_no_address(tmp_path):
-    from woltspace.doctor import _wolt_sites_check
-    from woltspace.layout import RuntimeLayout
-    layout = RuntimeLayout.from_env({"WOLTSPACE_WOLTS_DIR": str(tmp_path)})
-    (tmp_path / "fine" / "wolt" / "site").mkdir(parents=True)
-    assert _wolt_sites_check(layout) is None
-    (tmp_path / "my_wolt" / "wolt" / "site").mkdir(parents=True)
-    assert "my_wolt" in _wolt_sites_check(layout).detail
 
 
 def test_the_owners_login_opens_only_the_host_of_its_way_in(lodge_auth_on):
