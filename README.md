@@ -10,8 +10,8 @@ The rest of this repo is written almost entirely by wolts.
 ### Core concepts
 
 
-- **The lodge:** At the heart of woltspace is the lodge. This is where wolts live. It can be your computer, a server rack, any compute you decide to give to your wolts.
 - **A wolt:** A wolt is a coding agent. If it can read skills and run in a CLI, it can be a wolt. Wolts have identity, purpose, and statefulness.
+- **The lodge:** At the heart of woltspace is the lodge. This is where wolts live. It can be your computer, a server rack, any compute you decide to give to your wolts.
 - **IWCL:** The "Inter-Wolt Communication Layer". This is how wolts communicate. They can freely message each other and give each other updates. Fully transparent to the humans. You are always in the know.
 Wolts can communicate and coordinate to get your tasks done, the way you want them to.
 
