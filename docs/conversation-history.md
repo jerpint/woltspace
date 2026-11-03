@@ -71,5 +71,5 @@ are kept as written, secrets included: there is no redaction and no access
 control beyond the inbox reader.
 
 Backups take the archive with the rest of `lodge.db`. A restore brings it
-back as passive text: nothing is replayed, and a copy holding inbox mail is
-still refused (see `backup.md`).
+back as passive text: nothing is replayed. A copy holding inbox mail restores
+with it, disarmed (see `backup.md`).

@@ -252,14 +252,16 @@ def test_an_evicted_attempt_is_not_brought_back_by_its_outcome(tmp_path):
 
 # -- backup and restore ----------------------------------------------------------
 
-def test_an_archive_without_mail_restores_and_mail_still_refuses(tmp_path, monkeypatch):
+def test_an_archive_restores_with_or_without_mail(tmp_path, monkeypatch):
     source = tmp_path / "wolts"
     store = lodge(source)
     (source / ".space" / "platform").mkdir(parents=True, exist_ok=True)
     token = reader(store, "s1")
     store.send(token, "pal", "k", "kept as history")
-    with pytest.raises(backup.RestoreRefused, match="safe_state_present"):  # queued mail: unchanged rule
-        backup.restore_backup(backup.create_backup(source, out_dir=tmp_path / "o1").archive, to=tmp_path / "b1")
+    queued = backup.restore_backup(backup.create_backup(source, out_dir=tmp_path / "o1").archive,
+                                   to=tmp_path / "b1").wolts_dir  # queued mail restores as it is
+    assert archived(queued) == archived(source)
+    assert rows(queued, "SELECT state FROM inbox_messages") == [("queued",)]
     acked(store, token)
     later = time.time() + inbox.RETAIN_SECONDS + 1
     monkeypatch.setattr(inbox.time, "time", lambda: later)
