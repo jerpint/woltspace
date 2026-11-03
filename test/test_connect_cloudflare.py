@@ -46,6 +46,9 @@ def test_the_gatekeep_format_decodes():
     code(url="https://lodge.ery.woltspace.app\tx"), code(apps_aud="aud\nX=1"),
     code(owner_email="ery@example.com\rX=1"), code(team_domain="team.cloudflareaccess.com\x00"),
     code(apps_aud=""), code(owner_email="nope"), code(team_domain="nodots"),
+    code(url="https://u:p@lodge.ery.woltspace.app"), code(url="https://lodge.ery.woltspace.app/?x=${HOME}"),
+    code(url="https://lodge.ery.woltspace.app/?"), code(url="https://lodge.ery.woltspace.app:8443"),
+    code(url="https://lodge.ery.woltspace.app/#top"), code(tunnel_token="a${HOME}"), code(apps_aud="a\\nb"),
 ])
 def test_a_bad_code_is_refused_without_repeating_it(bad):
     with pytest.raises(connect.BadCode) as caught:
@@ -132,6 +135,11 @@ def test_every_assignment_of_a_key_is_replaced_and_quoted_values_are_left_alone(
     assert env["CLOUDFLARE_TUNNEL_URL"] == FIELDS["url"] and env["CLOUDFLARE_TUNNEL_TOKEN"] == SECRET
     assert env["KEY"] == "-----BEGIN\nCLOUDFLARE_TUNNEL_TOKEN=not-a-line\n-----END" and env["Z"] == "3"
     assert "old" not in (tmp_path / ".env").read_text().replace("-----BEGIN", "")
+
+
+def test_the_address_is_saved_as_https_and_its_name(tmp_path):
+    connect.apply(layout(tmp_path), connect.decode(code(url="https://Lodge.Ery.woltspace.app/")))
+    assert "CLOUDFLARE_TUNNEL_URL=https://lodge.ery.woltspace.app\n" in (tmp_path / ".env").read_text()
 
 
 def test_a_failed_save_never_leaves_a_tunnel_without_access_settings(tmp_path, monkeypatch):
