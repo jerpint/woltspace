@@ -450,15 +450,22 @@ def _apps_check(layout: RuntimeLayout) -> DoctorCheck | None:
     )
 
 
+def _env_file_value(layout: RuntimeLayout, key: str) -> str | None:
+    """A value from the data root's `.env`, or None when it can't be read:
+    a check reports what it sees, it never stops doctor."""
+    from dotenv import dotenv_values
+    try:
+        return dotenv_values(layout.wolts_dir / ".env").get(key)
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
 def _lodge_auth_on(layout: RuntimeLayout, env=None) -> bool:
     """WOLTSPACE_LODGE_AUTH as the lodge will read it: the environment, else `.env`."""
     env = os.environ if env is None else env
     value = env.get("WOLTSPACE_LODGE_AUTH")
     if value is None:
-        env_file = layout.wolts_dir / ".env"
-        if env_file.is_file():
-            from dotenv import dotenv_values
-            value = dotenv_values(env_file).get("WOLTSPACE_LODGE_AUTH")
+        value = _env_file_value(layout, "WOLTSPACE_LODGE_AUTH")
     return (value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
@@ -548,11 +555,7 @@ def _tunnel_url(layout: RuntimeLayout) -> str:
     value = (os.environ.get("CLOUDFLARE_TUNNEL_URL") or "").strip()
     if value:
         return value
-    env_file = layout.wolts_dir / ".env"
-    if env_file.is_file():
-        from dotenv import dotenv_values
-        return (dotenv_values(env_file).get("CLOUDFLARE_TUNNEL_URL") or "").strip()
-    return ""
+    return (_env_file_value(layout, "CLOUDFLARE_TUNNEL_URL") or "").strip()
 
 
 def _access_settings_problem(raw) -> str:

@@ -11,7 +11,7 @@ dependencies = [
     "websockets",
     "httpx",
     "watchfiles",
-    "python-dotenv",
+    "python-dotenv>=0.10",
     "jinja2",
     # The CLI's voice. Pure Python, no compiled extensions, one transitive
     # dependency tree already common in this stack — and it is the piece that

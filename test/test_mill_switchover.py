@@ -255,6 +255,18 @@ def test_doctor_warns_a_container_lodge_with_lodge_auth_off(tmp_path):
     assert doctor._container_apps_check(container, env={}) is None
 
 
+def test_an_unreadable_env_file_never_stops_doctor(tmp_path, monkeypatch):
+    from woltspace import doctor
+    from woltspace.layout import RuntimeLayout
+    container = RuntimeLayout.from_env({"WOLTSPACE_WOLTS_DIR": str(tmp_path), "WOLTSPACE_ISOLATION": "external"})
+    (tmp_path / ".env").write_text("WOLTSPACE_LODGE_AUTH=1\n")
+    monkeypatch.delenv("CLOUDFLARE_TUNNEL_URL", raising=False)
+    monkeypatch.setattr("dotenv.main.DotEnv._get_stream",
+                        lambda self: (_ for _ in ()).throw(PermissionError(13, "Permission denied")))
+    assert doctor._lodge_auth_on(container, env={}) is False
+    assert doctor._tunnel_url(container) == ""
+
+
 def test_doctor_asks_for_access_settings_when_there_is_a_tunnel(tmp_path, monkeypatch):
     from woltspace import doctor
     monkeypatch.setenv("CLOUDFLARE_TUNNEL_URL", "https://owner.woltspace.test")
