@@ -42,7 +42,10 @@ def test_the_gatekeep_format_decodes():
     "", "hello", connect.PREFIX, connect.PREFIX + "!!!", connect.PREFIX + "bm90IGpzb24",
     code(url="http://lodge.ery.woltspace.app"), code(url="https://woltspace.app"),
     code(url="https://lodge.ery.woltspace.app/path"), code(tunnel_token=""), code(tunnel_token="a b"),
-    code(tunnel_token="a\nEVIL=1"), code(apps_aud=""), code(owner_email="nope"), code(team_domain="nodots"),
+    code(tunnel_token="a\nEVIL=1"), code(url="https://lodge.ery.woltspace.app\nTELEGRAM_ALLOW=*"),
+    code(url="https://lodge.ery.woltspace.app\tx"), code(apps_aud="aud\nX=1"),
+    code(owner_email="ery@example.com\rX=1"), code(team_domain="team.cloudflareaccess.com\x00"),
+    code(apps_aud=""), code(owner_email="nope"), code(team_domain="nodots"),
 ])
 def test_a_bad_code_is_refused_without_repeating_it(bad):
     with pytest.raises(connect.BadCode) as caught:

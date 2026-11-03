@@ -52,13 +52,17 @@ def decode(code: str) -> Connection:
     if not isinstance(raw, dict) or not all(isinstance(raw.get(name), str) and raw[name].strip() for name in names):
         raise BadCode("that connection code is incomplete")
     connection = Connection(*(raw[name].strip() for name in names))
+    # Every field may end up in `.env` or woltspace.json: one that could start a
+    # new line or end a quoted value is refused, whichever field it is.
+    for name in names:
+        value = getattr(connection, name)
+        if any(c.isspace() or not c.isprintable() or c in "\"'#" for c in value):
+            raise BadCode(f"that connection code has a bad {name.replace('_', ' ')}")
     parts = urlsplit(connection.url)
     # Apps live one level under the lodge's parent: drop the first label of the
     # lodge's name and something of the owner's must be left.
     if parts.scheme != "https" or (parts.hostname or "").count(".") < 2 or parts.path not in ("", "/"):
         raise BadCode("that connection code has a bad lodge address")
-    if any(c.isspace() or c in "\"'#" for c in connection.tunnel_token):
-        raise BadCode("that connection code has a bad tunnel token")
     problem = _access_settings_problem({
         "team_domain": connection.team_domain, "apps_aud": connection.apps_aud,
         "owner_email": connection.owner_email})
