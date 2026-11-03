@@ -140,8 +140,9 @@ def apply(layout: RuntimeLayout, connection: Connection) -> dict:
     write fails, the lodge has Access settings and no tunnel, never a tunnel
     without them, and running it again finishes the job."""
     settings = layout.wolts_dir / "woltspace.json"
+    previous = current_url(layout)
     with _settings_lock(layout, settings):
-        _save_access(settings, connection)
+        _save_access(settings, connection, moved=bool(previous) and previous.rstrip("/") != connection.url)
 
     env_file = layout.wolts_dir / ".env"
     text = env_file.read_text() if env_file.is_file() else ""
@@ -151,6 +152,10 @@ def apply(layout: RuntimeLayout, connection: Connection) -> dict:
         "CLOUDFLARE_TUNNEL_TOKEN": connection.tunnel_token,
     }), 0o600)
     return {"url": connection.url, "owner_email": connection.owner_email}
+
+
+def _team(domain) -> str:
+    return domain.strip().lower().rstrip(".") if isinstance(domain, str) else ""
 
 
 def _settings_lock(layout: RuntimeLayout, settings: Path):
@@ -163,13 +168,16 @@ def _settings_lock(layout: RuntimeLayout, settings: Path):
     return settings_lock(settings)
 
 
-def _save_access(settings: Path, connection: Connection) -> None:
+def _save_access(settings: Path, connection: Connection, moved: bool = False) -> None:
     config = json.loads(settings.read_text()) if settings.is_file() else {}
     ways_in = config.get("ways_in") if isinstance(config.get("ways_in"), dict) else {}
-    # A setting the code doesn't carry (a separate `lodge_aud`) stays while the
-    # Access team is the same one; another team's settings are never kept.
+    # A setting the code doesn't carry (a separate `lodge_aud`) stays on a
+    # reconnect: the same Access team and the same address. A move to another
+    # address may leave the lodge's own Access application behind, and another
+    # team's settings are never kept.
     before = ways_in.get("cloudflare") if isinstance(ways_in.get("cloudflare"), dict) else {}
-    kept = before if before.get("team_domain") == connection.team_domain else {}
+    same_team = _team(before.get("team_domain")) == _team(connection.team_domain)
+    kept = before if same_team and not moved else {}
     ways_in["cloudflare"] = {
         **kept,
         "team_domain": connection.team_domain,

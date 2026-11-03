@@ -91,6 +91,25 @@ def test_a_reconnect_keeps_the_lodge_s_own_access_application(tmp_path):
     assert saved["lodge_aud"] == "lodge-tag" and saved["apps_aud"] == "aud-tag"
 
 
+def test_a_move_to_another_address_drops_the_lodge_s_own_access_application(tmp_path):
+    """The lodge's own Access application covered the old address only."""
+    (tmp_path / ".env").write_text("CLOUDFLARE_TUNNEL_URL=https://old.example.com\n")
+    (tmp_path / "woltspace.json").write_text(json.dumps({"ways_in": {"cloudflare": {
+        "team_domain": "Team.cloudflareaccess.com.", "apps_aud": "old", "owner_email": "ery@example.com",
+        "lodge_aud": "lodge-tag"}}}))
+    connect.apply(layout(tmp_path), connect.decode(code()))
+    saved = json.loads((tmp_path / "woltspace.json").read_text())["ways_in"]["cloudflare"]
+    assert "lodge_aud" not in saved
+
+
+def test_the_same_team_spelled_differently_is_the_same_team(tmp_path):
+    (tmp_path / "woltspace.json").write_text(json.dumps({"ways_in": {"cloudflare": {
+        "team_domain": "Team.cloudflareaccess.com.", "apps_aud": "old", "owner_email": "ery@example.com",
+        "lodge_aud": "lodge-tag"}}}))
+    connect.apply(layout(tmp_path), connect.decode(code()))
+    assert json.loads((tmp_path / "woltspace.json").read_text())["ways_in"]["cloudflare"]["lodge_aud"] == "lodge-tag"
+
+
 def test_another_access_team_keeps_nothing_of_the_last_one(tmp_path):
     (tmp_path / "woltspace.json").write_text(json.dumps({"ways_in": {"cloudflare": {
         "team_domain": "old.cloudflareaccess.com", "apps_aud": "old", "owner_email": "ery@example.com",
