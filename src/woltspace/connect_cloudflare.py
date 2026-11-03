@@ -84,16 +84,50 @@ def _write_private(path: Path, text: str, mode: int) -> None:
 
 
 def _with_values(text: str, values: dict[str, str]) -> str:
-    """The env file with these keys set. Only whole `KEY=` lines change: other
-    values may span several lines, and this never parses or rewrites them."""
+    """The env file with these keys set. Only whole `KEY=` lines change, and
+    never a line inside a quoted value that spans several lines. dotenv takes
+    the last of a repeated key, so each key is set where it first appears and
+    every later assignment of it goes."""
     lines = text.splitlines()
-    missing = dict(values)
-    for index, line in enumerate(lines):
-        key = line.split("=", 1)[0].strip()
-        if "=" in line and key in missing:
-            lines[index] = f"{key}={missing.pop(key)}"
-    lines += [f"{key}={value}" for key, value in missing.items()]
-    return "\n".join(lines) + "\n"
+    out: list[str] = []
+    done: set[str] = set()
+    quote = ""  # the quote a value spanning lines is still waiting for
+    dropping = False  # that value belongs to a key set here: its lines go too
+    for line in lines:
+        if quote:
+            if not dropping:
+                out.append(line)
+            if _closes(line, quote):
+                quote = ""
+            continue
+        key, eq, value = line.partition("=")
+        key = key.strip().removeprefix("export ").strip()
+        value = value.lstrip()
+        if eq and value[:1] in ("'", '"') and not _closes(value[1:], value[0]):
+            quote = value[0]
+        dropping = bool(eq and key in values)
+        if dropping:
+            if key not in done:
+                out.append(f"{key}={values[key]}")
+                done.add(key)
+            continue  # a later assignment of a key set above
+        out.append(line)
+    out += [f"{key}={value}" for key, value in values.items() if key not in done]
+    return "\n".join(out) + "\n"
+
+
+def _closes(text: str, quote: str) -> bool:
+    """Whether `text` holds the closing `quote`. dotenv lets a backslash
+    escape a double quote, never a single one."""
+    escaped = False
+    for char in text:
+        if escaped:
+            escaped = False
+        elif char == "\\" and quote == '"':
+            escaped = True
+        elif char == quote:
+            return True
+    return False
 
 
 def _known_urls(layout: RuntimeLayout) -> list[str]:

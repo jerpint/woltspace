@@ -117,6 +117,23 @@ def test_a_settings_save_made_meanwhile_is_kept(tmp_path):
     assert config["harness"] == {"default": "codex"} and "cloudflare" in config["ways_in"]
 
 
+def test_every_assignment_of_a_key_is_replaced_and_quoted_values_are_left_alone(tmp_path):
+    """dotenv reads the last of a repeated key: an old second assignment must
+    not outlive the new address. A quoted value spanning lines is never read
+    as assignments, and an old multi-line value of a key set here goes whole."""
+    from dotenv import dotenv_values
+    (tmp_path / ".env").write_text(
+        "CLOUDFLARE_TUNNEL_URL=https://old.example.com\n"
+        "KEY=\"-----BEGIN\nCLOUDFLARE_TUNNEL_TOKEN=not-a-line\n-----END\"\n"
+        "export CLOUDFLARE_TUNNEL_TOKEN='old\nstill old'\n"
+        "CLOUDFLARE_TUNNEL_URL=https://older.example.com\nZ=3\n")
+    connect.apply(layout(tmp_path), connect.decode(code()))
+    env = dotenv_values(tmp_path / ".env")
+    assert env["CLOUDFLARE_TUNNEL_URL"] == FIELDS["url"] and env["CLOUDFLARE_TUNNEL_TOKEN"] == SECRET
+    assert env["KEY"] == "-----BEGIN\nCLOUDFLARE_TUNNEL_TOKEN=not-a-line\n-----END" and env["Z"] == "3"
+    assert "old" not in (tmp_path / ".env").read_text().replace("-----BEGIN", "")
+
+
 def test_a_failed_save_never_leaves_a_tunnel_without_access_settings(tmp_path, monkeypatch):
     real = connect._write_private
 
