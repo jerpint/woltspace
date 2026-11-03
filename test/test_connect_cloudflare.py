@@ -79,6 +79,24 @@ def test_it_leaves_everything_else_alone_and_can_run_twice(tmp_path):
     assert ((tmp_path / ".env").read_text(), (tmp_path / "woltspace.json").read_text()) == first
 
 
+def test_a_reconnect_keeps_the_lodge_s_own_access_application(tmp_path):
+    (tmp_path / "woltspace.json").write_text(json.dumps({"ways_in": {"cloudflare": {
+        "team_domain": "team.cloudflareaccess.com", "apps_aud": "old", "owner_email": "ery@example.com",
+        "lodge_aud": "lodge-tag"}}}))
+    connect.apply(layout(tmp_path), connect.decode(code()))
+    saved = json.loads((tmp_path / "woltspace.json").read_text())["ways_in"]["cloudflare"]
+    assert saved["lodge_aud"] == "lodge-tag" and saved["apps_aud"] == "aud-tag"
+
+
+def test_another_access_team_keeps_nothing_of_the_last_one(tmp_path):
+    (tmp_path / "woltspace.json").write_text(json.dumps({"ways_in": {"cloudflare": {
+        "team_domain": "old.cloudflareaccess.com", "apps_aud": "old", "owner_email": "ery@example.com",
+        "lodge_aud": "lodge-tag"}}}))
+    connect.apply(layout(tmp_path), connect.decode(code()))
+    saved = json.loads((tmp_path / "woltspace.json").read_text())["ways_in"]["cloudflare"]
+    assert "lodge_aud" not in saved and saved["team_domain"] == "team.cloudflareaccess.com"
+
+
 def test_a_failed_save_never_leaves_a_tunnel_without_access_settings(tmp_path, monkeypatch):
     real = connect._write_private
 

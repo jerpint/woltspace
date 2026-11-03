@@ -121,7 +121,12 @@ def apply(layout: RuntimeLayout, connection: Connection) -> dict:
     settings = layout.wolts_dir / "woltspace.json"
     config = json.loads(settings.read_text()) if settings.is_file() else {}
     ways_in = config.get("ways_in") if isinstance(config.get("ways_in"), dict) else {}
+    # A setting the code doesn't carry (a separate `lodge_aud`) stays while the
+    # Access team is the same one; another team's settings are never kept.
+    before = ways_in.get("cloudflare") if isinstance(ways_in.get("cloudflare"), dict) else {}
+    kept = before if before.get("team_domain") == connection.team_domain else {}
     ways_in["cloudflare"] = {
+        **kept,
         "team_domain": connection.team_domain,
         "apps_aud": connection.apps_aud,
         "owner_email": connection.owner_email,
