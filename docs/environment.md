@@ -296,6 +296,10 @@ most 500 characters, sent only when set) is a hint on how to speak. Server,
 model and key stay the lodge's. The voice must be one the lodge's speech server
 knows (`coral` is OpenAI's); one it refuses sends the message as text. The
 hint goes to OpenAI only.
+For both on the lodge's own machine, [Wocal](https://github.com/woltspace/wocal)
+is one local server with both endpoints, added as an app (Apple Silicon Macs,
+native lodges); its readme walks a wolt through pointing `transcription` and
+`speech` at it.
 
 **Harnesses** — `CLAUDE_CONFIG_DIR`, `CLAUDE_CODE_OAUTH_TOKEN`,
 `CLAUDE_CODE_DISABLE_AUTO_MEMORY`, `CODEX_HOME`, `OPENCODE_CONFIG_DIR` and the
