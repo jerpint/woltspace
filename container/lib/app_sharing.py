@@ -322,8 +322,10 @@ def _stop_and_confirm(pid, name, lodge_port, token, *, stop, is_ours) -> bool:
 
 
 def _cloudflared_processes() -> list[tuple[int, str]]:
+    # `-ww`: without it ps cuts each line to the terminal's width, and the long
+    # --http-host-header argument that names a share's tunnel goes missing.
     try:
-        out = subprocess.run(["ps", "-axo", "pid=,command="], capture_output=True, text=True,
+        out = subprocess.run(["ps", "-ww", "-axo", "pid=,command="], capture_output=True, text=True,
                              timeout=10).stdout
     except (OSError, subprocess.SubprocessError):
         return []
