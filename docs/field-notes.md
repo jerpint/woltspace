@@ -132,6 +132,9 @@ small `latest.json` beside them; a nightly upload; a weekly restore check.
   `PATH`. Otherwise the test server registers with the real tunnel.
 - **Run tests in a scrubbed environment** with no route to the live lodge's port or the internet;
   a bare `pytest` from a session inherits variables that point at the live lodge.
+- **A scrubbed environment still needs its own data root.** Without `WOLTSPACE_WOLTS_DIR` the
+  code falls back to `~/.woltspace/wolts`, the live lodge, and runs migrations there. See
+  [Testing](testing.md#keep-tests-away-from-a-real-lodge).
 - **Drive the UI headless for checks**: Chrome with `--remote-debugging-port` plus the DevTools
   protocol. Reading what a dialog would send is safe on the live lodge; pressing buttons belongs on
   an isolated server. Check phone width too (`--window-size=412,915`) with the longest allowed

@@ -43,6 +43,23 @@ stub external processes or HTTP calls unless that behavior is the test subject.
 Site and onboarding probes disable the public tunnel; tunnel configuration and
 process behavior have separate tests.
 
+## Keep tests away from a real lodge
+
+Clearing `WOLTSPACE_*` variables does not isolate a run. Without
+`WOLTSPACE_WOLTS_DIR`, the data root falls back to `~/.woltspace/wolts`, which
+is the default lodge. A test or trial build that opens `lodge.db` there runs
+its migrations on real data. A breaking migration raises `meta.min_schema`,
+and the installed build then refuses to start.
+
+- Give every run its own `HOME` and `WOLTSPACE_WOLTS_DIR` under a temporary
+  directory, and confirm them with `woltspace paths` before running anything.
+- Run unreleased branches, migrations and trial installs in a container whose
+  only data mount is a throwaway folder. Never mount the real `wolts_dir`.
+- Never let two builds with different migrations use the same data root.
+- Afterwards, check the real lodge read-only:
+  `sqlite3 "file:<wolts_dir>/.space/lodge.db?mode=ro" "SELECT value FROM meta WHERE key='min_schema'"`.
+  It must be unchanged.
+
 The livereload subprocess probe explicitly closes its websocket and waits for
 the ASGI handler to finish before leaving TestClient's websocket context.
 TestClient otherwise cancels that handler immediately after sending the
