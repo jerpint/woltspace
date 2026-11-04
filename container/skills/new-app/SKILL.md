@@ -5,7 +5,7 @@ description: Set up a new app from scratch. Use when starting a fresh app — sc
 
 # New App Setup
 
-An app is something you ship — an app, a tool, a service. It has its own server, dependencies, and manifest. It can be public. Apps live at `wolts/apps/{name}/` and are served at `/app/{name}/`.
+An app is something you ship — an app, a tool, a service. It has its own server, dependencies, and manifest. The owner can share it. Apps live at `wolts/apps/{name}/` and are served at `http://{name}.localhost:7777/`.
 
 **Apps are an escalation, not a default.** Wolts should start with their site (`wolt/site/`) for lightweight work. Only create an app when the work needs its own server, dependencies, or is meant to be shared. Always confirm with the user before creating an app.
 
@@ -66,10 +66,9 @@ This is **required** — the platform only discovers apps that have `woltspace.j
   "stack": "node",
   "port": 4010,
   "install": "npm install",
-  "start": "node server.js --port $PORT --host 0.0.0.0",
+  "start": "node server.js --port $PORT --host $HOST",
   "keeper": "{your-wolt-name}",
-  "emoji": "🦊",
-  "public": false
+  "emoji": "🦊"
 }
 ```
 
@@ -83,10 +82,10 @@ This is **required** — the platform only discovers apps that have `woltspace.j
 | `stack` | no | Tech stack: `python`, `vite`, `node`, `html` |
 | `install` | no | Install command (e.g. `npm install`, `uv sync`) |
 | `port` | yes | Fixed port for this app (use 4000-5999 range). Pick one, it's yours permanently. Avoid 7777 (platform) and 3001 (TUI). Sites use 6000+ so no collisions. |
-| `start` | no | Start command. Use `$PORT` — the platform expands it. Add `--host 0.0.0.0` for network access. **Null = app can't be started from the lodge.** |
+| `start` | no | Start command. Use `$PORT` — the platform expands it. Add `--host $HOST`: the platform sets it to `127.0.0.1`, and the Mill reaches the app there. **Null = app can't be started from the lodge.** |
 | `source` | no | Origin URL if cloned/forked |
 | `emoji` | no | Display emoji (auto-assigned if omitted) |
-| `public` | no | If `true`, the app is shared publicly when started. With a named tunnel: served at `{name}.{domain}` (e.g. `corework.woltspace.com`). Without: a random quick tunnel URL. Default: `false`. |
+| `public` | no | Ignored since 0.6: sharing is `woltspace app share`, never a manifest field. Leave it out. |
 
 **Important:** `project.json` and `app.json` are NOT recognized. Only `woltspace.json` works.
 
@@ -94,7 +93,7 @@ This is **required** — the platform only discovers apps that have `woltspace.j
 
 Your port is declared in `woltspace.json` and is permanent — it never changes. Check existing apps to avoid conflicts (`ls /workspace/wolts/apps/*/woltspace.json` and look at their ports). Avoid 7777 and 3001.
 
-- **Dev servers:** use `$PORT` in your start command — the platform expands it to your manifest port. Add `--host 0.0.0.0` so the server accepts connections from the proxy and tunnels.
+- **Dev servers:** use `$PORT` in your start command — the platform expands it to your manifest port. Add `--host $HOST`: the Mill reaches the app on loopback.
 - **No base path needed.** The viewport loads your app directly at its port (e.g. `blog.localhost:7777`). Internal links, WebSockets, and HMR all work naturally.
 
 - **Secrets:** if the app needs API keys, put them in its own `.env` (gitignored) and load them in the app. Never in `woltspace.json`, the start command, or the code. Apps don't get the lodge's chat, GitHub-bot or Cloudflare tokens; ask the human for a token just for this app. The woltspace apps skill has the full rules.

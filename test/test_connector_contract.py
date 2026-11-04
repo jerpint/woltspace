@@ -101,3 +101,13 @@ def test_every_builtin_connector_has_a_way_out():
     # (Telegram) send through their socket, from the sender the lodge registers.
     assert set(connector_registry.SPECS) <= set(notify.OUTBOUND) <= set(notify.SENDERS)
     assert "telegram" in notify.OUTBOUND and "telegram" in notify.SENDERS
+
+
+def test_apps_links_a_shared_app_to_its_public_address():
+    reply = lodge_commands.apps_list([
+        {"name": "board", "running": True, "shared": {"tunnel_url": "https://x.trycloudflare.com",
+                                                       "domain_url": None}},
+        {"name": "notes", "running": True, "shared": None},
+    ])
+    board, notes = (row[0] for row in reply.choices)
+    assert board.url == "https://x.trycloudflare.com" and notes.url is None

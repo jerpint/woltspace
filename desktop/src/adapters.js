@@ -15,7 +15,8 @@ export function createTauriAdapter() {
     revealDataFolder: () => invoke("reveal_data_folder"),
     lodgeReady: async (url) => {
       try {
-        const response = await fetch(`${url}/`, { cache: "no-store" });
+        // /health answers without a lodge key, so a lodge with auth on is ready too.
+        const response = await fetch(`${url}/health`, { cache: "no-store" });
         return response.ok;
       } catch {
         return false;
