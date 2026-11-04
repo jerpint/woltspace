@@ -1,44 +1,86 @@
-# Woltspace 0.5.25
+# Woltspace 0.6.0rc1
 
-Python **0.5.25** and **@woltspace/tui 0.5.4** are published together.
+Python **0.6.0rc1** is a release candidate. The TUI stays at
+**@woltspace/tui 0.5.4**.
+
+A plain `woltspace update` never installs a release candidate: install this
+one by naming it with `--version 0.6.0rc1`. Try it on a lodge you can
+restore.
 
 ## What's new
 
-- **The TUI shows custom creatures.** A wolt that is a custom creature shows
-  its own emoji in the TUI's session list and in "wake a wolt" (#633, #646).
-- **The TUI runs on Ink 8 and React 19.** Ink 5 counted one-character emoji
-  such as ⭐ as one column, so a row with one wrapped and left a blank line.
-  Ink 8 measures them as terminals draw them (#646).
+- **Messages: an inbox for every agent, off by default.** Chat connectors,
+  wolt-to-wolt messages and terminal sends can queue into a durable per-agent
+  inbox, and a waker tells the agent through its engine's own input path
+  instead of pasting into a live session. The owner sees waiting mail,
+  read-only, on every site and on the Inbox page. Turn it on in
+  `woltspace.json` with `"inbox": {"enabled": true}`; with it off every path
+  behaves as before (#643).
+- **Permission levels Ask, Auto and Bypass.** "Auto" now means each engine's
+  own automatic mode, and the old skip-every-check behaviour is named
+  "Bypass". The CLI has `--policy`, the TUI a level picker, and
+  `woltspace.json` can set a lodge-wide default with
+  `"sessions": {"default_execution_policy": "..."}`. Defaults are unchanged in
+  effect: existing sessions keep running as they did (#652).
+- **Conversation history, opt in.** A lodge can keep a bounded archive of the
+  inbox mail it admitted and the text `notify` sent, so an agent can read its
+  own past conversation as context. It needs the inbox too:
+  `"conversation_log": {"enabled": true}`. See
+  [docs/conversation-history.md](https://github.com/jerpint/woltspace/blob/main/docs/conversation-history.md)
+  (#657).
+- **A Neovim client, wolts.nvim.** Pick a wolt and a session and it opens in a
+  split beside your code; send a selection with a question. Alt+w switches
+  between open wolts, Alt+h/j/k/l move back into the wolt, Alt+= and Alt+-
+  resize. See `nvim/README.md` (#653, #656, #665).
+- **Updates stay on the installed release line.** `woltspace update` installs
+  a newer patch on your line; a newer line is a migration you choose with
+  `--version` (#655).
 
 ## Changes to know about
 
-- **The TUI needs Node.js 22 or newer** (was 18). `woltspace tui` says so
-  when the Node it finds is older. CI, the release workflow and the container
-  image already use Node 22 or newer (#646).
-- **The unused v1 Telegram adapter is gone.** The Telegram connector from
-  0.5.24 is the only Telegram path (#636).
+- **This release changes the lodge database in a way 0.5 cannot read.**
+  Starting 0.6.0rc1 rewrites every stored session's permission record (0.5's
+  "auto" becomes "bypass"), and from then on 0.5.x refuses to open the lodge.
+  Installing 0.5.25 again does not undo it: going back means restoring the
+  backup you took before upgrading.
+- **Pre-releases never become the Latest release** on GitHub (#654).
+- **The container's `version-check` helper is gone**; the update notice and
+  `woltspace update --check` cover it (#654).
+- **Sessions start from a folder whose path has a space** (#659).
+
+## Known issues
+
+- A session that fails right after an inbox launch can leave its launch marker
+  behind, so the next launch of that agent waits for it.
+- Archiving a wolt that still has queued mail leaves its mailbox in place, and
+  it cannot be deleted from the lodge yet.
+- There is no migration guide for 0.6 yet; these notes are the guide for this
+  candidate.
 
 ## Upgrade notes
 
-Updates now stay on the installed release line; a newer line is a migration
-you choose with `--version`. Ask your wolt to upgrade: see
-[docs/updates.md](https://github.com/jerpint/woltspace/blob/main/docs/updates.md).
-
-Take a backup first, with the release you are leaving:
+Take a backup first, with the release you are leaving, and keep it until you
+are sure you are staying on 0.6:
 
 ```sh
-woltspace backup --tag pre-upgrade
-woltspace update
+woltspace backup --tag pre-0.6
+woltspace update --version 0.6.0rc1
 ```
 
 Native upgrades stop and restart the control plane while preserving tmux
-sessions. Container lodges update from the host as before.
+sessions. A container lodge rebuilds from the host with
+`woltspace rebuild --version 0.6.0rc1`.
 
-If you run the TUI with `npx woltspace` or `woltspace tui`, update Node.js to
-22 or newer first.
+To go back to 0.5.25, stop the lodge, reinstall 0.5.25 and start it from
+the backup. `woltspace restore` unpacks into a new folder and prints the exact
+`WOLTSPACE_WOLTS_DIR=... woltspace start` line to boot from it; anything that
+happened on 0.6 after the backup stays in the old folder:
 
-Going back to 0.5.24 works without extra steps: nothing in the lodge's data
-changed.
+```sh
+woltspace stop
+uv tool install --force woltspace==0.5.25
+woltspace restore woltspace-backup-pre-0.6.tar.gz
+```
 
 After upgrading, verify the lodge is healthy:
 
