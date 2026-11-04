@@ -11,6 +11,9 @@
 --                (<M-z> does the same, also while typing in the wolt)
 --   <leader>Wo   switch between the wolts open in this Neovim, last used first
 --                (<M-w> does the same, also while typing in the wolt)
+--   <M-h/j/k/l>  move between windows, from your code into the wolt and back
+--   <M-=> <M-->  wider / narrower wolt split, from anywhere (<M-+> is wider too)
+--                (window_keys = false leaves these keys to you)
 --   :Wolts pick | toggle | ask | zoom | switch
 --
 -- Each lodge is reached over its HTTP API with curl. A session is shown with
@@ -61,6 +64,8 @@ local defaults = {
   resting_shown = 8, -- resting sessions offered per wolt, newest first
   width = 0.45, -- the wolt split, as a share of the screen
   keys = true, -- false: no keys, use :Wolts or require('wolts') yourself
+  window_keys = true, -- with keys: Alt+h/j/k/l moves between windows (unless you mapped them), Alt+= / Alt+- resize the wolt split
+  resize_step = 10, -- columns per Alt+= / Alt+-
 }
 
 local config = vim.deepcopy(defaults)
@@ -210,6 +215,12 @@ local function terminal_keys(buf)
   end
   -- Alt+z zooms in / back out while you're typing in the wolt
   vim.keymap.set('t', '<M-z>', function() M.zoom() end, o)
+  -- Alt+= / Alt+- resize the wolt split while you're typing in it
+  if config.keys and config.window_keys then
+    for lhs, sign in pairs { ['<M-=>'] = 1, ['<M-+>'] = 1, ['<M-->'] = -1 } do
+      vim.keymap.set('t', lhs, function() M.resize(sign * config.resize_step) end, o)
+    end
+  end
   -- Alt+w: leave terminal mode, then the switch picker (next tick, so it gets the keys)
   if config.keys then
     vim.keymap.set('t', '<M-w>', function()
@@ -548,6 +559,14 @@ function M.ask(l1, l2)
   end
 end
 
+---Make the wolt split wider (delta > 0) or narrower, by columns.
+---@param delta integer
+function M.resize(delta)
+  local win = wolt_win() or any_wolt_win()
+  if not win then return notify 'no wolt split open' end
+  vim.api.nvim_win_set_width(win, math.max(20, math.min(vim.o.columns - 20, vim.api.nvim_win_get_width(win) + delta)))
+end
+
 -- Setup: keys, :Wolts ------------------------------------------------------------
 
 local function set_keys()
@@ -567,6 +586,17 @@ local function set_keys()
     vim.api.nvim_feedkeys(vim.keycode '<Esc>', 'nx', false)
     M.ask(math.min(a, b), math.max(a, b))
   end, { desc = 'Wolts: [A]sk about the selection' })
+  if config.window_keys then
+    -- from code back into the wolt (and on to any window); the wolt's own terminal maps the same keys.
+    -- Plain window moves: a map of your own for these keys is kept.
+    for d, where in pairs { h = 'left', j = 'below', k = 'above', l = 'right' } do
+      local lhs = '<M-' .. d .. '>'
+      if vim.fn.maparg(lhs, 'n') == '' then map('n', lhs, '<C-w>' .. d, { desc = 'Move to the window ' .. where }) end
+    end
+    for lhs, sign in pairs { ['<M-=>'] = 1, ['<M-+>'] = 1, ['<M-->'] = -1 } do
+      map('n', lhs, function() M.resize(sign * config.resize_step) end, { desc = sign > 0 and 'Wolts: wider wolt split' or 'Wolts: narrower wolt split' })
+    end
+  end
   local ok, wk = pcall(require, 'which-key')
   if ok then wk.add { { '<leader>W', group = '[W]olts', mode = { 'n', 'v' } } } end
 end

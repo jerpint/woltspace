@@ -123,11 +123,21 @@ vim.fn.jobstop(vim.b[rest_buf].terminal_job_id)
 wait(function() return not vim.api.nvim_buf_is_valid(rest_buf) end)
 assert(not vim.tbl_contains(switch_list(), line('rest')) and not vim.tbl_contains(switch_list(), line('rest', true)))
 -- Alt+w: normal mode everywhere, terminal mode only in wolt buffers
+vim.keymap.set('n', '<M-k>', '<Nop>') -- a map of the user's own
 target = 'rest'; setup('', false, true); M.pick()
 wait(function() return vim.b.wolt_session == 'home/rest' end)
 assert(vim.fn.maparg('<M-w>', 'n') ~= '' and vim.fn.maparg('<leader>Wo', 'n') ~= '')
 assert(vim.fn.maparg('<M-w>', 't', false, true).buffer == 1)
 assert(vim.api.nvim_buf_call(vim.api.nvim_create_buf(false, true), function() return vim.fn.maparg('<M-w>', 't') end) == '')
+-- window keys: Alt+h/j/k/l from any window (your own map wins), Alt+= / Alt++ / Alt+- resize the wolt split
+assert(vim.fn.maparg('<M-k>', 'n') == '<Nop>')
+for _, k in ipairs { '<M-h>', '<M-j>', '<M-l>', '<M-=>', '<M-+>', '<M-->' } do assert(vim.fn.maparg(k, 'n') ~= '', k) end
+assert(vim.fn.maparg('<M-=>', 't', false, true).buffer == 1)
+local wolt_w = wolt_wins()[1]
+local width = vim.api.nvim_win_get_width(wolt_w)
+vim.fn.maparg('<M-=>', 'n', false, true).callback(); assert(vim.api.nvim_win_get_width(wolt_w) == width + 10)
+M.resize(-10); assert(vim.api.nvim_win_get_width(wolt_w) == width)
+M.resize(-1000); assert(vim.api.nvim_win_get_width(wolt_w) == 20)
 -- keys = false: a wolt buffer gets no Alt+w either
 assert(vim.api.nvim_buf_call(vim.fn.bufnr 'wolt://home/live', function() return vim.fn.maparg('<M-w>', 't') end) == '')
 target = 'live'; pick('/drop', true); ask('@sample.lua#L1-2')
