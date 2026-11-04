@@ -137,8 +137,122 @@ _MIGRATIONS: list[tuple[int, tuple[str, ...]]] = [
         )""",
         "CREATE INDEX IF NOT EXISTS connector_events_ts ON connector_events(ts)",
     )),
+    (5, (
+        # The lodge inbox (inbox.py): a mailbox per agent, pulled by its
+        # sessions. Off unless woltspace.json enables it. Ids are never reused:
+        # a recreated wolt gets a new mailbox, and a closed one stays closed.
+        # wake: the waker's JSON (inbox_wake.py): its reserved session, or why it is inhibited.
+        """CREATE TABLE IF NOT EXISTS inbox_mailboxes (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            wolt       TEXT NOT NULL,
+            state      TEXT NOT NULL,
+            created_at REAL NOT NULL,
+            wake       TEXT
+        )""",
+        "CREATE UNIQUE INDEX IF NOT EXISTS inbox_mailbox_wolt"
+        " ON inbox_mailboxes(wolt) WHERE state != 'closed'",
+        # A session's grant to read its wolt's mailbox: the token's SHA-256,
+        # never the token. acks counts first acknowledgements only.
+        """CREATE TABLE IF NOT EXISTS inbox_readers (
+            hash       BLOB PRIMARY KEY,
+            mailbox    INTEGER NOT NULL REFERENCES inbox_mailboxes(id),
+            session    TEXT NOT NULL,
+            created_at REAL NOT NULL,
+            revoked    INTEGER NOT NULL DEFAULT 0,
+            acks       INTEGER NOT NULL DEFAULT 0
+        )""",
+        "CREATE INDEX IF NOT EXISTS inbox_reader_session ON inbox_readers(session)",
+        # Mail. sender is the key's namespace (mailbox:<id> or provider:<name>);
+        # body goes at acknowledgement, while size and the SHA-256 of its UTF-8
+        # bytes stay to match retries until the row is pruned.
+        """CREATE TABLE IF NOT EXISTS inbox_messages (
+            seq         INTEGER PRIMARY KEY AUTOINCREMENT,
+            sender      TEXT NOT NULL,
+            sender_name TEXT NOT NULL,
+            key         TEXT NOT NULL,
+            mailbox     INTEGER NOT NULL REFERENCES inbox_mailboxes(id),
+            priority    INTEGER NOT NULL,
+            body        BLOB,
+            size        INTEGER NOT NULL,
+            digest      BLOB NOT NULL,
+            state       TEXT NOT NULL,
+            reader      BLOB,
+            claim       INTEGER NOT NULL DEFAULT 0,
+            created_at  REAL NOT NULL,
+            acked_at    REAL,
+            UNIQUE (sender, key)
+        )""",
+        "CREATE INDEX IF NOT EXISTS inbox_queued"
+        " ON inbox_messages(mailbox, priority, seq) WHERE state = 'queued'",
+        "CREATE INDEX IF NOT EXISTS inbox_claimed ON inbox_messages(reader) WHERE state = 'claimed'",
+        "CREATE INDEX IF NOT EXISTS inbox_acked ON inbox_messages(acked_at) WHERE state = 'acknowledged'",
+        # A fixed-size ring of state changes for observers; the oldest go.
+        """CREATE TABLE IF NOT EXISTS inbox_events (
+            cursor  INTEGER PRIMARY KEY AUTOINCREMENT,
+            seq     INTEGER NOT NULL,
+            state   TEXT NOT NULL,
+            reason  TEXT,
+            repeats INTEGER NOT NULL DEFAULT 1
+        )""",
+        # Running totals, one row for the lodge ('') and one per mailbox id,
+        # changed in the same transaction as the rows they count.
+        """CREATE TABLE IF NOT EXISTS inbox_usage (
+            scope   TEXT PRIMARY KEY,
+            pending INTEGER NOT NULL,
+            bytes   INTEGER NOT NULL,
+            keys    INTEGER NOT NULL
+        )""",
+    )),
+    (6, (
+        # Session policies to record version 2, where "auto" is the engine's
+        # own Auto and the old "auto" (no checks at all) is "bypass". First a
+        # missing policy or a bare string becomes a version 1 object, then
+        # every version 1 object becomes version 2. Breaking: an older build
+        # would read "bypass" as unknown.
+        """UPDATE sessions SET record = json_set(record, '$.execution_policy', json_object(
+            'mode', coalesce(nullif(json_extract(record, '$.execution_policy'), ''), 'auto'),
+            'isolation', 'external', 'policy_version', 1))
+        WHERE coalesce(json_type(record, '$.execution_policy'), 'null') IN ('null', 'text')""",
+        """UPDATE sessions SET record = json_set(record,
+            '$.execution_policy.mode', CASE json_extract(record, '$.execution_policy.mode')
+                WHEN 'prompt' THEN 'prompt' ELSE 'bypass' END,
+            '$.execution_policy.isolation',
+                coalesce(json_extract(record, '$.execution_policy.isolation'), 'external'),
+            '$.execution_policy.policy_version', 2)
+        WHERE json_type(record, '$.execution_policy') = 'object'
+            AND coalesce(json_extract(record, '$.execution_policy.policy_version'), 1) = 1
+            AND coalesce(json_extract(record, '$.execution_policy.mode'), 'auto') IN ('auto', 'prompt')""",
+    )),
+    (7, (
+        # Conversation history (conversation_log.py): text the inbox admitted and notify
+        # sent, while woltspace.json enables it. Mailbox ids are plain integers, never
+        # foreign keys: inbox pruning never reaches the archive. size is the retained
+        # UTF-8, original_size the text's own (larger only when cut to a prefix).
+        """CREATE TABLE IF NOT EXISTS conversation_log (
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            at                REAL NOT NULL,
+            kind              TEXT NOT NULL,
+            sender_mailbox    INTEGER,
+            sender_name       TEXT NOT NULL,
+            recipient_mailbox INTEGER,
+            recipient_name    TEXT NOT NULL,
+            human             INTEGER NOT NULL,
+            body              TEXT NOT NULL,
+            size              INTEGER NOT NULL,
+            original_size     INTEGER NOT NULL,
+            outcome           TEXT
+        )""",
+        "CREATE INDEX IF NOT EXISTS conversation_log_sender ON conversation_log(sender_mailbox, id)",
+        "CREATE INDEX IF NOT EXISTS conversation_log_recipient ON conversation_log(recipient_mailbox, id)",
+        # The archive's running totals, one row, changed in the write that changes them.
+        """CREATE TABLE IF NOT EXISTS conversation_usage (
+            id    INTEGER PRIMARY KEY CHECK (id = 1),
+            rows  INTEGER NOT NULL,
+            bytes INTEGER NOT NULL
+        )""",
+    )),
 ]
-_BREAKING: set[int] = set()
+_BREAKING: set[int] = {6}
 
 
 class SchemaTooNew(sqlite3.DatabaseError):
@@ -149,9 +263,13 @@ def path(wolts_dir) -> Path:
     return Path(wolts_dir) / ".space" / "lodge.db"
 
 
-def connect(wolts_dir, *, readonly: bool = False) -> sqlite3.Connection:
+def connect(wolts_dir, *, readonly: bool = False, durable: bool = False,
+            busy_ms: int = 5000) -> sqlite3.Connection:
     """A new connection, never shared across threads. Readonly (mode=ro) fails
-    on a missing file, so a reader never creates an empty lodge."""
+    on a missing file, so a reader never creates an empty lodge. Durable syncs
+    every commit to disk (synchronous=FULL), from before the schema is touched:
+    for mail the lodge holds for someone (inbox.py). busy_ms bounds the wait
+    for another writer."""
     db = path(wolts_dir)
     if readonly:
         conn = sqlite3.connect(
@@ -165,10 +283,10 @@ def connect(wolts_dir, *, readonly: bool = False) -> sqlite3.Connection:
         conn = sqlite3.connect(db, isolation_level=None)
     conn.row_factory = sqlite3.Row
     try:
-        conn.execute("PRAGMA busy_timeout=5000")
+        conn.execute(f"PRAGMA busy_timeout={int(busy_ms)}")
         if not readonly:
             _wal(conn)
-        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute(f"PRAGMA synchronous={'FULL' if durable else 'NORMAL'}")
         conn.execute("PRAGMA foreign_keys=ON")
         if readonly:
             # mode=ro opens lazily: touch the file now so a missing one
@@ -268,13 +386,13 @@ _STATE = threading.local()
 
 
 @contextmanager
-def write(wolts_dir):
+def write(wolts_dir, *, durable: bool = False, busy_ms: int = 5000):
     """One write transaction: BEGIN IMMEDIATE, then COMMIT, or ROLLBACK on error.
 
     BEGIN IMMEDIATE takes the write lock up front, so what the block reads
     cannot change before it writes. This is the lodge's only lock.
     """
-    conn = connect(wolts_dir)
+    conn = connect(wolts_dir, durable=durable, busy_ms=busy_ms)
     try:
         conn.execute("BEGIN IMMEDIATE")
         outer = in_write()

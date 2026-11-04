@@ -20,10 +20,28 @@ export const inactiveCount = (sessions) =>
 export const sessionWorkdir = (session) =>
   session?.target?.canonical_workdir || session?.workdir || session?.dir || '';
 
+// A record without version 2 is from before Bypass had its name: its "auto"
+// (or no policy at all) ran with no checks, so it shows as bypass*.
 export const sessionPolicy = (session) => {
   const policy = session?.execution_policy;
-  if (typeof policy === 'string') return policy;
-  return policy?.mode || 'auto';
+  const mode = (typeof policy === 'string' ? policy : policy?.mode) || 'auto';
+  const legacy = typeof policy !== 'object' || policy === null || policy.policy_version !== 2;
+  return legacy && mode === 'auto' ? 'bypass*' : mode;
+};
+
+// The levels a spawn can ask for; '' leaves the choice to the server.
+export const LEVELS = [
+  ['', 'server default: Bypass, or Ask on a host without a grant'],
+  ['prompt', 'Ask: you approve its actions'],
+  ['auto', 'Auto: the engine approves routine actions and asks for the rest'],
+  ['bypass', 'Bypass: no checks at all'],
+];
+
+// Only the levels this wolt's engine offers here, when the lodge says so.
+export const spawnLevels = (capabilities, wolt) => {
+  const offered = capabilities?.levels?.[wolt?.harness];
+  return LEVELS.filter(([mode]) => !mode || !offered || mode in offered)
+    .map(([mode, text]) => [mode, offered?.[mode] ? text.replace(/^[^:]+/, offered[mode]) : text]);
 };
 
 // Where a newly woken wolt starts.
@@ -40,13 +58,13 @@ export const sessionPolicy = (session) => {
 // it; spawning into a host directory is a deliberate opt-in still to be built,
 // and until then nothing picks one implicitly. `launchCwd` is kept in the
 // signature for that future opt-in.
-export function spawnTarget(capabilities, wolt, launchCwd) {
+export function spawnTarget(capabilities, wolt, launchCwd, level = '') {
   const native = capabilities?.supports_host_workdirs === true;
   return {
     workdir: null,
     displayWorkdir: wolt?.home || 'wolt home',
-    // No user override: let the server apply exact-target Auto grants.
-    executionPolicy: undefined,
+    // No pick: let the server apply exact-target grants.
+    executionPolicy: level || undefined,
     supportsHostWorkdirs: native,
   };
 }

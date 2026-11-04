@@ -111,6 +111,9 @@ memory (never a temporary file): consistent even while the lodge writes to
 it, every row included. Its live `lodge.db-wal` and `lodge.db-shm` stay out.
 A restore disarms its copy of it (see "A copy keeps its hands off its
 source").
+The conversation-history archive (`conversation_log`, see
+`conversation-history.md`) is part of it: kept text comes back as passive
+history, never replayed, and does not change what a restore refuses.
 
 ## What is excluded, and why
 
