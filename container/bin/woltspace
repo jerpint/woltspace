@@ -13,12 +13,15 @@ Phase 1 nouns:
   session send <wolt|session> [--from <wolt>]  # message on stdin
   session spawn <wolt> [--from <wolt>]  # optional seed prompt on stdin
   session hold [<duration> <reason> | off]  # keep up for a background task
+  inbox send <wolt> --key K | fetch | ack|release <seq> <claim> | status [--key K]
+                                     # ack = received into your context, not task done
 
 A wolt self-identifies as the sender via $WOLTSPACE_WOLT_NAME /
 $WOLTSPACE_WOLT_SESSION (exported
 into every wolt session). A human posts with --from (e.g. --from jerpint).
 """
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -26,6 +29,7 @@ import shutil
 import sys
 import urllib.request
 import urllib.error
+import uuid
 from urllib.parse import quote
 from pathlib import Path
 
@@ -37,6 +41,7 @@ from notify_prompt import (  # noqa: E402
     MessageInputError,
     read_message_input,
     session_send_argv,
+    session_send_reply_instruction,
     session_spawn_argv,
 )
 
@@ -46,14 +51,21 @@ API = os.environ.get("WOLTSPACE_API", "http://localhost:7777")
 _SESSION_RE = re.compile(r"-[0-9a-f]{6}$")
 
 
-def _req(method, path, body=None, *, hint=""):
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """A call that carries a header (the inbox token) never follows a redirect: the 3xx is the answer."""
+    def redirect_request(self, *args, **kwargs):
+        return None
+
+
+def _req(method, path, body=None, *, hint="", headers=None):
     url = f"{API}{path}"
     data = json.dumps(body).encode() if body is not None else None
-    req = urllib.request.Request(url, data=data, method=method)
+    req = urllib.request.Request(url, data=data, method=method, headers=headers or {})
     if data is not None:
         req.add_header("Content-Type", "application/json")
     try:
-        with urllib.request.urlopen(req, timeout=15) as r:
+        opener = urllib.request.build_opener(_NoRedirect).open if headers else urllib.request.urlopen
+        with opener(req, timeout=15) as r:
             return r.status, json.loads(r.read().decode() or "{}")
     except urllib.error.HTTPError as e:
         try:
@@ -76,14 +88,20 @@ def _print_sessions(sessions, *, as_json=False):
         print("no sessions.")
         return
     print(f"{'SESSION':<34} {'WOLT':<12} {'ENGINE':<24} {'POLICY':<8} {'STATE':<9} WORKDIR")
+    legacy = False
     for s in sessions:
-        policy = s.get("execution_policy") or {}
-        policy_name = policy.get("mode", "auto") if isinstance(policy, dict) else str(policy)
+        policy = s.get("execution_policy")
+        policy_name = (policy.get("mode") if isinstance(policy, dict) else policy) or "auto"
+        version = policy.get("policy_version") if isinstance(policy, dict) else None
+        if policy_name == "auto" and version != 2:  # before v2, "auto" ran as Bypass
+            policy_name, legacy = "bypass*", True
         state = "running" if s.get("alive") else s.get("status", "offline")
         workdir = s.get("workdir") or s.get("dir", "")
         engine = "/".join(p for p in (s.get("harness", ""), s.get("model", "")) if p)
         print(f"{s.get('name',''):<34} {s.get('wolt_id') or s.get('wolt',''):<12} "
               f"{engine:<24} {policy_name:<8} {state:<9} {workdir}")
+    if legacy:
+        print("* legacy auto record: runs as Bypass")
 
 
 def cmd_session_list(args):
@@ -204,6 +222,46 @@ def cmd_wolt_delete(args):
     print(f"{args.name}: deleted; Auto grants revoked: {result['grants_revoked']}")
 
 
+def cmd_inbox(args):
+    """One call on this agent's lodge inbox, as the reader the launcher granted
+    this session. The token comes from the environment only, never argv."""
+    token = os.environ.get("WOLTSPACE_INBOX_TOKEN", "")
+    if not token:
+        print("woltspace: this session has no inbox reader", file=sys.stderr)
+        sys.exit(2)
+    body = {}
+    if args.verb == "send":
+        body = {"to": args.to, "key": args.key, "text": sys.stdin.read()}
+    elif args.verb in ("ack", "release"):
+        body = {"seq": args.seq, "claim": args.claim}
+    elif args.verb == "status" and args.key is not None:
+        body = {"key": args.key}
+    elif args.verb == "history":
+        body = {"limit": args.limit, "max_bytes": args.max_bytes,
+                **({} if args.before is None else {"before": args.before})}
+    status, result = _req("POST", f"/inbox/{args.verb}", body, headers={"X-Woltspace-Inbox-Token": token})
+    if not result.get("ok"):
+        print(f"woltspace inbox {args.verb}: {result.get('error', status)}", file=sys.stderr)
+        sys.exit(1)
+    if args.verb == "history":  # compact UTF-8 as the lodge sent it; max_bytes counts the records only
+        print(json.dumps(result["result"], ensure_ascii=False, separators=(",", ":")))
+        return
+    print(json.dumps(result["result"], indent=2))
+
+
+def cmd_inbox_rearm(args):
+    """The owner's explicit clear of an agent's inhibited inbox wake. Not from
+    inside an agent session: a cooperative guard, not authentication."""
+    if os.environ.get("WOLTSPACE_INBOX_TOKEN"):
+        print("woltspace: inbox rearm is for the lodge's owner, not an agent session", file=sys.stderr)
+        sys.exit(2)
+    status, result = _req("POST", "/inbox/rearm", {"wolt": args.wolt})
+    if not result.get("ok"):
+        print(f"woltspace inbox rearm: {result.get('error', status)}", file=sys.stderr)
+        sys.exit(1)
+    print(f"{args.wolt}: inbox wake rearmed")
+
+
 def cmd_session_send(args):
     try:
         command = session_send_argv(
@@ -226,13 +284,53 @@ def cmd_session_send(args):
     from_session = get_env("WOLTSPACE_WOLT_SESSION", "") if not args.from_ else "human"
     payload = {"text": message, "from_wolt": from_wolt, "from_session": from_session}
     target = args.target
+    token = os.environ.get("WOLTSPACE_INBOX_TOKEN", "")
+    if token:
+        # The inbox is on: mail for the target's wolt, never a paste. A session
+        # names its wolt's mailbox; the reader who reads it is the wolt's choice.
+        wolt = target.rsplit("-", 3)[0] if _SESSION_RE.search(target) and target.count("-") >= 3 else target
+        header = f"[message from {from_wolt}" + (f", session={from_session}" if from_session else "") + "]"
+        key = args.key or f"iwcl-{uuid.uuid4().hex}"  # a re-run with --key is the same message:
+        delimiter = "WOLTSPACE_IWCL_" + hashlib.sha256(key.encode()).hexdigest()[:16].upper()  # same body
+        reply = f"\n{session_send_reply_instruction(from_session, delimiter)}" if from_session else ""
+        body = {"to": wolt, "key": key, "text": f"{header}\n{message}{reply}",
+                **({"session": target} if wolt != target else {})}  # only the wake's first choice
+        # The outcome can be unknown (no answer, a lost commit reply): the key
+        # tells, never a resend under a fresh one.
+        check = f"; check key {key} with `woltspace inbox status --key {key}` before sending again"
+        status, result = _req("POST", "/inbox/send", body, headers={"X-Woltspace-Inbox-Token": token}, hint=check)
+        if args.json:
+            print(json.dumps(result, indent=2))
+        elif result.get("ok"):
+            print(f"queued → {wolt} (seq {result['result']['seq']})")
+        else:
+            code = result.get("error", status)
+            print(f"not queued ({code})" + (check if code in ("store_busy", "store_failed") else ""), file=sys.stderr)
+        if not result.get("ok"):
+            sys.exit(1)
+        return
+    # With the inbox on, the lodge takes this as mail under this key (an older lodge ignores
+    # it): re-running with the same --key and text is the same message, never a second one.
+    payload["key"] = key = args.key or f"iwcl-{uuid.uuid4().hex}"
     if _SESSION_RE.search(target):
         path = f"/sessions/{target}/message"
     else:
         path = f"/wolts/{target}/message"
-    status, result = _req("POST", path, payload)
+    status, result = _req("POST", path, payload, hint=f"; re-run with --key {key} to see its outcome")
     if args.json:
         print(json.dumps(result, indent=2))
+    elif result.get("status") == "notified":
+        print(f"notified {result.get('session')}")
+    elif result.get("status") == "busy":
+        print(f"{result.get('session')} is busy; it gets your message when its current turn ends")
+    elif result.get("status") == "pending":
+        print(f"queued for {result.get('wolt')}; outcome pending: re-run with --key {key} to see it")
+    elif result.get("status") == "cant_wake":
+        print(f"{result.get('wolt')} can't wake: {result.get('reason')}", file=sys.stderr)
+        sys.exit(1)
+    elif result.get("status") == "not_queued":
+        print(f"not queued ({result.get('error')})", file=sys.stderr)
+        sys.exit(1)
     elif result.get("ok"):
         dest = result.get("session", target)
         print(f"delivered → {dest}" + (f" ({result['harness']})" if result.get("harness") else ""))
@@ -255,6 +353,7 @@ def cmd_session_spawn(args):
             as_json=args.json,
             workdir=args.workdir,
             auto=args.auto,
+            policy=args.policy or "",
         )
         prompt = read_message_input(
             command,
@@ -280,8 +379,8 @@ def cmd_session_spawn(args):
                "from_wolt": from_wolt, "from_session": from_session}
     if args.workdir:
         payload["workdir"] = args.workdir
-    if args.auto:
-        payload["execution_policy"] = "auto"
+    if args.auto or args.policy:
+        payload["execution_policy"] = args.policy or "auto"
     status, result = _req("POST", "/sessions/new/lodge", payload)
     if args.json:
         print(json.dumps(result, indent=2))
@@ -417,7 +516,8 @@ def cmd_auto_check(args):
 def cmd_auto_grant(args):
     canonical = os.path.realpath(os.path.expanduser(args.workdir))
     if not args.yes:
-        print(f"refusing to grant Auto without --yes for exact directory: {canonical}", file=sys.stderr)
+        print(f"refusing to grant Auto and Bypass without --yes for exact directory: {canonical}",
+              file=sys.stderr)
         sys.exit(1)
     status, result = _req("POST", "/auto-grants/grant", {
         "wolt_id": args.wolt, "workdir": args.workdir, "confirm": canonical,
@@ -426,7 +526,7 @@ def cmd_auto_grant(args):
         print(result.get("error", f"HTTP {status}"), file=sys.stderr)
         sys.exit(1)
     print(json.dumps(result, indent=2) if args.json else
-          f"Auto approved: {args.wolt} · {result['grant']['canonical_workdir']}")
+          f"Auto and Bypass approved: {args.wolt} · {result['grant']['canonical_workdir']}")
 
 
 def cmd_auto_revoke(args):
@@ -447,7 +547,7 @@ LIFECYCLE = {"start", "stop", "rebuild", "backup", "shell", "chat", "logs", "ini
 # the real CLI — `doctor`, `paths`, `serve`, `restore`, and the whole lifecycle
 # set. In the container "elsewhere" means the host; natively it means the python
 # CLI sitting a few directories up from this script.
-LOCAL_NOUNS = {"session", "status", "auto", "app", "wolt", "tui"}
+LOCAL_NOUNS = {"session", "status", "auto", "app", "wolt", "tui", "inbox"}
 
 # Nouns the python CLI serves that only talk to this lodge's API, so they
 # belong to it in the container too — there is no host to send them to.
@@ -590,6 +690,7 @@ def main():
     ss.add_argument("--from", dest="from_", default="",
                     help="sender identity (default: $WOLTSPACE_WOLT_NAME); use --from jerpint as a human")
     ss.add_argument("--json", action="store_true", help="raw JSON output")
+    ss.add_argument("--key", default="", help="this message's id: re-running with it shows its outcome")
     ss.set_defaults(func=cmd_session_send)
 
     sp = ssub.add_parser("spawn", help="spawn a new session for a wolt")
@@ -602,7 +703,10 @@ def main():
     sp.add_argument("--workdir", default="",
                     help="existing working directory (native runtime)")
     sp.add_argument("--auto", action="store_true",
-                    help="request Auto policy (host requires an exact-path grant)")
+                    help="request the engine's Auto level, same as --policy auto")
+    sp.add_argument("--policy", choices=("prompt", "auto", "bypass"),
+                    help="Ask, Auto or Bypass (on the host, Auto and Bypass need an"
+                         " exact-path grant); default: the lodge decides")
     sp.set_defaults(func=cmd_session_spawn)
 
     sd = ssub.add_parser("describe", help="set this session's title and one-line summary")
@@ -664,7 +768,7 @@ def main():
     warchived.add_argument("--json", action="store_true")
     warchived.set_defaults(func=cmd_wolt_archived)
 
-    auto = sub.add_parser("auto", help="manage repository-scoped Auto consent")
+    auto = sub.add_parser("auto", help="manage repository-scoped Auto and Bypass consent")
     asub = auto.add_subparsers(dest="verb")
     for verb, func in (("check", cmd_auto_check), ("grant", cmd_auto_grant),
                        ("revoke", cmd_auto_revoke)):
@@ -676,6 +780,30 @@ def main():
             ap.add_argument("--yes", action="store_true",
                             help="confirm Auto for this exact canonical directory")
         ap.set_defaults(func=func)
+
+    box = sub.add_parser("inbox", help="this agent's lodge inbox, when the lodge enables it")
+    bsub = box.add_subparsers(dest="verb")
+    bs = bsub.add_parser("send", help="mail another agent; the text comes on stdin")
+    bs.add_argument("to")
+    bs.add_argument("--key", required=True, help="your id for this message: a retry with it is safe")
+    bsub.add_parser("fetch", help="claim the next message, the same one again until ack or release")
+    for verb in ("ack", "release"):
+        bp = bsub.add_parser(verb, help="confirm receipt: the message is in your context (not that the task "
+                             "is done)" if verb == "ack" else "give a claim back you cannot accept")
+        bp.add_argument("seq", type=int)
+        bp.add_argument("claim", type=int)
+    bsub.add_parser("status", help="a sent message, or this mailbox's counts").add_argument("--key")
+    bh = bsub.add_parser("history", help="archived mail and notify text of this mailbox, newest first "
+                         "(when the lodge keeps conversation history); reads only")
+    bh.add_argument("--before", type=int, help="the previous page's next")
+    bh.add_argument("--limit", type=int, default=20)
+    bh.add_argument("--max-bytes", type=int, default=64 * 1024, help="budget for the records' compact JSON, summed per record "
+                    "(not the array or the rest of the reply)")
+    for verb_parser in bsub.choices.values():
+        verb_parser.set_defaults(func=cmd_inbox)
+    rearm = bsub.add_parser("rearm", help="(operator) let the lodge wake an agent for its mail again")
+    rearm.add_argument("wolt")
+    rearm.set_defaults(func=cmd_inbox_rearm)
 
     argv = sys.argv[1:]
     # tui: exec the terminal cockpit (same app the host launcher runs; it

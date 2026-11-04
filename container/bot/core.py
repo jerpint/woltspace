@@ -33,7 +33,9 @@ from sessions import (
     start_session,
     _tmux_capture,
     _tmux_stop,
+    invalidate_native,
 )
+import lifecycle
 from env_compat import get_env
 from session_expiry import hold_active, public_hold
 from wolts import get_active_creature, find_by_type, list_wolts as _list_wolts_full
@@ -598,7 +600,13 @@ def kill_session(name: str) -> bool:
     if name == "main":
         return False
     safe = "".join(c for c in name if c.isalnum() or c in "-_")
-    return _tmux_stop(safe)
+    registry = SessionRegistry()
+    data = registry.get(safe, check_alive=False) or {}
+    if data.get("launching"):  # an unresolved launch is never ended by a raw kill
+        return False
+    with lifecycle.agent_lock(registry.wolts_dir, data.get("wolt", "")):
+        invalidate_native(registry, safe, data.get("wolt", ""), data)
+        return _tmux_stop(safe)
 
 
 # ---------------------------------------------------------------------------

@@ -12,6 +12,8 @@
   if (document.querySelector('meta[name="wolt-shell"][content="off"]')) return;
 
   var ASSETS = '/static/wolt-shell/';
+  var me = document.currentScript && document.currentScript.src;
+  var VER = me && me.indexOf('?') > 0 ? me.slice(me.indexOf('?')) : '';
   var EMOJI = { raccoon: '🦝', beaver: '🦫', otter: '🦦', wolf: '🐺', dog: '🐶', rodent: '🐿️' };
   var TABS = [['about', 'About'], ['memory', 'Memory'], ['settings', 'Settings']];
 
@@ -128,5 +130,12 @@
     document.addEventListener('keydown', function (e) {
       if (e.key === 'Escape' && host.hasAttribute('data-open')) toggle();
     });
+
+    // The lodge inbox: its own module, the same pill on the right (inbox-viewer.js).
+    var inbox = el('script', { src: ASSETS + 'inbox-viewer.js' + VER });
+    inbox.addEventListener('load', function () {
+      if (window.__woltInbox) window.__woltInbox.drawer({ wolt: w.name, tokens: t, shellVars: vars });
+    });
+    document.head.appendChild(inbox);
   }
 })();

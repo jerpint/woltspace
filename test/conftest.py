@@ -132,6 +132,21 @@ requires_tmux = pytest.mark.skipif(not _tmux_available(), reason="tmux not insta
 # ---------------------------------------------------------------------------
 
 @pytest.fixture(autouse=True)
+def restore_environ():
+    """Put os.environ back after every test.
+
+    Supervisor.prepare() writes os.environ directly (WOLTSPACE_ISOLATION and
+    more), and monkeypatch.delenv() of an unset key leaves nothing to undo, so
+    one test that prepares a host layout used to make every later test run as
+    "host".
+    """
+    saved = dict(os.environ)
+    yield
+    os.environ.clear()
+    os.environ.update(saved)
+
+
+@pytest.fixture(autouse=True)
 def stub_harness_model_discovery(monkeypatch):
     """Unit/integration tests must never probe the developer's real CLI."""
     import harnesses
@@ -521,7 +536,7 @@ class FakeSessionRuntime:
     def agent_age(self, handle, process_names) -> int | None:
         return self._age
 
-    def last_keys(self) -> dict[str, int]:
+    def last_keys(self, timeout=None) -> dict[str, int]:
         return dict(self.last_key_at)
 
     def stop(self, handle) -> bool:
