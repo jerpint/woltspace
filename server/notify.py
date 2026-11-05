@@ -4,6 +4,7 @@ Routing is explicit: the caller (rodent) tells us where to send via adapter flag
 Falls back to session registry lookup, then Telegram default.
 """
 
+import asyncio
 import json
 import logging
 import mimetypes
@@ -26,6 +27,7 @@ from .speech import (
     write_failure,
 )
 import chat_state
+import conversation_log
 import outbox
 import voice_notes
 from sessions import SessionRegistry
@@ -595,10 +597,26 @@ async def _send(
         secrets,
         {key: routing[key] for key in sender.route_state if routing and key in routing},
     )
+    attempt = None
+    if await asyncio.to_thread(conversation_log.enabled, WOLTS_DIR):
+        # The text as it goes out, recorded before anything is sent: no record, no send
+        # (conversation_log.Unavailable). The session is the caller's, whatever the route.
+        attempt = await asyncio.to_thread(
+            conversation_log.record_attempt, WOLTS_DIR, (session_record or {}).get("name") or session,
+            adapter, message, time.time(),
+        )
     try:
         await sender.send(
             OutboundMessage(message, session_link or None, attachments), destination, context,
         )
+        if attempt is not None:
+            # The provider took it (not proof a human read it). Failing to say so leaves the
+            # row unknown and never undoes the send. An error or a cancel during the send leaves
+            # it unknown; a cancel here may still end accepted, as the worker thread finishes.
+            try:
+                await asyncio.to_thread(conversation_log.set_outcome, WOLTS_DIR, attempt, "accepted")
+            except Exception as exc:
+                logger.warning("Could not record a notify outcome (%s)", type(exc).__name__)
     finally:
         updates = {}
         for key, value in context.updates.items():

@@ -50,11 +50,13 @@ These recipes require a revision containing `nvim/`; for an unmerged contributio
 | `<leader>Wa` | Ask the current wolt about this line. In visual mode: about the selection. A box opens; type, then `<C-s>` (or `<CR>` in normal mode) sends. `q` / `<Esc>` cancels. |
 | `<leader>Wz` · `<M-z>` | Zoom: the wolt alone, full screen; again to go back. `<M-z>` also works while you type in the wolt. |
 | `<leader>Wo` · `<M-w>` | Switch between the wolts open in this Neovim, last used first (the current one is marked). `+ pick another wolt...` opens the full picker. `<M-w>` also works while you type in the wolt. |
-| `<M-h/j/k/l>` | In the wolt's terminal: leave it and move to the next window |
+| `<M-h/j/k/l>` | Move to the window left / below / above / right, from any window, so you can go from your code into the wolt and back. In the wolt's terminal it leaves terminal mode first. A normal-mode map of your own for these keys is kept. |
+| `<M-=>` · `<M-+>` · `<M-->` | Make the wolt split wider / wider / narrower by `resize_step` columns (between 20 columns and the screen width minus 20), from any window or while you type in the wolt |
 
 `:Wolts pick | toggle | ask | zoom | switch` does the same without keys (`:'<,'>Wolts ask` for a range).
 
-On macOS, `<M-w>` (Alt+w) needs Option sent as Alt (Meta) in your terminal's settings.
+On macOS, the Alt keys need Option sent as Alt (Meta) in your terminal's settings (see [Terminal on macOS](#terminal-on-macos)).
+`window_keys = false` keeps the plugin's other keys but leaves Alt+h/j/k/l and Alt+= / Alt+- to you.
 
 Messages you send are marked as coming from you: `$WOLTSPACE_USER`, else `$HUMAN_NAME`, else `$USER` (the same rule as `woltspace tui`).
 
@@ -71,6 +73,8 @@ require('wolts').setup {
   resting_shown = 8, -- resting sessions offered per wolt, newest first
   width = 0.45, -- the wolt split, as a share of the screen
   keys = true, -- false: set your own keys (see below)
+  window_keys = true, -- Alt+h/j/k/l between windows, Alt+= / Alt+- resize the wolt split
+  resize_step = 10, -- columns per Alt+= / Alt+-
 }
 ```
 
@@ -120,6 +124,57 @@ vim.keymap.set('n', '<leader>az', wolts.zoom)
 vim.keymap.set('n', '<leader>ao', wolts.switch)
 vim.keymap.set('n', '<leader>ak', function() local l = vim.fn.line '.'; wolts.ask(l, l) end)
 ```
+
+### A nicer picker
+
+The plugin asks Neovim for a plain list (`vim.ui.select`), so without a picker plugin you get a numbered list at the bottom of the screen. Any picker that takes over `vim.ui.select` turns it into a searchable dropdown. Pick one:
+
+[telescope.nvim](https://github.com/nvim-telescope/telescope.nvim) with [telescope-ui-select.nvim](https://github.com/nvim-telescope/telescope-ui-select.nvim), as a dropdown. With `vim.pack` (Neovim 0.12+):
+
+```lua
+vim.pack.add {
+  'https://github.com/nvim-lua/plenary.nvim',
+  'https://github.com/nvim-telescope/telescope.nvim',
+  'https://github.com/nvim-telescope/telescope-ui-select.nvim',
+}
+require('telescope').setup {
+  extensions = {
+    ['ui-select'] = { require('telescope.themes').get_dropdown() },
+  },
+}
+pcall(require('telescope').load_extension, 'ui-select')
+```
+
+With lazy.nvim:
+
+```lua
+{
+  'nvim-telescope/telescope.nvim',
+  dependencies = { 'nvim-lua/plenary.nvim', 'nvim-telescope/telescope-ui-select.nvim' },
+  config = function()
+    require('telescope').setup {
+      extensions = { ['ui-select'] = { require('telescope.themes').get_dropdown() } },
+    }
+    require('telescope').load_extension 'ui-select'
+  end,
+}
+```
+
+[fzf-lua](https://github.com/ibhagwan/fzf-lua): call `require('fzf-lua').register_ui_select()` once after its setup.
+
+[snacks.nvim](https://github.com/folke/snacks.nvim): `opts = { picker = { ui_select = true } }`.
+
+### Terminal on macOS
+
+The Alt keys reach Neovim only if the terminal sends Option as Alt:
+
+| Terminal | Setting |
+| --- | --- |
+| Ghostty | `macos-option-as-alt = right` in its config: the right Option key is Alt, the left one still types special characters (`true` makes both Alt) |
+| iTerm2 | Settings → Profiles → Keys: Right Option key → Esc+ |
+| Terminal.app | Settings → Profiles → Keyboard: Use Option as Meta key |
+| kitty | `macos_option_as_alt yes` in `kitty.conf` |
+| WezTerm | `send_composed_key_when_left_alt_is_pressed = false` in its config |
 
 ## How it works
 

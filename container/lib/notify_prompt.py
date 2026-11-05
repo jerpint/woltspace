@@ -85,13 +85,13 @@ def quoted_heredoc(
 
 
 def reply_instruction(
-    argv: Sequence[object], *, prefix: str = "WOLTSPACE_MSG"
+    argv: Sequence[object], *, prefix: str = "WOLTSPACE_MSG", delimiter: str | None = None
 ) -> str:
     """Tell an agent exactly how to reply without loading a skill."""
     return (
         f"Reply by replacing {_REPLY_PLACEHOLDER} in this exact single-quoted "
         "heredoc, then run it:\n"
-        f"{quoted_heredoc(argv, prefix=prefix)}"
+        f"{quoted_heredoc(argv, prefix=prefix, delimiter=delimiter)}"
     )
 
 
@@ -210,9 +210,12 @@ def _validate_session_spawn_argv(argv: tuple[str, ...]) -> None:
         option = remaining.pop(0)
         if option in {"--json", "--auto"}:
             continue
-        if option in {"--from", "--workdir"} and remaining:
+        if option in {"--from", "--workdir", "--policy"} and remaining:
             value = remaining.pop(0)
-            if option == "--workdir" or _SESSION_TARGET_RE.fullmatch(value):
+            if option == "--policy":
+                if value in {"prompt", "auto", "bypass"}:
+                    continue
+            elif option == "--workdir" or _SESSION_TARGET_RE.fullmatch(value):
                 continue
         raise ValueError("invalid session spawn arguments")
 
@@ -236,16 +239,18 @@ def notify_heredoc(
     )
 
 
-def notify_reply_instruction(*route_args: object) -> str:
-    """Build a notify reply instruction, falling back to session routing."""
+def notify_reply_instruction(*route_args: object, delimiter: str | None = None) -> str:
+    """Build a notify reply instruction, falling back to session routing.
+
+    A fixed ``delimiter`` makes the text the same each time it is built."""
     try:
         return reply_instruction(
-            ["notify", *route_args], prefix="WOLTSPACE_NOTIFY"
+            ["notify", *route_args], prefix="WOLTSPACE_NOTIFY", delimiter=delimiter
         )
     except ValueError:
         # Bad adapter metadata should not break message routing. The unrouted
         # command can still resolve the destination through the session registry.
-        return reply_instruction(["notify"], prefix="WOLTSPACE_NOTIFY")
+        return reply_instruction(["notify"], prefix="WOLTSPACE_NOTIFY", delimiter=delimiter)
 
 
 def session_send_argv(
@@ -261,10 +266,10 @@ def session_send_argv(
     return argv
 
 
-def session_send_reply_instruction(target: object) -> str:
+def session_send_reply_instruction(target: object, delimiter: str | None = None) -> str:
     """Build an IWCL reply instruction for one exact sender session."""
     return reply_instruction(
-        session_send_argv(target), prefix="WOLTSPACE_IWCL"
+        session_send_argv(target), prefix="WOLTSPACE_IWCL", delimiter=delimiter
     )
 
 
@@ -275,6 +280,7 @@ def session_spawn_argv(
     as_json: bool = False,
     workdir: object = "",
     auto: bool = False,
+    policy: str = "",
 ) -> list[str]:
     """Return the canonical argv for spawning a wolt session."""
     argv = ["woltspace", "session", "spawn", str(wolt)]
@@ -286,5 +292,7 @@ def session_spawn_argv(
         argv.extend(["--workdir", str(workdir)])
     if auto:
         argv.append("--auto")
+    if policy:
+        argv.extend(["--policy", policy])
     validate_argv(argv)
     return argv

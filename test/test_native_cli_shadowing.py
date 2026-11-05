@@ -286,6 +286,31 @@ def test_control_nouns_stay_local_and_never_delegate(tmp_path):
     assert "cannot reach woltspace API" in result.stderr
 
 
+@pytest.mark.parametrize("argv", [["inbox", "fetch"], ["inbox", "ack", "3", "1"],
+                                  ["session", "send", "pal-brave-oak-000001"]])
+def test_the_native_cli_hands_a_sessions_inbox_to_the_bundled_client(argv, tmp_path, monkeypatch):
+    """A Codex wolt runs each command in a login shell, where ~/.local/bin comes first: its
+    `woltspace inbox fetch` reaches this CLI, which hands it on, environment and all (the
+    session's inbox token), as it does `session send`."""
+    from types import SimpleNamespace
+    from woltspace import cli
+
+    client = tmp_path / "container" / "bin" / "woltspace"
+    client.parent.mkdir(parents=True)
+    client.write_text("#!/usr/bin/env python3\n")
+    monkeypatch.setattr(cli.RuntimeLayout, "from_env",
+                        lambda: SimpleNamespace(install_root=tmp_path, endpoint="http://127.0.0.1:8123"))
+    monkeypatch.setenv("WOLTSPACE_INBOX_TOKEN", "the-sessions-token")
+    monkeypatch.setenv("WOLTSPACE_API", "http://127.0.0.1:7777")
+    executed = []
+    monkeypatch.setattr(cli.os, "execv", lambda executable, args: executed.append([executable, *args]))
+    args = cli.build_parser().parse_args(argv)
+    assert args.func(args) == 0
+    assert executed == [[sys.executable, sys.executable, str(client), *argv]]
+    assert os.environ["WOLTSPACE_INBOX_TOKEN"] == "the-sessions-token"
+    assert os.environ["WOLTSPACE_API"] == "http://127.0.0.1:7777"  # the session's own lodge, kept
+
+
 # --------------------------------------------------------------------------
 # The container-era bash launcher
 # --------------------------------------------------------------------------
@@ -334,6 +359,8 @@ def _control_plane_decoy():
 
 
 PIN = re.search(r"^ARG WOLTSPACE_PYPI_VERSION=(\S+)$", (ROOT / "container" / "Dockerfile").read_text(), re.M).group(1)
+# A release candidate's preparation pins a prerelease, which an implicit build never takes.
+PIN_IS_FINAL = re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", PIN) is not None
 
 
 def _launch(wolts_dir, verb="start", launcher=LAUNCHER, **env):
@@ -478,7 +505,7 @@ def _built(calls):
     ("", PIN, PIN),
     ("", f"{X}.{Y}.0", f"{X}.{Y}.0"),
     ("", f"{X}.{Y}.99rc1", f"{X}.{Y}.99rc1"),  # an installed rc is kept, not left
-    ("--latest", f"{X}.{Y}.0", PIN),
+    ("--latest", f"{X}.{Y}.0", PIN if PIN_IS_FINAL else None),
     ("--version 9.9.9", PIN, "9.9.9"),
     ("--latest", f"{X + 1}.0.0", None),
     ("--nightly", f"{X + 1}.0.0", None),
@@ -654,7 +681,8 @@ def test_init_sees_an_existing_lodge_in_the_data_root_not_in_an_external_env_fil
     env_file = tmp_path / "lodge-b.env" if external else wolts_dir / ".env"
     env_file.write_text("WOLTSPACE_PUBLIC_TUNNEL=false\n")
     env = {"WOLTSPACE_ENV_FILE": str(env_file)} if external else {}
-    result = _launch(wolts_dir, "init", WOLTSPACE_NONINTERACTIVE="true", WOLTSPACE_INIT_WOLT_NAME="first", **env)
+    verb = "init" if PIN_IS_FINAL else f"init --version {PIN}"
+    result = _launch(wolts_dir, verb, WOLTSPACE_NONINTERACTIVE="true", WOLTSPACE_INIT_WOLT_NAME="first", **env)
     assert result.returncode == 0, result.stdout + result.stderr
     calls = [c.split() for c in (tmp_path / "fake-bin" / "docker.log").read_text().splitlines()]
     [argv] = [c for c in calls if c[0] == "run"]

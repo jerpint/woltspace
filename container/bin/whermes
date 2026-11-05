@@ -10,6 +10,16 @@
 #
 # Benched against hermes-agent 0.19.0.
 
+# A launch with a native inbox attempt runs hermes against the session's own backend
+# (native/launch.py); any other launch runs hermes itself, as before.
+run_engine() {
+    if [ -n "${WOLTSPACE_NATIVE_DIR:-}" ]; then
+        BIN_DIR="$(cd "$(dirname "$0")" && pwd)"
+        exec "$BIN_DIR/woltspace-python" "$BIN_DIR/../lib/native/launch.py" hermes "$@"
+    fi
+    exec hermes "$@"
+}
+
 WOLTSPACE_HOME_DIR="${WOLTSPACE_WOLT_HOME:-$(echo "$PWD" | sed -n 's|\(/workspace/wolts/[^/]*\).*|\1|p')}"
 if [ -n "$WOLTSPACE_HOME_DIR" ] && [ -d "$WOLTSPACE_HOME_DIR" ]; then
     if [ "${WOLTSPACE_ISOLATION:-external}" != "host" ]; then
@@ -59,4 +69,4 @@ EOF
     fi
 fi
 
-exec hermes "$@"
+run_engine "$@"

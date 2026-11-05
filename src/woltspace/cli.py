@@ -820,7 +820,7 @@ def _auto_grant(args) -> int:
         print(json.dumps({"ok": True, "grant": grant.to_record()}, indent=2))
         return 0
     lore.headline(lore.SUN, f"auto approved: {target.wolt_id}")
-    lore.subtitle("it works here without asking")
+    lore.subtitle("allows Auto and Bypass for this wolt in this exact directory")
     lore.labelled("workdir", str(target.canonical_workdir))
     return 0
 
@@ -1362,7 +1362,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     sub = parser.add_subparsers(dest="command")
-    for noun, what in (("session", "sessions"), ("wolt", "configure, archive or delete a wolt")):
+    for noun, what in (("session", "sessions"), ("wolt", "configure, archive or delete a wolt"),
+                       ("inbox", "a session's lodge inbox: fetch, ack, send")):
         delegated = sub.add_parser(noun, help=f"{what} (delegated to the bundled control client)",
                                    add_help=False)
         delegated.add_argument("noun_args", nargs=argparse.REMAINDER)
@@ -1459,7 +1460,7 @@ def build_parser() -> argparse.ArgumentParser:
     db_show.set_defaults(func=_db_show)
 
     auto = sub.add_parser(
-        "auto", help="manage repository-scoped Auto consent for native sessions"
+        "auto", help="manage repository-scoped Auto and Bypass consent for native sessions"
     )
     auto.set_defaults(func=_auto, auto_parser=auto)
     auto_sub = auto.add_subparsers(dest="verb")

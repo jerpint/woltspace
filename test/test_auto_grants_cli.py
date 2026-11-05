@@ -98,7 +98,7 @@ class TestGrant:
         after, grant = resolve_execution_policy(
             None, isolation="host", target=target, grants=store
         )
-        assert after.mode == "auto"
+        assert after.mode == "bypass"
         assert grant is not None
 
     def test_granting_twice_leaves_one_grant(self, colony):
