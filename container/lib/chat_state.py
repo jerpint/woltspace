@@ -8,6 +8,7 @@ any other key the adapter keeps rides along in `record`.
 from __future__ import annotations
 
 import json
+import sqlite3
 import sys
 import time
 from contextlib import closing
@@ -62,6 +63,23 @@ def forget_session(wolts_dir, adapter: str, session: str) -> int:
             " WHERE adapter=? AND active_session=?",
             (int(time.time()), adapter, session),
         ).rowcount
+
+
+def chats_of(wolts_dir, adapter: str, session: str) -> set[str]:
+    """The chats of `adapter` that talk to `session` now: the owner routed them there.
+
+    Read only, and empty when the lodge has no chats table yet: a caller uses
+    this to allow something, so not knowing means no.
+    """
+    try:
+        with closing(lodge_db.connect(wolts_dir, readonly=True)) as conn:
+            rows = conn.execute(
+                "SELECT chat_id FROM chat_state WHERE adapter=? AND active_session=?",
+                (adapter, session),
+            ).fetchall()
+    except (sqlite3.Error, OSError):
+        return set()
+    return {row["chat_id"] for row in rows}
 
 
 _PENDING_COLUMNS = ("user", "channel", "root_ts", "picker_ts", "event_id", "text", "state",

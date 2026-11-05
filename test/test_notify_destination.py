@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "container" / "lib"))
 
+import chat_state
 import outbox
 import server.app as server_app
 from server import notify
@@ -174,6 +175,44 @@ async def test_a_file_to_any_other_telegram_chat_is_refused_and_removed(lodge, a
     error = await _refused(lodge, _telegram("999"), _file(lodge))
 
     assert str(error) == _refusal("telegram", "999")
+
+
+@pytest.mark.parametrize("speak", [False, True])
+@pytest.mark.asyncio
+async def test_a_file_goes_to_a_group_the_owner_routed_into_a_lodge_session(lodge, speak):
+    # A session started from the lodge (or a wolf job) has no chat of its own;
+    # the owner replies to it from a group, and the group now talks to it.
+    lodge.routing = {"adapter": "lodge"}
+    chat_state.put(lodge.tmp, "telegram", "-100777",
+                   {"active_wolt": "test", "active_session": "test-session"})
+
+    if speak:
+        await notify.send_notification("test-session", "hi\n", _telegram("-100777"), (), WORDS)
+    else:
+        await notify.send_notification("test-session", "hi\n", _telegram("-100777"), _file(lodge))
+
+    assert lodge.sent[0].destination == {"chat_id": "-100777"}
+    assert len(lodge.sent[0].message.attachments) == 1
+
+
+@pytest.mark.parametrize("adapter, chat, session", [
+    ("telegram", "-100777", "other-session"),   # the group talks to another session
+    ("slack", "-100777", "test-session"),       # the same id, on another connector
+    ("telegram", "-100888", "test-session"),    # another group talks to this session
+])
+@pytest.mark.asyncio
+async def test_a_group_routed_elsewhere_is_still_refused(lodge, adapter, chat, session):
+    lodge.routing = {"adapter": "lodge"}
+    chat_state.put(lodge.tmp, adapter, chat, {"active_wolt": "test", "active_session": session})
+
+    error = await _refused(lodge, _telegram("-100777"), _file(lodge))
+
+    assert str(error) == _refusal("telegram", "-100777")
+
+
+def test_a_lodge_with_no_chats_yet_has_no_routed_chats(tmp_path):
+    assert chat_state.chats_of(tmp_path, "telegram", "test-session") == set()
+    assert not (tmp_path / ".space" / "lodge.db").exists()
 
 
 # --- Slack: the channels a file may go to --------------------------------------

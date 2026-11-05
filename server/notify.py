@@ -25,6 +25,7 @@ from .speech import (
     DEFAULT_SPEECH_MODEL, DEFAULT_SPEECH_VOICE, SPEECH_FILES, SpeechError, synthesize,
     write_failure,
 )
+import chat_state
 import outbox
 import voice_notes
 from sessions import SessionRegistry
@@ -511,9 +512,15 @@ async def _spoken(speech: _Speech, sender: Plugin, adapter: str, wolt: str = "")
     return Attachment(path, filename, size, content_type, "voice")
 
 
-def _own_chats(adapter: str, session_record: dict | None) -> set[str]:
-    """The chats that are this lodge's own: the ones it is set up with, and the session's."""
+def _own_chats(adapter: str, session: str, session_record: dict | None) -> set[str]:
+    """The chats that are this lodge's own: the ones it is set up with, and the session's.
+
+    A session's chats are the one it started from, and any chat the owner now
+    talks to it from (a reply routed into a lodge or wolf session, say).
+    """
     chats = set(_outbound(adapter).owner_chats())
+    if session and session_record:
+        chats |= chat_state.chats_of(WOLTS_DIR, adapter, session)
     if session_record and session_record.get("adapter") == adapter:
         outbound = _outbound(adapter)
         if outbound.bound_chat is not None:
@@ -544,7 +551,7 @@ async def _send(
     )
 
     if (attachments or speech is not None) and str(chat_id) not in _own_chats(
-        adapter, session_record,
+        adapter, session, session_record,
     ):
         # Text may go to any chat a caller names. A file can be anything on this
         # machine, so it goes only where the lodge already talks to its human.
