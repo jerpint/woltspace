@@ -140,6 +140,12 @@ async def _send_event(event_id: str, kind: str, channel: str, body: dict, where:
     return status
 
 
+def plain(text: str) -> str:
+    """Slack's stored mrkdwn as it was written: <url> and <url|label> as the url, then &lt; &gt; &amp;."""
+    text = re.sub(r"<([^<>|]+)(?:\|[^<>]*)?>", r"\1", text)
+    return text.replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&")
+
+
 async def _reply_to(event: dict) -> dict | None:
     """In a thread: the message it hangs under, with whether this bot wrote it."""
     thread = event.get("thread_ts")
@@ -154,7 +160,7 @@ async def _reply_to(event: dict) -> dict | None:
         return None
     from_bot = bool(BOT["bot_id"]) and parent.get("bot_id") == BOT["bot_id"] or (
         bool(BOT["user_id"]) and parent.get("user") == BOT["user_id"])
-    found = {"from_bot": from_bot, "text": str(parent.get("text") or "")[:wire.MAX_TEXT], "voice": False}
+    found = {"from_bot": from_bot, "text": plain(str(parent.get("text") or ""))[:wire.MAX_TEXT], "voice": False}
     files = parent.get("files") or []
     if files and files[0].get("name"):
         found["file_name"] = str(files[0]["name"])[:512]

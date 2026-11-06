@@ -136,6 +136,7 @@ def load_folder(folder: Path, *, bundled: bool) -> ConnectorSpec:
         owners_env=data.get("owners_env", "") if bundled else "",
         owners_config=data.get("owners_config", "") if bundled else "",
         default_route_env=data.get("default_route_env", "") if bundled else "",
+        owner_pattern=data.get("owner_pattern", "") if bundled else "",
     )
 
 

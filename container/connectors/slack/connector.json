@@ -48,6 +48,7 @@
   "enable_env": "ENABLE_SLACK_BOT",
   "owners_env": "SLACK_OWNER_USER",
   "owners_config": "owner_user",
+  "owner_pattern": "[UW][A-Z0-9]{8,}",
   "legacy_flag": "--slack",
   "default_route_env": "SLACK_NOTIFY_CHANNEL",
   "help": [

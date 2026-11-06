@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -396,6 +397,10 @@ class FolderConnector:
             command = (*interpreter, "-m", "watchfiles", "--filter", "python", inner, folder)
             dev = " (dev reload)"
         owners = self._owners(values, settings)
+        if spec.owner_pattern and not (owners and all(re.fullmatch(spec.owner_pattern, o) for o in owners)):
+            key = spec.owners_config or "owners"
+            return ConnectorPlan(self.name, False, "enabled without a usable owner ID",
+                                 remedy=f'Set channels.{self.name}.{key} to the owner\'s ID in {path}.')
         socket_dir = Path(layout.wolts_dir) / ".space" / "run" / "connectors"
         child_env = export_both({
             **secrets,

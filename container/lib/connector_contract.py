@@ -229,6 +229,8 @@ class ConnectorSpec:
     # setting (an env name and a config key). Never read for a local folder.
     owners_env: str = ""
     owners_config: str = ""
+    # A bundled connector's owner id, as a pattern: without one that matches, it is not started.
+    owner_pattern: str = ""
     # An environment name holding the route a notification takes when nothing else names one.
     default_route_env: str = ""
 
