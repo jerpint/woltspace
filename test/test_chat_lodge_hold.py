@@ -152,3 +152,12 @@ def test_a_pick_after_ten_minutes_says_it_expired_and_delivers_nothing(side):
     assert "waited over 10 minutes" in out.texts[-1]
     assert queued_to(side) == []
     assert rows(side.root, "SELECT state, text FROM pending_messages") == [("expired", None)]
+
+
+def test_command_release_keeps_the_newly_started_session(side):
+    (side.root / "woltspace.json").write_text("{}")
+    handle(side)
+    handle(side, "command", {"name": "wolt", "args": ["alpha"]}, "command")
+    [spawned] = side.calls["spawned"]
+    assert spawned["wolt"] == "alpha"
+    assert side._load_chat_state(CHAT)["active_session"] == "alpha-a-b-000001"
