@@ -218,3 +218,11 @@ def test_a_notification_is_sent_and_a_failure_is_classified(slack, tmp_path, mon
                            (hang, {"status": "ambiguous", "error": "timed out"})):
         monkeypatch.setattr(slack.api, "post", broken)
         assert run(slack.on_send({**frame, "method": "message", "text": "x"})) == status
+
+
+@pytest.mark.parametrize("url", ["https://files.invalid/F1/a.pdf", "http://files.slack.com/F1/a.pdf",
+                                 "https://files.slack.com.invalid/F1/a.pdf"])
+def test_the_bot_token_goes_only_to_slack_s_own_file_host(url):
+    sc = importlib.import_module("slack_connector")
+    with pytest.raises(ValueError, match="not a Slack file link"):
+        run(sc.SlackAPI(None, "xoxb-test").download(url))  # refused before any request

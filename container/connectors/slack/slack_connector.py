@@ -27,6 +27,7 @@ import re
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import connector_client
 import connector_protocol as wire
@@ -43,6 +44,7 @@ DATA_DIR = Path(os.environ.get("WOLTSPACE_CONNECTOR_DATA")
 UPLOADS_DIR = DATA_DIR / "uploads"
 MAX_FILE_BYTES = 50 * 1024 * 1024
 PREFIX = "!"
+FILE_HOST = "files.slack.com"  # where url_private points
 
 # The link to the lodge (a connector_client.Client, or a stand-in in tests), and to Slack (a SlackAPI).
 CLIENT: Any = None
@@ -91,7 +93,10 @@ class SlackAPI:
         return messages[0] if messages else None
 
     async def download(self, url: str) -> bytes:
-        import httpx
+        # The bot token goes to Slack's own file host and nowhere else (httpx drops it on a redirect elsewhere).
+        parsed = urlparse(url)
+        if parsed.scheme != "https" or parsed.hostname != FILE_HOST:
+            raise ValueError(f"not a Slack file link: {parsed.scheme}://{parsed.hostname}")
         async with httpx.AsyncClient(timeout=60, follow_redirects=True) as http:
             got = await http.get(url, headers={"Authorization": f"Bearer {self.token}"})
             got.raise_for_status()
