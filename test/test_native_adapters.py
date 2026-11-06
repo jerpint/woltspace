@@ -496,7 +496,9 @@ def test_claude_announces_the_turn_end_at_stop_and_plain_ready_at_session_start(
 def test_the_codex_watcher_follows_its_own_thread_and_announces_each_turn_end(lodge, tmp_path, monkeypatch):
     from websockets.sync.server import unix_serve
     wolts, _ = lodge
-    directory = Path(na.prepare(wolts, "pal-x", "codex", "a1")["addr"])
+    native = na.prepare(wolts, "pal-x", "codex", "a1")
+    assert native
+    directory = Path(native["addr"])
     stand_in = Lodge()
     for key, value in stand_in.env.items():
         monkeypatch.setenv(key, value)
@@ -538,7 +540,9 @@ def test_a_rewatch_wakes_once_on_a_known_idle_and_never_takes_a_bad_status_for_i
                                                                                      after):
     from websockets.sync.server import unix_serve
     wolts, _ = lodge
-    directory = Path(na.prepare(wolts, "pal-x", "codex", "a1")["addr"])
+    native = na.prepare(wolts, "pal-x", "codex", "a1")
+    assert native
+    directory = Path(native["addr"])
     stand_in, seen = Lodge(), []
     for key, value in stand_in.env.items():
         monkeypatch.setenv(key, value)
@@ -793,6 +797,43 @@ def test_the_codex_observer_outlasts_every_old_window_and_stops_with_its_attempt
     assert pauses[:6] == [0.5, 1, 2, 4, 8, 10] and max(pauses) == 10 and set(deadlines) == {10.0}
     assert watches[0] and not any(watches[1:])  # ready is written once; later watches are rewatches
     assert len(watches) == 3 if end == "retired" else 300 <= clock[0] < 310
+
+
+def test_the_codex_observer_backs_off_on_failed_tries_and_starts_over_after_a_working_watch(lodge, monkeypatch):
+    wolts, _ = lodge
+    native = na.prepare(wolts, "pal-x", "codex", "a1")
+    assert native
+    directory, pauses, saw = Path(native["addr"]), [], iter([False] * 4 + [True] + [False] * 3)
+    monkeypatch.setattr(launch, "time", types.SimpleNamespace(monotonic=lambda: 0.0, sleep=pauses.append))
+    monkeypatch.setattr(launch, "codex_thread", lambda plan, cwd, deadline: "t1")
+    monkeypatch.setattr(launch, "watch_codex", lambda *args: next(saw))  # no status 4 times, then a status and a drop
+    launch.observe_codex({"sock": "s"}, "/w", directory, native, lambda: len(pauses) < 8)
+    assert pauses == [0.5, 1, 2, 4, 0.5, 1, 2, 4]
+
+
+def test_a_codex_watch_says_whether_it_saw_a_status(lodge):
+    from websockets.exceptions import ConnectionClosed
+    wolts, _ = lodge
+    native = na.prepare(wolts, "pal-x", "codex", "a1")
+    assert native
+    directory = Path(native["addr"])
+
+    class Conn:
+        def __init__(self, frames):
+            self.frames = list(frames)
+        def __enter__(self):
+            return self
+        def __exit__(self, *exc):
+            return False
+        def send(self, raw):
+            pass
+        def recv(self, timeout=None):
+            if not self.frames:
+                raise ConnectionClosed(None, None)
+            return json.dumps(self.frames.pop(0))
+    idle = {"id": 2, "result": {"thread": {"status": {"type": "idle"}}}}
+    assert launch._watch_codex(Conn([idle]), "t1", directory, "a1", None) is True  # a status, then a drop
+    assert launch._watch_codex(Conn([{"id": 2, "result": {}}]), "t1", directory, "a1", None) is False
 
 
 def _claimable(wolts, registry, name="pal-x", **fields):

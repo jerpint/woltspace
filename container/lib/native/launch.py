@@ -153,13 +153,14 @@ def codex_thread(plan: dict, cwd: str, deadline: float | None = None) -> str | N
     return main[0] if len(main) == 1 else None
 
 
-def watch_codex(sock: str, thread: str, directory: Path, attempt: str, on_known=None) -> None:
+def watch_codex(sock: str, thread: str, directory: Path, attempt: str, on_known=None) -> bool:
     """Busy/idle from the app-server's thread/status/changed for this thread; announce each turn's end.
     on_known runs once the first status is written; when the watch ends the state is unknown again.
-    The first usable status must come within FIRST_STATE seconds of connecting, whatever else arrives."""
+    The first usable status must come within FIRST_STATE seconds of connecting, whatever else arrives.
+    True when this connection saw a usable status."""
     from websockets.sync.client import unix_connect
     try:
-        _watch_codex(unix_connect(sock, "ws://localhost/", open_timeout=5), thread, directory, attempt, on_known)
+        return _watch_codex(unix_connect(sock, "ws://localhost/", open_timeout=5), thread, directory, attempt, on_known)
     finally:
         clear_state(directory)
 
@@ -179,7 +180,7 @@ def _watch_codex(conn, thread, directory, attempt, on_known):
                     raise TimeoutError
                 message = json.loads(conn.recv(timeout=left))
             except (TimeoutError, ConnectionClosed):
-                return  # closed, or no usable status in time: the observer connects again
+                return not first  # closed, or no usable status in time: the observer connects again
             if message.get("id") == 2:
                 status = ((message.get("result") or {}).get("thread") or {}).get("status") or {}
             elif message.get("method") == "thread/status/changed" and message["params"].get("threadId") == thread:
@@ -190,7 +191,7 @@ def _watch_codex(conn, thread, directory, attempt, on_known):
                 continue  # an error or an unknown status leaves it unknown
             now = status.get("type") == "active"
             if not write_state(directory, now, os.getpid()):
-                return  # retired
+                return not first  # retired
             if on_known:
                 on_known()
                 on_known = None
@@ -202,7 +203,8 @@ def _watch_codex(conn, thread, directory, attempt, on_known):
 def observe_codex(plan: dict, cwd: str, directory: Path, native: dict, alive) -> None:
     """The attempt's one observer, for as long as its backend is alive and it is not retired: a TUI
     held at a trust prompt makes its thread, and its first status, late by any amount of time.
-    Each discovery pass and each first status is bounded; every try is followed by a capped pause."""
+    Each discovery pass and each first status is bounded; every try is followed by a capped pause,
+    back to the shortest once a watch saw a status (a drop after a working connection, not a failing try)."""
     thread, pause, published = None, BACKOFF, []  # ready once a first busy/idle is known; rewatch after a drop
     while alive() and not (directory / RETIRED).exists():
         try:
@@ -210,8 +212,9 @@ def observe_codex(plan: dict, cwd: str, directory: Path, native: dict, alive) ->
             if thread:
                 ready = {"kind": native["kind"], "attempt": native["attempt"], "sock": plan["sock"],
                          "thread": thread, "session_id": thread}
-                watch_codex(plan["sock"], thread, directory, native["attempt"],
-                            None if published else lambda ready=ready: published.append(write_ready(directory, ready)))
+                if watch_codex(plan["sock"], thread, directory, native["attempt"],
+                               None if published else lambda ready=ready: published.append(write_ready(directory, ready))):
+                    pause = BACKOFF
         except Exception:  # any failure leaves the state unknown until it is seen again
             log.debug("codex observer: try failed", exc_info=True)
         time.sleep(pause)
