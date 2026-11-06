@@ -161,3 +161,13 @@ def test_command_release_keeps_the_newly_started_session(side):
     [spawned] = side.calls["spawned"]
     assert spawned["wolt"] == "alpha"
     assert side._load_chat_state(CHAT)["active_session"] == "alpha-a-b-000001"
+
+
+def test_a_plain_wolt_pick_or_new_with_a_name_releases_the_held_message_too(side):
+    handle(side)
+    handle(side, "selection", {"action": "wolt:beta"}, "pick")  # the /wolt picker's own button
+    handle(side, key="m2")  # nothing waits any more: straight to beta
+    side._save_chat_state(CHAT, {})
+    handle(side, key="m3")
+    handle(side, "command", {"name": "new", "args": ["alpha"]}, "new")
+    assert queued_to(side) == [("beta", "telegram:m1"), ("beta", "telegram:m2"), ("alpha", "telegram:m3")]

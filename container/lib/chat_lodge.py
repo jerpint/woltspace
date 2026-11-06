@@ -192,8 +192,8 @@ class ChatLodge:
         sender = str(event["sender"])
         if kind == "command":
             args = list(body.get("args") or [])
-            # /wolt <name> releases a held message, which then makes the switch; else it is a plain switch.
-            if body["name"] == "wolt" and args and self._wolt_exists(args[0]) and \
+            # /wolt or /new <name> releases a held message, which then makes the switch; else as ever.
+            if body["name"] in ("wolt", "new") and args and self._wolt_exists(args[0]) and \
                     await self._release_held(route, out, sender, args[0], None):
                 return
             reply = await commands.run_command(
@@ -207,8 +207,9 @@ class ChatLodge:
                 await out.edit(outcome.edit)
             choice, _, rest = body["action"].partition(":")
             wolt, _, generation = rest.partition(":")
-            if choice == "hold" and self._wolt_exists(wolt):
-                await self._release_held(route, out, sender, wolt, generation)
+            # Any pick of a wolt releases a held message: its own picker's (generation), or a plain one.
+            if choice in ("hold", "wolt") and self._wolt_exists(wolt):
+                await self._release_held(route, out, sender, wolt, generation if choice == "hold" else None)
         elif kind == "message":
             await self.on_message(route, body, out, event.get("id"), sender)
         elif kind == "attachment":
