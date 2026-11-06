@@ -1,23 +1,23 @@
 ---
 name: setup-slack
-description: Connect a private Woltspace lodge to its owner's Slack with the supported owner-DM Agent View app and Socket Mode flow.
+description: Connect a private Woltspace lodge to its owner's Slack: one owner-only DM app over Socket Mode, run as the lodge's Slack connector.
 ---
 
 # Slack Setup
 
 Guide the owner through one supported setup: one owner-controlled Slack app per
-lodge, Agent View, Socket Mode, and one immutable owner member ID. Work one
-step at a time and stop for the owner at Slack UI boundaries.
+lodge, Socket Mode, and one immutable owner member ID. Slack then works like
+Telegram: one direct message with the app, an active wolt, the lodge's commands,
+the dog, files and voice. Work one step at a time and stop for the owner at Slack
+UI boundaries.
 
 This skill is idempotent. Inspect existing configuration without printing
 tokens; preserve unrelated app settings and lodge configuration.
 
 ## Boundaries
 
-- This connector is for direct messages from one configured owner. Do not add
+- The connector takes direct messages from one configured owner only. Do not add
   channel events, mentions, other users, or a first-sender fallback.
-- Do not resurrect the legacy channel/mention bot or custom progress-message
-  setup. Native Slack Agent Sessions are the supported experience.
 - Never ask the owner to paste `xoxb-` or `xapp-` secrets into Slack. Have them
   enter secrets on their lodge machine, or use an already-approved private
   configuration surface.
@@ -38,30 +38,26 @@ object or environment.
 If Slack is already healthy, ask the owner to send a DM and validate the
 acceptance flow instead of rebuilding the app.
 
-## 2. Create or migrate the Slack app
+## 2. Create or update the Slack app
 
 Read [references/manifest.json](references/manifest.json) and give that exact
-manifest to the owner as a formatted code block. Existing apps should be
-updated to this manifest rather than creating a second app.
+manifest to the owner as a formatted code block. An existing app is updated to
+this manifest rather than replaced by a second app.
 
 The intentional surface is:
 
-- Agent View with the description `gnaw. build. repeat`
-- bot scopes `assistant:write`, `chat:write`, `files:write`, and `im:history`
-- bot events `app_home_opened` and `message.im`
-- Interactivity and Socket Mode enabled
+- bot scopes `chat:write`, `commands`, `files:read`, `files:write` and `im:history`;
+- the bot event `message.im`, the Messages tab, Interactivity and Socket Mode;
+- the slash commands `/wolt`, `/new`, `/sessions`, `/holds`, `/idle`, `/apps`,
+  `/kill` and `/help`.
 
-`files:write` is what lets a wolt send a file to the owner. It does not let
-the app receive attachments; those are still refused.
-
-Do not add `app_mentions:read`, channel/group history, channel/group message
-events, `files:read`, `chat:write.customize`, or `agent_session_stopped`.
-Those belong to separately implemented features.
+`files:read` lets the connector download what the owner shares; `files:write`
+lets a wolt send a file. An app from before this connector carried Agent View
+and `assistant:write`: drop both. Do not add `app_mentions:read`,
+channel/group history or channel/group message events.
 
 After the owner saves the manifest, have them reinstall the app to the
-workspace so the new bot scopes take effect. An app installed before the
-manifest carried `files:write` needs this once: until then a file send fails
-with a message that names the scope, and text notifications keep working.
+workspace once so the new scopes and commands take effect.
 
 ## 3. Create the Socket Mode token
 
@@ -92,24 +88,22 @@ unrelated key:
 ```
 
 Keep the file private. Validate only token prefixes, owner-ID shape, and field
-presence; never echo the values. The legacy `ENABLE_SLACK_BOT` and
-`SLACK_*` environment path is migration input, not the canonical setup. With
-owner approval, move those values into `channels.slack`, verify the connector,
-then remove the redundant legacy entries.
+presence; never echo the values. The legacy `ENABLE_SLACK_BOT` and `SLACK_*`
+environment path still works and is migration input, not the canonical setup.
+`SLACK_NOTIFY_CHANNEL`, when set, is where a notification goes that names no
+chat (a wolf ping to Slack).
 
 ## 5. Activate and prove
 
-With restart approval, record `woltspace status` and the current tmux session
-count, restart through the normal Woltspace lifecycle, then verify:
+With restart approval, record `woltspace status`, restart through the normal
+Woltspace lifecycle, then verify:
 
 - lodge health and the Slack connector are `running`;
-- all pre-existing tmux sessions survived;
-- the owner can DM the app, choose a wolt, and have the original message
-  delivered exactly once;
-- Slack shows native processing state and the Agent Session title becomes the
-  exact Woltspace session slug;
-- the final reply retains **Open session** and status returns to active;
-- a follow-up in the same thread stays pinned to the same Woltspace session.
+- a DM reaches the active wolt (with none chosen: the picker, and the first
+  message is delivered once after the pick);
+- `/wolt`, `/help` and `!help` (typed, also inside a thread) answer;
+- a reply in a thread under a wolt's message reaches that wolt;
+- a file and a voice note reach the wolt, and `notify --file` arrives in the DM.
 
 Do not probe with a non-owner account or post into channels unless the owner
 explicitly supplies and authorizes that test. Report that those inputs fail
@@ -117,23 +111,11 @@ closed by design.
 
 ## Troubleshooting
 
-- `not_authorized` from `agents.sessions.setStatus`: confirm Agent View,
-  `assistant:write`, Save, and workspace reinstall.
-- connector disabled: check all four `channels.slack` fields and that the owner
-  ID begins with `U` or `W`.
+- connector disabled: check all four `channels.slack` fields.
+- every message ignored: `owner_user` is not the sender's member ID.
 - Socket Mode does not connect: confirm the app-level token has
   `connections:write` and Socket Mode is enabled.
-- replies work but no native processing state: the app is still on the legacy
-  surface; migrate it instead of enabling message-progress fallback.
-- text arrives but a file send fails naming `files:write`: the app was
-  installed before the manifest carried that scope; update the manifest, Save,
-  and reinstall.
-
-Slack images, native Stop, custom per-wolt identity, shared OAuth installation,
-and channel participation are not part of setup. Treat each as a separate
-product change with its own scopes and acceptance test.
-
-The exact session slug is the current stable title, not the final naming UX.
-Woltspace should later own a human-friendly session name for browsing and sync
-that name into Slack. Slack remains a presentation surface, not the source of
-truth for session identity or naming.
+- a slash command answers "dispatch_failed" or nothing: the app was not
+  reinstalled after the commands were added. Typed `!` commands work meanwhile.
+- a file send fails naming `files:write`, or shared files never arrive
+  (`files:read`): update the manifest, Save, and reinstall.

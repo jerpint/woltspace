@@ -1,0 +1,58 @@
+{
+  "name": "slack",
+  "title": "Slack",
+  "protocol": 1,
+  "command": [
+    "{python}",
+    "slack_connector.py"
+  ],
+  "dependency": "slack_bolt",
+  "dependency_label": "slack-bolt",
+  "capabilities": [
+    "text",
+    "files",
+    "voice_in",
+    "voice_out",
+    "images",
+    "edit",
+    "reply_to"
+  ],
+  "command_input": [
+    "native",
+    "buttons",
+    "text"
+  ],
+  "command_prefix": "!",
+  "events": [
+    "message",
+    "command",
+    "selection",
+    "attachment"
+  ],
+  "route": [
+    [
+      "chat_id",
+      "[CDG][A-Z0-9]{8,}"
+    ]
+  ],
+  "secrets": [
+    [
+      "SLACK_BOT_TOKEN",
+      "bot_token"
+    ],
+    [
+      "SLACK_APP_TOKEN",
+      "app_token"
+    ]
+  ],
+  "enable_env": "ENABLE_SLACK_BOT",
+  "owners_env": "SLACK_OWNER_USER",
+  "owners_config": "owner_user",
+  "legacy_flag": "--slack",
+  "default_route_env": "SLACK_NOTIFY_CHANNEL",
+  "help": [
+    "• Send a DM → goes to the active session (or starts one)",
+    "• Reply in a thread under a wolt's message → routes to that wolt",
+    "• In a thread, type commands with ! (!wolt, !new, !help)"
+  ]
+}

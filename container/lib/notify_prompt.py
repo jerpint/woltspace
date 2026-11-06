@@ -10,7 +10,6 @@ from typing import TextIO
 
 
 _PREFIX_RE = re.compile(r"[A-Z][A-Z0-9_]*")
-_SLACK_CHANNEL_RE = re.compile(r"[A-Za-z0-9_-]+")
 _SLACK_THREAD_RE = re.compile(r"[0-9]+(?:\.[0-9]+)?")
 _TELEGRAM_CHAT_ID_RE = re.compile(r"-?[0-9]+")
 _SESSION_TARGET_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*")
@@ -147,11 +146,11 @@ def _validate_notify_argv(argv: tuple[str, ...]) -> None:
     route_args = argv[1:]
     if not route_args:
         return
-    if route_args[0] == "--slack" and len(route_args) == 3:
-        if _SLACK_CHANNEL_RE.fullmatch(route_args[1]) is None:
-            raise ValueError("Slack channel has invalid characters")
-        if _SLACK_THREAD_RE.fullmatch(route_args[2]) is None:
+    if route_args[0] == "--slack" and len(route_args) in (2, 3):
+        # A thread from before Slack was flat (`--slack C T`) is accepted and ignored.
+        if len(route_args) == 3 and _SLACK_THREAD_RE.fullmatch(route_args[2]) is None:
             raise ValueError("Slack thread timestamp must be numeric")
+        parse_to(f"slack:{route_args[1]}")
         return
     if route_args[0] == "--telegram" and len(route_args) == 2:
         if _TELEGRAM_CHAT_ID_RE.fullmatch(route_args[1]) is None:
@@ -169,6 +168,9 @@ def parse_to(target: str):
     import connector_registry
 
     name, sep, route_text = str(target).partition(":")
+    channel, _, thread = route_text.partition(":")
+    if name == "slack" and _SLACK_THREAD_RE.fullmatch(thread):
+        route_text = channel  # slack:C:T from before Slack was flat: the DM, its thread ignored
     found = connector_registry.spec(name) if sep else None
     if found is None:
         raise ValueError("--to needs <connector>:<route> for a connector this lodge knows")

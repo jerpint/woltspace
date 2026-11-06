@@ -204,8 +204,7 @@ class ConnectorSpec:
 
     A connector in a folder (`connector.json` plus its program) runs as its own
     process and talks to the lodge over a socket; the lodge never imports it.
-    `folder` and `command` say how to start it. A connector without a folder
-    (Slack, for now) still has its own classes in the lodge.
+    `folder` and `command` say how to start it.
     """
 
     manifest: Manifest
@@ -230,6 +229,8 @@ class ConnectorSpec:
     # setting (an env name and a config key). Never read for a local folder.
     owners_env: str = ""
     owners_config: str = ""
+    # An environment name holding the route a notification takes when nothing else names one.
+    default_route_env: str = ""
 
     @property
     def name(self) -> str:

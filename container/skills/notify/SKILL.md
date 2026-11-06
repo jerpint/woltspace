@@ -15,8 +15,8 @@ notify <<'WOLTSPACE_NOTIFY_7F3A91C2'
 your message here
 WOLTSPACE_NOTIFY_7F3A91C2
 
-# Explicit Slack — send to a specific Slack channel + thread
-notify --slack CHANNEL THREAD_TS <<'WOLTSPACE_NOTIFY_4D8E20B1'
+# Explicit Slack — send to a specific Slack DM or channel
+notify --slack CHANNEL <<'WOLTSPACE_NOTIFY_4D8E20B1'
 your message here
 WOLTSPACE_NOTIFY_4D8E20B1
 
@@ -44,11 +44,11 @@ Weekly update is ready. Open the attached page.
 WOLTSPACE_NOTIFY_7F3A91C2
 ```
 
-`--file PATH` sends one file to the same chat or thread the message goes to.
+`--file PATH` sends one file to the same chat the message goes to.
 `PATH` is absolute or relative to the current directory. On Telegram the file
 arrives as a document with your message as its caption; a message too long for
 a caption arrives first, and the file follows it. On Slack the file lands in
-the thread with your message as its comment.
+the DM with your message as its comment.
 
 Telegram reads an audio file's name. One ending in `.ogg`, `.oga` or `.opus`
 arrives as a voice note, and one ending in `.mp3` or `.m4a` as audio in

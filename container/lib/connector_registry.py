@@ -3,7 +3,7 @@
 A connector is a folder: `connector.json` (its manifest) and its program. The
 lodge finds them in two places:
 
-- bundled, in this install's `container/connectors/<name>/` (Telegram);
+- bundled, in this install's `container/connectors/<name>/` (Telegram, Slack);
 - local, in the data root's `.space/connectors/<name>/`, so a connector can be
   tried in one lodge before it is contributed. A local folder never replaces a
   bundled connector of the same name.
@@ -11,9 +11,6 @@ lodge finds them in two places:
 Either way the folder is never imported into the lodge: the lodge starts its
 program and talks to it over a socket. Reading a manifest runs no code: route
 fields are checked with the regular expressions it declares.
-
-Slack predates folders and still has classes in the lodge; its entry below
-gives it a manifest and a route codec until it moves out.
 
 Light on purpose: no provider SDK is imported, so the server, the CLI and the
 launcher can all read what a connector declares without loading it.
@@ -34,49 +31,6 @@ logger = logging.getLogger(__name__)
 BUNDLED_DIR = Path(__file__).resolve().parents[1] / "connectors"
 MANIFEST_FILE = "connector.json"
 MAX_MANIFEST_BYTES = 64 * 1024
-
-_SLACK_CHANNEL = re.compile(r"[A-Za-z0-9_-]+")
-_SLACK_THREAD = re.compile(r"[0-9]+(?:\.[0-9]+)?")
-
-
-def _slack_parse(text: str) -> dict:
-    channel, sep, thread_ts = (text or "").partition(":")
-    if not sep or _SLACK_CHANNEL.fullmatch(channel) is None:
-        raise ValueError("Slack channel has invalid characters")
-    if _SLACK_THREAD.fullmatch(thread_ts) is None:
-        raise ValueError("Slack thread timestamp must be numeric")
-    return {"channel": channel, "thread_ts": thread_ts}
-
-
-def _slack_from_record(record: dict) -> dict | None:
-    if record.get("adapter") != "slack":
-        return None
-    try:
-        return _slack_parse(f"{record.get('chat_id') or ''}:{record.get('thread_ts') or ''}")
-    except ValueError:
-        return None
-
-
-SLACK = Manifest(
-    name="slack",
-    capabilities=frozenset({"text", "files", "voice_out", "threads", "status"}),
-    command_input=frozenset({"buttons"}),
-    events=frozenset({"message", "selection"}),
-    route_fields=("channel", "thread_ts"),
-    secrets=("SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"),
-    owner_env="SLACK_OWNER_USER",
-)
-
-# Connectors with classes of their own in the lodge (no folder yet).
-SPECS: dict[str, ConnectorSpec] = {
-    "slack": ConnectorSpec(
-        SLACK,
-        RouteCodec(("channel", "thread_ts"), _slack_parse, _slack_from_record,
-                   legacy_args=lambda r: ["--slack", r["channel"], r["thread_ts"]]),
-        title="Slack",
-    ),
-}
-
 
 # --- folders -----------------------------------------------------------------------
 
@@ -181,6 +135,7 @@ def load_folder(folder: Path, *, bundled: bool) -> ConnectorSpec:
         help=_strings(data, "help", path),
         owners_env=data.get("owners_env", "") if bundled else "",
         owners_config=data.get("owners_config", "") if bundled else "",
+        default_route_env=data.get("default_route_env", "") if bundled else "",
     )
 
 
@@ -198,7 +153,7 @@ def folders(wolts_dir=None, bundled_dir: Path | None = None) -> dict[str, Connec
         except OSError:
             continue
         for folder in entries:
-            if folder.name in found or folder.name in SPECS:
+            if folder.name in found:
                 if not bundled:
                     logger.warning("connector %s in %s is ignored: a bundled one has that name",
                                    folder.name, root)
@@ -211,8 +166,6 @@ def folders(wolts_dir=None, bundled_dir: Path | None = None) -> dict[str, Connec
 
 
 def spec(name: str, wolts_dir=None) -> ConnectorSpec | None:
-    if name in SPECS:
-        return SPECS[name]
     if not isinstance(name, str) or not re.fullmatch(r"[a-z][a-z0-9_-]{0,31}", name):
         return None
     return folders(wolts_dir).get(name)
