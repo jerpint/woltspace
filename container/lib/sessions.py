@@ -1680,18 +1680,23 @@ def claim_native_id(registry: SessionRegistry, name: str, wolt: str, seen: dict,
     already this id), "stale" (the record is no longer that attempt, running and published, or
     its locator is retired) or "refused" (it owns another id). One write, no activity stamp.
     Raises IntegrityError when another session owns the id: the caller refuses it too."""
-    from native_adapters import RETIRED
     with registry.edit(name, wolt=wolt) as current:
-        native = (current or {}).get("native") or {}
-        if (current is None or current.get("status") != "running" or current.get("launching")
-                or any(current.get(k) != seen.get(k) for k in ("attempt", "native", "inbox_adapter"))
-                or current.get("inbox_adapter") == "paste" or not native.get("addr")
-                or (Path(native["addr"]) / RETIRED).exists()):
+        if claim_stale(current, seen):
             return "stale"
         if stored_resume_id(current):
             return "accepted" if stored_resume_id(current) == session_id else "refused"
         current["harness_session_id"] = session_id
     return "accepted"
+
+
+def claim_stale(current: dict | None, seen: dict) -> bool:
+    """The record is no longer the attempt `seen` was, running and published, or its locator is retired."""
+    from native_adapters import RETIRED
+    native = (current or {}).get("native") or {}
+    return (current is None or current.get("status") != "running" or bool(current.get("launching"))
+            or any(current.get(k) != seen.get(k) for k in ("attempt", "native", "inbox_adapter"))
+            or current.get("inbox_adapter") == "paste" or not native.get("addr")
+            or (Path(native["addr"]) / RETIRED).exists())
 
 
 def still_as_seen(record: dict | None, seen: dict) -> bool:

@@ -1217,6 +1217,19 @@ def test_a_thread_owned_elsewhere_is_refused_and_never_hinted(lodge, codex, noti
     assert codex.stored == [] and notices.lines == [("blocked", seqs(lodge), "hint_unowned", None)]
 
 
+@pytest.mark.parametrize("change", [None, "retired", "resting", "paste"])
+def test_an_already_stored_thread_is_not_claimed_again_but_still_checked(lodge, codex, notices, monkeypatch, change):
+    lodge.registry.update("pal-live", wolt="pal", harness_session_id="th-1")
+    if change == "retired":
+        (codex.addr / "retired").touch()
+    elif change:
+        lodge.registry.update("pal-live", wolt="pal", **({"status": change} if change == "resting" else {"inbox_adapter": change}))
+    fresh, claims = record(lodge, "pal-live"), []
+    monkeypatch.setattr(sessions, "claim_native_id", lambda *args: claims.append(1) or "stale")
+    assert inbox_wake._claim_native(lodge.registry, "pal-live", "pal", fresh) == ("stale" if change else "accepted")
+    assert claims == ([1] if change else [])  # the same id: no write transaction; anything else is judged there
+
+
 def test_a_retired_attempt_neither_claims_nor_hints_nor_answers(lodge, codex, notices):
     (codex.addr / "retired").touch()
     mail(lodge)

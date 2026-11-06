@@ -266,6 +266,8 @@ def _claim_native(registry, live: str, wolt: str, fresh: dict) -> str:
     status, _, ready = native_adapters.state(fresh)
     if status != "ready" or not (found := (ready or {}).get("session_id")):
         return "accepted"  # nothing to adopt yet: deliver judges the rest
+    if sessions.stored_resume_id(fresh) == found and not sessions.claim_stale(fresh, fresh):
+        return "accepted"  # already this attempt's conversation: no write
     try:
         return sessions.claim_native_id(registry, live, wolt, fresh, found)
     except sqlite3.IntegrityError:  # another session owns that conversation
