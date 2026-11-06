@@ -31,7 +31,9 @@ REASONS = {
     "resume_failed": "its session could not be resumed",
     "busy": "it was busy starting or stopping",
     "error": "the lodge hit an error while waking it",
+    "queued_not_ready": "the session is not ready for a native inbox hint",
 }
+NOT_READY = "The session is not ready for a native inbox hint; your mail remains queued."
 REACHED = ("hinted", "resumed", "started", "busy")
 
 
@@ -53,6 +55,8 @@ def outcome(wolts_dir, wolt: str, *, seqs, how: str, session: str | None = None,
                     if how == "busy" else f"🪵 {session} notified\n{_link(session)}")
             if chat:
                 _follow(wolts_dir, wolt, chat, session)
+        elif how == "queued_not_ready":  # not reached: no chat follow
+            line = f"🪵 {NOT_READY}"
         else:
             line = f"🪵 your mail for {wolt} is waiting, but {wolt} can't wake now: {plain(reason or how)}"
     except Exception as exc:

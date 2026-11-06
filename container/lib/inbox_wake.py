@@ -177,7 +177,7 @@ def _worker(root: str, wolt: str, once: bool = False) -> None:
 def _wake(root: str, wolt: str, *, once: bool = False) -> None:
     """once: hint a live session only if its current attempt has had none yet."""
     store, registry = inbox.Store(root, inbox.LIMITS), sessions.SessionRegistry(root)
-    hinted = None
+    hinted, live = None, None  # live: the session to hint, decided under the lock
     with lifecycle.agent_lock(root, wolt):
         facts = store.wake_facts(wolt)
         if not facts or not facts["open"] or not facts["queued"]:
@@ -229,6 +229,11 @@ def _wake(root: str, wolt: str, *, once: bool = False) -> None:
     if not fresh or any(fresh.get(k) != record.get(k) for k in ("attempt", "native", "launching", "inbox_adapter")):
         log.info("inbox hint for %s via %s: not placed, the session changed since the wake", wolt, live)
         return  # a wait, unanswered: its new attempt's ready pickup hints
+    if _mode(fresh) == "native" and (claim := _claim_native(registry, live, wolt, fresh)) != "accepted":
+        log.info("inbox hint for %s via %s: not placed, conversation %s", wolt, live, claim)
+        if claim == "refused":
+            _answer(root, wolt, "blocked", reason="hint_unowned")
+        return  # stale: a wait, as above
     status, code = _paste(store, registry, wolt, fresh) if _mode(fresh) == "paste" else _deliver(fresh, hint)
     if status is None or code == "taken":  # changed under the lock; or a reader took the mail meanwhile
         log.info("inbox hint for %s via %s: not placed (%s)", wolt, live, code)
@@ -240,9 +245,31 @@ def _wake(root: str, wolt: str, *, once: bool = False) -> None:
         _answer(root, wolt, "hinted", session=live, hinted=hinted)
     elif (status, code) == ("pending", "busy"):  # its turn end's wake hints, if mail is still queued
         _answer(root, wolt, "busy", session=live)
+    elif (status, code) == ("pending", "not_ready") and _mode(fresh) == "native":  # no hinted: it still picks up
+        if facts["unanswered"]:  # mail already answered (a start, a resume) gets no second outcome
+            _notice(root, wolt, "queued_not_ready")
+            _answer(root, wolt, "queued_not_ready", session=live)
     elif status != "pending":
         _answer(root, wolt, "blocked", reason=f"hint_{status}")
     # pending, not placed: a wait, unanswered; the hint of its ready pickup answers it
+
+
+def _claim_native(registry, live: str, wolt: str, fresh: dict) -> str:
+    """A native codex attempt's thread, reported by its own engine, becomes the session's
+    conversation before any hint relies on it (sessions.claim_native_id); "accepted" when
+    there is none to adopt yet."""
+    import sqlite3
+
+    import native_adapters
+    if (fresh.get("native") or {}).get("kind") != "codex-app-server":
+        return "accepted"
+    status, _, ready = native_adapters.state(fresh)
+    if status != "ready" or not (found := (ready or {}).get("session_id")):
+        return "accepted"  # nothing to adopt yet: deliver judges the rest
+    try:
+        return sessions.claim_native_id(registry, live, wolt, fresh, found)
+    except sqlite3.IntegrityError:  # another session owns that conversation
+        return "refused"
 
 
 def _mode(record: dict) -> str | None:

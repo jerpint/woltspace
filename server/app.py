@@ -966,6 +966,8 @@ async def _terminal_mail(request: Request, wolt: str, session: str = ""):
             if got.get("how") in ("hinted", "resumed", "started", "busy"):
                 status = "busy" if got.get("how") == "busy" else "notified"
                 return {"ok": True, "status": status, "session": got.get("session"), **answer}
+            if got.get("how") == "queued_not_ready":  # queued, as when no outcome came in time
+                break
             return JSONResponse({"ok": False, "status": "cant_wake", "reason": got.get("reason") or got.get("how"),
                                  **answer}, status_code=409)
         await asyncio.sleep(OUTCOME_POLL)
@@ -1145,7 +1147,12 @@ def _rest_session_locked(safe: str, idle_since: int):
     whole window. stop_and_settle then claims it `stopping` only if no use, hold
     or resume came after the judgment, and stops tmux outside any write.
     """
-    from sessions import SessionRegistry, stamp_resume_id, stop_and_settle
+    from sessions import (
+        SessionRegistry,
+        claim_native_id,
+        stamp_resume_id,
+        stop_and_settle,
+    )
     registry = SessionRegistry(WOLTS_DIR)
     data = registry.get(safe, check_alive=False)
     if data is None:
@@ -1154,8 +1161,13 @@ def _rest_session_locked(safe: str, idle_since: int):
     # Resting must be reversible: recover a missing id first, outside the write
     # below (recovery reads the engine's files).
     if data.get("status") == "running" and not stored_resume_id(data):
-        claim_resume_id(registry, data, lambda d: stamp_resume_id(
-            registry, wolt, safe, d["harness_session_id"]))
+        if (data.get("native") or {}).get("kind") == "codex-app-server":  # its own engine's report, exactly
+            with contextlib.suppress(sqlite3.IntegrityError):
+                if found := recover_resume_id(data, set()):
+                    claim_native_id(registry, safe, wolt, data, found)
+        else:
+            claim_resume_id(registry, data, lambda d: stamp_resume_id(
+                registry, wolt, safe, d["harness_session_id"]))
     data = registry.get(safe, wolt=wolt, check_alive=False)
     if data is None:
         return JSONResponse({"error": "session not found"}, status_code=404)

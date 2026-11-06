@@ -251,6 +251,22 @@ def test_rest_route_preserves_resume_identity(monkeypatch):
     assert written["harness_session_id"] == "fixed-id"
 
 
+def test_a_native_codex_rest_adopts_only_its_engine_reported_thread(monkeypatch):
+    native = {"kind": "codex-app-server", "addr": "/x", "attempt": "a1"}
+    record = {"name": "friend", "wolt": "pal", "status": "running", "attempt": "a1", "native": native}
+    registry = _registry_mock()
+    registry.get.return_value = record
+    monkeypatch.setattr("sessions.SessionRegistry", Mock(return_value=registry))
+    monkeypatch.setattr(server_app, "recover_resume_id", lambda data, taken: "th-1")
+    claimed = Mock(return_value="stale")
+    monkeypatch.setattr("sessions.claim_native_id", claimed)
+    monkeypatch.setattr(server_app, "claim_resume_id", Mock(side_effect=AssertionError("no rollout recovery")))
+    response = _client().post("/sessions/friend/rest", json={"idle_since": 1000})
+    claimed.assert_called_once_with(registry, "friend", "pal", record, "th-1")
+    assert response.status_code == 409  # not adopted: unknown identity still refuses rest
+    registry._write.assert_not_called()
+
+
 def test_main_session_can_never_rest():
     response = _client().post("/sessions/main/rest", json={})
     assert response.status_code == 403

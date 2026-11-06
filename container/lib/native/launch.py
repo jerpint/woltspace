@@ -11,6 +11,7 @@ carried to the backend, which is where turns actually run.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import secrets
 import signal
@@ -26,6 +27,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from native_adapters import ASSETS, KINDS, RETIRED, announce_ready, clear_state, retire, write_ready, write_state  # noqa: E402
 
 CODEX_BYPASS = "--dangerously-bypass-approvals-and-sandbox"
+DISCOVERY = FIRST_STATE = 10.0  # seconds: one thread discovery pass; a connection's first usable status
+BACKOFF, BACKOFF_CAP = 0.5, 10.0  # the codex observer's pause after each try, doubling to the cap
+log = logging.getLogger("native.launch")
 
 
 def _value(argv: list[str], *flags: str) -> str | None:
@@ -130,17 +134,17 @@ def _codex_rpc(sock: str, calls: list[tuple[str, dict]], strict: bool = False,
         return out
 
 
-def codex_thread(plan: dict, cwd: str) -> str | None:
+def codex_thread(plan: dict, cwd: str, deadline: float | None = None) -> str | None:
     """The TUI's thread on this private app-server: the one user thread it has loaded, in this cwd.
 
     Only threads THIS server process loaded count (not the wolt's CODEX_HOME
     history), and only the engine's own user threads: codex also loads
     ephemeral helper threads (threadSource "thread_title") in the same cwd.
-    A resume must come back as exactly the expected id.
+    A resume must come back as exactly the expected id. deadline (monotonic) bounds both calls.
     """
-    [loaded] = _codex_rpc(plan["sock"], [("thread/loaded/list", {})])
+    [loaded] = _codex_rpc(plan["sock"], [("thread/loaded/list", {})], deadline=deadline)
     ids = [t if isinstance(t, str) else t.get("id") for t in loaded.get("data", [])]
-    reads = _codex_rpc(plan["sock"], [("thread/read", {"threadId": i}) for i in ids])
+    reads = _codex_rpc(plan["sock"], [("thread/read", {"threadId": i}) for i in ids], deadline=deadline)
     main = [r.get("thread", {}) for r in reads]
     main = [t["id"] for t in main if t.get("threadSource") == "user" and not t.get("ephemeral")
             and not t.get("parentThreadId") and t.get("cwd") == cwd]
@@ -151,7 +155,8 @@ def codex_thread(plan: dict, cwd: str) -> str | None:
 
 def watch_codex(sock: str, thread: str, directory: Path, attempt: str, on_known=None) -> None:
     """Busy/idle from the app-server's thread/status/changed for this thread; announce each turn's end.
-    on_known runs once the first status is written; when the watch ends the state is unknown again."""
+    on_known runs once the first status is written; when the watch ends the state is unknown again.
+    The first usable status must come within FIRST_STATE seconds of connecting, whatever else arrives."""
     from websockets.sync.client import unix_connect
     try:
         _watch_codex(unix_connect(sock, "ws://localhost/", open_timeout=5), thread, directory, attempt, on_known)
@@ -160,14 +165,21 @@ def watch_codex(sock: str, thread: str, directory: Path, attempt: str, on_known=
 
 
 def _watch_codex(conn, thread, directory, attempt, on_known):
+    from websockets.exceptions import ConnectionClosed
     with conn:
         conn.send(json.dumps({"id": 1, "method": "initialize",
                               "params": {"clientInfo": {"name": "woltspace-native", "version": "1"}}}))
         conn.send(json.dumps({"method": "initialized"}))
         conn.send(json.dumps({"id": 2, "method": "thread/read", "params": {"threadId": thread}}))
-        first, active = True, False
-        for raw in conn:
-            message = json.loads(raw)
+        first, active, deadline = True, False, time.monotonic() + FIRST_STATE
+        while True:
+            left = deadline - time.monotonic() if first else None  # one deadline: other frames never extend it
+            try:
+                if left is not None and left <= 0:
+                    raise TimeoutError
+                message = json.loads(conn.recv(timeout=left))
+            except (TimeoutError, ConnectionClosed):
+                return  # closed, or no usable status in time: the observer connects again
             if message.get("id") == 2:
                 status = ((message.get("result") or {}).get("thread") or {}).get("status") or {}
             elif message.get("method") == "thread/status/changed" and message["params"].get("threadId") == thread:
@@ -185,6 +197,25 @@ def _watch_codex(conn, thread, directory, attempt, on_known):
             elif (first or active) and not now:  # a turn ended, possibly while the watch was down
                 announce_ready(attempt, "turn_end")
             first, active = False, now
+
+
+def observe_codex(plan: dict, cwd: str, directory: Path, native: dict, alive) -> None:
+    """The attempt's one observer, for as long as its backend is alive and it is not retired: a TUI
+    held at a trust prompt makes its thread, and its first status, late by any amount of time.
+    Each discovery pass and each first status is bounded; every try is followed by a capped pause."""
+    thread, pause, published = None, BACKOFF, []  # ready once a first busy/idle is known; rewatch after a drop
+    while alive() and not (directory / RETIRED).exists():
+        try:
+            thread = thread or codex_thread(plan, cwd, time.monotonic() + DISCOVERY)
+            if thread:
+                ready = {"kind": native["kind"], "attempt": native["attempt"], "sock": plan["sock"],
+                         "thread": thread, "session_id": thread}
+                watch_codex(plan["sock"], thread, directory, native["attempt"],
+                            None if published else lambda ready=ready: published.append(write_ready(directory, ready)))
+        except Exception:  # any failure leaves the state unknown until it is seen again
+            log.debug("codex observer: try failed", exc_info=True)
+        time.sleep(pause)
+        pause = min(pause * 2, BACKOFF_CAP)
 
 
 def _opencode_api(plan: dict, method: str, path: str, body=None):
@@ -272,18 +303,8 @@ def main(argv: list[str]) -> int:
         tui = subprocess.Popen(plan["tui"], env={**os.environ, **plan["tui_env"]},
                                preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL))
         if harness == "codex":
-            def publish():
-                thread = _wait(lambda: codex_thread(plan, cwd), 120)
-                ready = {"kind": native["kind"], "attempt": attempt, "sock": plan["sock"], "thread": thread,
-                         "session_id": thread}
-                published = []  # ready only once a first busy/idle is known; then watch again after a drop
-                while thread and not (directory / RETIRED).exists():
-                    try:
-                        watch_codex(plan["sock"], thread, directory, attempt,
-                                    None if published else lambda: published.append(write_ready(directory, ready)))
-                    except Exception:  # unknown until it is seen again
-                        time.sleep(1)
-            threading.Thread(target=publish, daemon=True).start()
+            threading.Thread(target=observe_codex, args=(plan, cwd, directory, native, lambda: backend.poll() is None),
+                             daemon=True).start()
         elif harness == "opencode" and session:
             write_ready(directory, {"kind": native["kind"], "attempt": attempt, "port": plan["port"],
                                     "password": plan["password"], "session_id": session})

@@ -1675,6 +1675,25 @@ def stamp_resume_id(registry: "SessionRegistry", wolt: str, name: str, resume_id
             current["harness_session_id"] = resume_id
 
 
+def claim_native_id(registry: SessionRegistry, name: str, wolt: str, seen: dict, session_id: str) -> str:
+    """Adopt the conversation id a native attempt's own engine reported: "accepted" (stored, or
+    already this id), "stale" (the record is no longer that attempt, running and published, or
+    its locator is retired) or "refused" (it owns another id). One write, no activity stamp.
+    Raises IntegrityError when another session owns the id: the caller refuses it too."""
+    from native_adapters import RETIRED
+    with registry.edit(name, wolt=wolt) as current:
+        native = (current or {}).get("native") or {}
+        if (current is None or current.get("status") != "running" or current.get("launching")
+                or any(current.get(k) != seen.get(k) for k in ("attempt", "native", "inbox_adapter"))
+                or current.get("inbox_adapter") == "paste" or not native.get("addr")
+                or (Path(native["addr"]) / RETIRED).exists()):
+            return "stale"
+        if stored_resume_id(current):
+            return "accepted" if stored_resume_id(current) == session_id else "refused"
+        current["harness_session_id"] = session_id
+    return "accepted"
+
+
 def still_as_seen(record: dict | None, seen: dict) -> bool:
     """Nothing that decides a stop or a settle changed since `seen` was read."""
     return record is not None and all(record.get(k) == seen.get(k) for k in _CLAIM_FIELDS)
@@ -1819,6 +1838,10 @@ def recover_resume_id(data: dict, taken: set[str]) -> str:
     existing = stored_resume_id(data)
     if existing:
         return existing
+    if (data.get("native") or {}).get("kind") == "codex-app-server":  # only its own engine's report counts
+        import native_adapters
+        status, _, ready = native_adapters.state(data)
+        return (ready or {}).get("session_id") or "" if status == "ready" else ""
     recover = get_harness(resolve_harness(data.get("harness"))).get("recover_session_id")
     return (recover(data, taken) or "") if recover else ""
 
@@ -1947,8 +1970,9 @@ def discover_session_id_for(name: str, timeout: int = 90) -> str:
         return existing
 
     discover = get_harness(resolve_harness(data.get("harness"))).get("discover_session_id")
-    if discover is None:
-        return ""
+    locator = (data.get("launching") or {}).get("native") if data.get("launching") else data.get("native")
+    if discover is None or (locator or {}).get("kind") == "codex-app-server":
+        return ""  # a native codex attempt's supervisor reports its own thread: no rollout guess competes
 
     # Small slack behind now — the rollout may have been written between
     # spawn and this poller starting.
@@ -1965,12 +1989,10 @@ def discover_session_id_for(name: str, timeout: int = 90) -> str:
         if session_id:
             # Concurrent Codex pollers can both see the same newest rollout;
             # the UNIQUE id refuses the second, which looks again next round.
+            # A discovered id is not use: no activity stamp.
             try:
-                registry.update(
-                    name, wolt=current.get("wolt", ""),
-                    harness_session_id=session_id,
-                )
-                return session_id
+                stamp_resume_id(registry, current.get("wolt", ""), name, session_id)
+                continue  # the next round returns what is stored now
             except sqlite3.IntegrityError:
                 pass
         time.sleep(2)
