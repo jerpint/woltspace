@@ -123,6 +123,7 @@ jobs:
           test/test_review_slack_connector.py
           test/test_review_slack_round2.py
           test/test_review_round2_a.py
+          test/test_slack_hold_e2e.py
           test/test_telegram_reply_caption.py
           test/test_input_ready.py
           test/test_telegram_spawn_with_message.py
