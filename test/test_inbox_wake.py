@@ -1173,3 +1173,106 @@ def test_rearm_refuses_a_name_that_is_not_a_wolt_before_any_lock_file(lodge):
 def test_the_wake_texts_say_an_ack_confirms_receipt_not_completion():
     for text in (inbox_wake.START, inbox_wake.HINT):
         assert "ACK confirms receipt, not task completion" in text and "woltspace inbox release" in text
+
+
+# -- never ready (owner, 6 Nov): a native codex attempt's identity and its not-ready answer ---------
+
+@pytest.fixture
+def codex(lodge, wake, notices, monkeypatch):
+    """pal-live: a running native codex attempt; its engine reports thread th-1 unless told otherwise."""
+    native = sys.modules["native_adapters"]
+    monkeypatch.setattr(native, "RETIRED", "retired", raising=False)
+    addr = lodge.root / ".space" / "pal-live" / "a1"
+    addr.mkdir(parents=True)
+    lodge.registry.create("pal-live", wolt="pal")
+    lodge.registry.update("pal-live", wolt="pal", attempt="a1", inbox_adapter="native",
+                          native={"kind": "codex-app-server", "addr": str(addr), "attempt": "a1"})
+    wake.live = "pal-live"
+    engine = types.SimpleNamespace(state=("ready", "ready", {"session_id": "th-1"}), results=[], stored=[])
+    monkeypatch.setattr(native, "state", lambda record: engine.state, raising=False)
+    monkeypatch.setattr(native, "deliver", lambda record, hint: (
+        engine.stored.append(sessions.stored_resume_id(lodge.registry.get("pal-live", check_alive=False)))
+        or (engine.results.pop(0) if engine.results else ("submitted", "ok"))))
+    engine.addr = addr
+    return engine
+
+
+def test_the_engine_reported_thread_is_stored_before_the_hint_relies_on_it(lodge, codex, notices):
+    mail(lodge)
+    used = record(lodge, "pal-live")["last_activity"]
+    inbox_wake._wake(str(lodge.root), "pal", once=True)  # a publication pickup, before any ready call
+    assert codex.stored == ["th-1"] and notices.lines == [("hinted", seqs(lodge), "pal-live", None)]
+    assert record(lodge, "pal-live")["last_activity"] == used  # an adopted id is not use
+
+
+@pytest.mark.parametrize("owner", ["self", "other"])
+def test_a_thread_owned_elsewhere_is_refused_and_never_hinted(lodge, codex, notices, owner):
+    if owner == "self":
+        lodge.registry.update("pal-live", wolt="pal", harness_session_id="th-0")
+    else:
+        lodge.registry.create("pal-old", wolt="pal")
+        lodge.registry.update("pal-old", wolt="pal", harness_session_id="th-1")
+    mail(lodge)
+    inbox_wake._wake(str(lodge.root), "pal")
+    assert codex.stored == [] and notices.lines == [("blocked", seqs(lodge), "hint_unowned", None)]
+
+
+@pytest.mark.parametrize("change", [None, "retired", "resting", "paste"])
+def test_an_already_stored_thread_is_not_claimed_again_but_still_checked(lodge, codex, notices, monkeypatch, change):
+    lodge.registry.update("pal-live", wolt="pal", harness_session_id="th-1")
+    if change == "retired":
+        (codex.addr / "retired").touch()
+    elif change:
+        lodge.registry.update("pal-live", wolt="pal", **({"status": change} if change == "resting" else {"inbox_adapter": change}))
+    fresh, claims = record(lodge, "pal-live"), []
+    monkeypatch.setattr(sessions, "claim_native_id", lambda *args: claims.append(1) or "stale")
+    assert inbox_wake._claim_native(lodge.registry, "pal-live", "pal", fresh) == ("stale" if change else "accepted")
+    assert claims == ([1] if change else [])  # the same id: no write transaction; anything else is judged there
+
+
+def test_a_retired_attempt_neither_claims_nor_hints_nor_answers(lodge, codex, notices):
+    (codex.addr / "retired").touch()
+    mail(lodge)
+    inbox_wake._wake(str(lodge.root), "pal")
+    assert codex.stored == [] and notices.lines == [] and "outcomes" not in wake_state(lodge)
+    assert not sessions.stored_resume_id(record(lodge, "pal-live"))
+
+
+def test_not_ready_answers_once_and_the_late_ready_pickup_still_hints(lodge, codex, notices):
+    codex.state = ("pending", "not_ready", None)
+    codex.results = [("pending", "not_ready")] * 2
+    mail(lodge)
+    mail(lodge, "k2", human=False)
+    inbox_wake._wake(str(lodge.root), "pal")
+    inbox_wake._wake(str(lodge.root), "pal")  # a repeat wake: nothing new to answer
+    k1, = seqs(lodge)
+    assert notices.lines == [("queued_not_ready", [k1], "pal-live", None)]
+    assert notices.senders == [("pal", "queued_not_ready", False)] and "hinted" not in wake_state(lodge)
+    assert [o["how"] for o in wake_state(lodge)["outcomes"]] == ["queued_not_ready"] * 2
+    codex.state = ("ready", "ready", {"session_id": "th-1"})  # the trust prompt was answered: ready, late
+    inbox_wake._wake(str(lodge.root), "pal", once=True)
+    assert codex.stored == ["", "", "th-1"] and len(notices.lines) == 1  # hinted, with no second line
+    assert wake_state(lodge)["hinted"] == {"session": "pal-live", "attempt": "a1"}
+    assert rows(lodge.root, "SELECT state FROM inbox_messages WHERE priority=0") == [("queued",)]  # no claim, no ack
+
+
+def test_startup_mail_already_answered_gets_no_not_ready_warning(lodge, codex, notices):
+    codex.state, codex.results = ("pending", "not_ready", None), [("pending", "not_ready")]
+    mail(lodge)
+    inbox_wake._answer(str(lodge.root), "pal", "started", session="pal-live")  # its start answered it
+    inbox_wake._wake(str(lodge.root), "pal", once=True)  # the publication pickup finds it not ready
+    assert [line[0] for line in notices.lines] == ["started"] and notices.senders == []
+
+
+def test_a_native_codex_locator_is_left_to_its_supervisor(lodge, monkeypatch):
+    found = []
+    monkeypatch.setattr(sessions, "get_harness", lambda name: {
+        "discover_session_id": lambda data, since, taken: found.append(data["name"]) or "r-1"})
+    for name, fields in (("pal-n", {"launching": {"attempt": "a1", "native": {"kind": "codex-app-server"}}}),
+                         ("pal-p", {"harness": "codex"})):
+        lodge.registry.create(name, wolt="pal")
+        lodge.registry.update(name, wolt="pal", **fields)
+    used = record(lodge, "pal-p")["last_activity"]
+    assert sessions.discover_session_id_for("pal-n", timeout=1) == "" and found == []
+    assert sessions.discover_session_id_for("pal-p", timeout=1) == "r-1" and found == ["pal-p"]
+    assert record(lodge, "pal-p")["last_activity"] == used  # a discovered id is not use

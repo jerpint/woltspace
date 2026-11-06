@@ -169,6 +169,16 @@ def test_every_wake_outcome_gives_the_owner_exactly_one_line_per_message(lodge):
     assert chat_state.get(lodge.root, "chat", "4242")["active_session"] == "pal-g-h-000005"  # the last one reached
 
 
+def test_a_native_session_not_ready_gets_the_fixed_queued_line_and_no_chat_follow(lodge):
+    import chat_state
+    chat_state.put(lodge.root, "chat", "4242", {"active_wolt": "pal", "active_session": "pal-old-den-000001"})
+    inbox_notice.outcome(lodge.root, "pal", seqs=[7], how="queued_not_ready", session="pal-a-b-000002",
+                         chat={"adapter": "chat", "chat": "4242"})
+    assert [body["message"] for _, body in lodge.sent] == [
+        "🪵 The session is not ready for a native inbox hint; your mail remains queued."]
+    assert chat_state.get(lodge.root, "chat", "4242")["active_session"] == "pal-old-den-000001"
+
+
 def test_one_lost_line_does_not_silence_the_others(lodge):
     lodge.answer["status"] = 503  # every send fails at the far end...
     inbox_notice.outcome(lodge.root, "pal", seqs=[1, 2, 3], how="blocked", reason="error")

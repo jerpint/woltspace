@@ -183,6 +183,9 @@ def test_the_sender_hears_cant_wake_or_pending_never_delivered(terminal):
     seen["outcome"] = None  # the wake has not decided within the wait; the earlier mail's outcome is not this one's
     pending = client.post("/wolts/pal/message", json={"text": "two", "key": "k2"})
     assert (pending.status_code, pending.json()["status"], pending.json()["key"]) == (200, "pending", "k2")
+    seen["outcome"] = {"how": "queued_not_ready", "session": "pal-a-b-a1b2c3"}  # still queued, as with no outcome
+    queued = client.post("/wolts/pal/message", json={"text": "three", "key": "k3"})
+    assert (queued.status_code, queued.json()["status"], queued.json()["key"]) == (200, "pending", "k3")
 
 
 def test_the_cli_prints_the_outcome_and_on_no_answer_the_key(tmp_path):

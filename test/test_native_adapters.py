@@ -14,6 +14,7 @@ import subprocess
 import sys
 import threading
 import time
+import types
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -264,7 +265,7 @@ def test_the_codex_identity_is_the_one_loaded_user_thread_or_the_exact_resume(mo
                "sub": {"threadSource": "user", "parentThreadId": "main", "cwd": "/w"},
                "elsewhere": {"threadSource": "user", "cwd": "/other"}}
 
-    def rpc(_sock, calls):
+    def rpc(_sock, calls, deadline=None):
         if calls[0][0] == "thread/loaded/list":
             return [{"data": list(threads)}]
         return [{"thread": {"id": params["threadId"], **threads[params["threadId"]]}} for _, params in calls]
@@ -495,7 +496,9 @@ def test_claude_announces_the_turn_end_at_stop_and_plain_ready_at_session_start(
 def test_the_codex_watcher_follows_its_own_thread_and_announces_each_turn_end(lodge, tmp_path, monkeypatch):
     from websockets.sync.server import unix_serve
     wolts, _ = lodge
-    directory = Path(na.prepare(wolts, "pal-x", "codex", "a1")["addr"])
+    native = na.prepare(wolts, "pal-x", "codex", "a1")
+    assert native
+    directory = Path(native["addr"])
     stand_in = Lodge()
     for key, value in stand_in.env.items():
         monkeypatch.setenv(key, value)
@@ -537,7 +540,9 @@ def test_a_rewatch_wakes_once_on_a_known_idle_and_never_takes_a_bad_status_for_i
                                                                                      after):
     from websockets.sync.server import unix_serve
     wolts, _ = lodge
-    directory = Path(na.prepare(wolts, "pal-x", "codex", "a1")["addr"])
+    native = na.prepare(wolts, "pal-x", "codex", "a1")
+    assert native
+    directory = Path(native["addr"])
     stand_in, seen = Lodge(), []
     for key, value in stand_in.env.items():
         monkeypatch.setenv(key, value)
@@ -724,3 +729,155 @@ def test_a_busy_codex_turn_is_steered_with_the_hint_and_a_refused_steer_waits_fo
             server.shutdown()
     assert steers[0] == {"threadId": "t1", "expectedTurnId": "turn-7", "input": [{"type": "text", "text": HINT}]}
     assert len(steers) == 2
+
+
+# -- never ready: the late native codex identity --------------------------------------------------
+
+def test_a_first_status_has_one_deadline_that_unrelated_frames_never_extend(lodge, monkeypatch):
+    from websockets.exceptions import ConnectionClosed
+    from websockets.sync.server import unix_serve
+    wolts, _ = lodge
+    native = na.prepare(wolts, "pal-x", "codex", "a1")
+    assert native
+    directory = Path(native["addr"])
+    monkeypatch.setattr(launch, "FIRST_STATE", 0.6)
+    chatter = [json.dumps({"method": "thread/status/changed", "params": {"threadId": "title", "status": {"type": "idle"}}}),
+               json.dumps({"method": "thread/status/changed", "params": {"threadId": "t1", "status": {"type": "x"}}})]
+
+    def app_server(conn):
+        for raw in conn:
+            if json.loads(raw).get("id") == 2:  # a thread with no usable status yet, then endless unrelated frames
+                conn.send(json.dumps({"id": 2, "result": {"thread": {"id": "t1"}}}))
+                break
+        try:
+            for i in range(100):
+                conn.send(chatter[i % 2])
+                time.sleep(0.05)
+        except ConnectionClosed:
+            pass
+    known = []
+    with unix_serve(app_server, str(directory / "app.sock")) as server:
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        began = time.monotonic()
+        try:
+            launch.watch_codex(str(directory / "app.sock"), "t1", directory, "a1", on_known=lambda: known.append(1))
+        finally:
+            server.shutdown()
+    assert time.monotonic() - began < 2  # 0.6 s, not 5 s of chatter
+    assert not known and na.engine_state(directory) == "unknown"
+
+
+@pytest.mark.parametrize("end", ["retired", "backend_exit"])
+def test_the_codex_observer_outlasts_every_old_window_and_stops_with_its_attempt(lodge, monkeypatch, end):
+    wolts, _ = lodge
+    native = na.prepare(wolts, "pal-x", "codex", "a1")
+    assert native
+    directory, clock, pauses, deadlines, watches = Path(native["addr"]), [0.0], [], [], []
+
+    def sleep(seconds):
+        pauses.append(seconds)
+        clock[0] += seconds
+
+    def thread(plan, cwd, deadline):
+        deadlines.append(deadline - clock[0])
+        return "t1" if clock[0] > 200 else None  # held at a trust prompt past the old 90/120/180 s windows
+
+    def watch(sock, thread_id, directory_, attempt, on_known):
+        watches.append(on_known is not None)
+        if on_known:
+            on_known()  # the first usable status
+        elif end == "retired" and len(watches) == 3:
+            (directory / "retired").touch()
+    monkeypatch.setattr(launch, "time", types.SimpleNamespace(monotonic=lambda: clock[0], sleep=sleep))
+    monkeypatch.setattr(launch, "codex_thread", thread)
+    monkeypatch.setattr(launch, "watch_codex", watch)
+    alive = (lambda: True) if end == "retired" else (lambda: clock[0] < 300)
+    launch.observe_codex({"sock": "s"}, "/w", directory, native, alive)
+    assert json.loads((directory / "ready.json").read_text())["session_id"] == "t1"
+    assert pauses[:6] == [0.5, 1, 2, 4, 8, 10] and max(pauses) == 10 and set(deadlines) == {10.0}
+    assert watches[0] and not any(watches[1:])  # ready is written once; later watches are rewatches
+    assert len(watches) == 3 if end == "retired" else 300 <= clock[0] < 310
+
+
+def test_the_codex_observer_backs_off_on_failed_tries_and_starts_over_after_a_working_watch(lodge, monkeypatch):
+    wolts, _ = lodge
+    native = na.prepare(wolts, "pal-x", "codex", "a1")
+    assert native
+    directory, pauses, saw = Path(native["addr"]), [], iter([False] * 4 + [True] + [False] * 3)
+    monkeypatch.setattr(launch, "time", types.SimpleNamespace(monotonic=lambda: 0.0, sleep=pauses.append))
+    monkeypatch.setattr(launch, "codex_thread", lambda plan, cwd, deadline: "t1")
+    monkeypatch.setattr(launch, "watch_codex", lambda *args: next(saw))  # no status 4 times, then a status and a drop
+    launch.observe_codex({"sock": "s"}, "/w", directory, native, lambda: len(pauses) < 8)
+    assert pauses == [0.5, 1, 2, 4, 0.5, 1, 2, 4]
+
+
+def test_a_codex_watch_says_whether_it_saw_a_status(lodge):
+    from websockets.exceptions import ConnectionClosed
+    wolts, _ = lodge
+    native = na.prepare(wolts, "pal-x", "codex", "a1")
+    assert native
+    directory = Path(native["addr"])
+
+    class Conn:
+        def __init__(self, frames):
+            self.frames = list(frames)
+        def __enter__(self):
+            return self
+        def __exit__(self, *exc):
+            return False
+        def send(self, raw):
+            pass
+        def recv(self, timeout=None):
+            if not self.frames:
+                raise ConnectionClosed(None, None)
+            return json.dumps(self.frames.pop(0))
+    idle = {"id": 2, "result": {"thread": {"status": {"type": "idle"}}}}
+    assert launch._watch_codex(Conn([idle]), "t1", directory, "a1", None) is True  # a status, then a drop
+    assert launch._watch_codex(Conn([{"id": 2, "result": {}}]), "t1", directory, "a1", None) is False
+
+
+def _claimable(wolts, registry, name="pal-x", **fields):
+    native = na.prepare(wolts, name, "codex", "a1")
+    registry.create(name, wolt="pal")
+    registry.update(name, wolt="pal", attempt="a1", native=native, inbox_adapter="native", **fields)
+    return registry.get(name, check_alive=False)
+
+
+@pytest.mark.parametrize("change, verdict", [
+    ({}, "accepted"), ({"harness_session_id": "t1"}, "accepted"), ({"harness_session_id": "other"}, "refused"),
+    ({"attempt": "a2"}, "stale"), ({"inbox_adapter": "paste"}, "stale"), ({"status": "resting"}, "stale"),
+    ({"launching": {"attempt": "a2"}}, "stale"), ({"native": None}, "stale"), ("retired", "stale"), ("gone", "stale"),
+])
+def test_a_native_id_is_claimed_only_for_the_exact_attempt_it_came_from(lodge, change, verdict):
+    import sessions
+    wolts, _ = lodge
+    registry = sessions.SessionRegistry(wolts)
+    seen = _claimable(wolts, registry)
+    if change == "retired":
+        (Path(seen["native"]["addr"]) / "retired").touch()
+    elif change == "gone":
+        registry.delete("pal-x")
+    else:
+        registry.update("pal-x", wolt="pal", **change)
+    before = registry.get("pal-x", check_alive=False) or {}
+    assert sessions.claim_native_id(registry, "pal-x", "pal", seen, "t1") == verdict
+    after = registry.get("pal-x", check_alive=False) or {}
+    assert after.get("harness_session_id") == ("t1" if verdict == "accepted" else before.get("harness_session_id"))
+    assert after.get("last_activity") == before.get("last_activity")  # an id is not use
+
+
+def test_a_native_id_another_session_owns_is_refused_and_never_rollout_recovered(lodge, monkeypatch):
+    import sqlite3
+
+    import sessions
+    wolts, _ = lodge
+    registry = sessions.SessionRegistry(wolts)
+    seen = _claimable(wolts, registry)
+    registry.create("pal-y", wolt="pal")
+    registry.update("pal-y", wolt="pal", harness_session_id="t1")
+    with pytest.raises(sqlite3.IntegrityError):
+        sessions.claim_native_id(registry, "pal-x", "pal", seen, "t1")
+    monkeypatch.setattr(sessions, "get_harness", lambda name: pytest.fail("no rollout recovery for a native codex"))
+    assert sessions.recover_resume_id(seen, set()) == ""  # no ready data yet
+    na.write_ready(seen["native"]["addr"], {"kind": "codex-app-server", "attempt": "a1", "session_id": "t2"})
+    assert sessions.recover_resume_id(seen, set()) == "t2"
