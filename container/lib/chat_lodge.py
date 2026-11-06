@@ -21,6 +21,7 @@ import logging
 import random
 import secrets
 import shutil
+import sqlite3
 import threading
 import time
 from datetime import datetime, timezone
@@ -33,7 +34,9 @@ from bot.core import (
     start_claude_session, transcribe_audio,
 )
 import chat_state
+import held_messages
 import inbox
+import lodge_db
 import lodge_commands as commands
 import lodge_messages as messages
 import outbox
@@ -70,6 +73,10 @@ DOG_ACK_MESSAGES = [
 #   ↩️ reply to this message to talk to this session directly
 #   {tunnel_url}/tui?session={session_name}
 REPLY_FOOTER_MARKER = "↩️ reply to this message to talk to this session directly"
+
+# A held text names its upload under this mark, so a restored copy delivers its own file.
+UPLOADS = "<uploads>"
+EXPIRED_TEXT = "🪵 your held message waited over 10 minutes for a wolt and was not delivered."
 
 # What each kind of attachment is called in the message a session reads.
 _MEDIA_LABEL = {"image": "image received", "video": "video received", "file": "file received"}
@@ -182,23 +189,31 @@ class ChatLodge:
         route = dict(event["route"])
         body = event["body"]
         kind = event["kind"]
+        sender = str(event["sender"])
         if kind == "command":
+            args = list(body.get("args") or [])
             reply = await commands.run_command(
-                self.ports(route), self.chat(route), body["name"], list(body.get("args") or []),
-                tips=self.help_tips,
+                self.ports(route), self.chat(route), body["name"], args, tips=self.help_tips,
             )
             await out.say(reply)
+            if body["name"] == "wolt" and args and self._wolt_exists(args[0]):
+                await self._release_held(route, out, sender, args[0], None)
         elif kind == "selection":
             outcome = await commands.run_selection(self.ports(route), self.chat(route), body["action"])
             await out.ack(outcome.ack or Ack())
             if outcome.edit is not None:
                 await out.edit(outcome.edit)
+            choice, _, rest = body["action"].partition(":")
+            wolt, _, generation = rest.partition(":")
+            if choice == "hold" and self._wolt_exists(wolt):
+                await self._release_held(route, out, sender, wolt, generation)
         elif kind == "message":
-            await self.on_message(route, body, out, event.get("id"))
+            await self.on_message(route, body, out, event.get("id"), sender)
         elif kind == "attachment":
-            await self.on_attachment(route, body, out, event.get("id"))
+            await self.on_attachment(route, body, out, event.get("id"), sender)
 
-    async def on_message(self, route: dict, body: dict, out, event_id: str | None = None) -> None:
+    async def on_message(self, route: dict, body: dict, out, event_id: str | None = None,
+                         sender: str | None = None) -> None:
         chat = self.chat(route)
         text = body.get("text") or ""
         _bot_log("message_received", {"chat_id": chat, "text": text[:100],
@@ -212,9 +227,10 @@ class ChatLodge:
         if body.get("mention") and dog_available():
             await self._handle_dog(route, out, text)
             return
-        await self._route(route, out, text, body.get("reply_to"), event_id=event_id)
+        await self._route(route, out, text, body.get("reply_to"), event_id=event_id, sender=sender)
 
-    async def on_attachment(self, route: dict, body: dict, out, event_id: str | None = None) -> None:
+    async def on_attachment(self, route: dict, body: dict, out, event_id: str | None = None,
+                            sender: str | None = None) -> None:
         media, path = body["media"], body["path"]
         if not self._inside_uploads(path):
             logger.error(f"{self.name}: attachment outside its uploads dir refused: {path}")
@@ -229,7 +245,8 @@ class ChatLodge:
                 await out.say(Reply("Couldn't transcribe that voice message."))
                 return
             logger.info(f"Transcribed: {text[:100]}")
-            await self._route(route, out, f"[voice message] {text}", body.get("reply_to"), event_id=event_id)
+            await self._route(route, out, f"[voice message] {text}", body.get("reply_to"),
+                              event_id=event_id, sender=sender)
             return
         file_msg = (f"[{_MEDIA_LABEL[media]}] {body['name']} ({body['mime']}, {body['size']} bytes)"
                     f" saved at {path}")
@@ -242,7 +259,7 @@ class ChatLodge:
                 "message": f"[image] {caption}" if caption else "[image]",
                 "content": photo_content(self._read_upload(path), body["mime"], caption),
             }
-        await self._route(route, out, file_msg, body.get("reply_to"), dog_content, event_id)
+        await self._route(route, out, file_msg, body.get("reply_to"), dog_content, event_id, sender)
 
     # --- chats ----------------------------------------------------------------------
 
@@ -435,8 +452,8 @@ class ChatLodge:
 
     # --- routing ----------------------------------------------------------------------
 
-    def _message_ports(self, route: dict, out, wrapped: bool = True,
-                       event_id: str | None = None) -> messages.MessagePorts:
+    def _message_ports(self, route: dict, out, wrapped: bool = True, event_id: str | None = None,
+                       sender: str | None = None) -> messages.MessagePorts:
         chat = self.chat(route)
         # With the inbox on, an owner's event is queued for its wolt instead of pasted.
         queue = event_id is not None and inbox.enabled(self.wolts_dir)
@@ -458,6 +475,8 @@ class ChatLodge:
             if wrapped else None,
             admit=(lambda wolt, text, session: self._admit(route, out, event_id, wolt, text, session))
             if queue else None,
+            hold=(lambda text: self._hold(route, out, sender, event_id, text))
+            if event_id and sender else None,
             log=lambda event, data: _bot_log(f"{self.name}_{event}", data),
             log_error=lambda message: logger.error(message),
         )
@@ -497,24 +516,32 @@ class ChatLodge:
         """
         chat = self.chat(route)
         key = f"{self.name}:{event_id}"
-        delimiter = "WOLTSPACE_NOTIFY_" + hashlib.sha256(key.encode()).hexdigest()[:16].upper()
         store = inbox.Store(self.wolts_dir, inbox.LIMITS)
         try:
-            if delimiter in text.splitlines():
-                raise inbox.Invalid("delimiter")
-            reply = notify_reply_instruction(*self.spec.reply_args(self.route_of(chat)), delimiter=delimiter)
-            body = f"{self._session_message(text, chat)}\n{reply}"
-            # the session they meant (the wake's first choice) and this chat, recorded with the message
-            route = {"session": session if session and messages.wolt_from_session_name(session) == wolt else None,
-                     "chat": {"adapter": self.name, "chat": chat}}
+            body, where = self._inbox_body(chat, key, wolt, text, session)
             status = await asyncio.to_thread(
-                store.admit, f"connector:{self.name}", key, wolt, body, human=True, route=route)
+                store.admit, f"connector:{self.name}", key, wolt, body, human=True, route=where)
         except inbox.InboxError as e:
             code = getattr(e, "code", "invalid")
             _bot_log(f"{self.name}_inbox_refused", {"wolt": wolt, "key": key, "code": code})
             await out.say(Reply(f"🪵 not queued for {self._shown(wolt)}: {code}"))
             return
-        _bot_log(f"{self.name}_inbox_admitted", {"wolt": wolt, "seq": status.seq, "key": key})
+        await self._admitted(chat, wolt, text, status)
+
+    def _inbox_body(self, chat, key: str, wolt: str, text: str, session: str | None) -> tuple[str, dict]:
+        """The queued body for an owner's message, and its route: the session they meant (the
+        wake's first choice) and this chat. The reply delimiter comes from the key."""
+        delimiter = "WOLTSPACE_NOTIFY_" + hashlib.sha256(key.encode()).hexdigest()[:16].upper()
+        if delimiter in text.splitlines():
+            raise inbox.Invalid("delimiter")
+        reply = notify_reply_instruction(*self.spec.reply_args(self.route_of(chat)), delimiter=delimiter)
+        return f"{self._session_message(text, chat)}\n{reply}", {
+            "session": session if session and messages.wolt_from_session_name(session) == wolt else None,
+            "chat": {"adapter": self.name, "chat": chat}}
+
+    async def _admitted(self, chat, wolt: str, text: str, status) -> None:
+        """After an owner's message commits to the inbox: history, the chat's wolt, the wake."""
+        _bot_log(f"{self.name}_inbox_admitted", {"wolt": wolt, "seq": status.seq, "key": status.key})
         self._append_history(chat, "user", text)
         # The next plain message goes to the wolt last written to; its session is kept
         # while it is that wolt's, as the conversation the owner is in.
@@ -530,12 +557,71 @@ class ChatLodge:
             logger.error(f"{self.name}: wake for {wolt} failed: {type(e).__name__}")
 
     async def _route(self, route: dict, out, text: str, reply_to: dict | None = None,
-                     dog_content=None, event_id: str | None = None) -> None:
+                     dog_content=None, event_id: str | None = None, sender: str | None = None) -> None:
         reply_session, reply_text = self._reply_target(reply_to, text)
         await messages.route_message(
-            self._message_ports(route, out, event_id=event_id), self.chat(route), text,
+            self._message_ports(route, out, event_id=event_id, sender=sender), self.chat(route), text,
             reply_session=reply_session, reply_text=reply_text, dog_content=dog_content,
         )
+
+    # --- a message held while the owner picks a wolt (held_messages) --------------------
+
+    async def _hold(self, route: dict, out, sender: str, event_id: str, text: str) -> str | None:
+        """Hold the message; its picker's generation, or None when another is held."""
+        def write():
+            with lodge_db.write(self.wolts_dir) as conn:
+                return held_messages.hold(conn, self.name, self.chat(route), sender, event_id,
+                                          text.replace(str(self.uploads_dir), UPLOADS), time.time())
+        status = await asyncio.to_thread(write)
+        if status == "waiting":
+            return None
+        if status == held_messages.EXPIRED:
+            await out.say(Reply(EXPIRED_TEXT))
+        return held_messages.generation(event_id)
+
+    def _local(self, text: str) -> str:
+        """A held text with this lodge's uploads dir: a restored copy's, not the old one's."""
+        return text.replace(UPLOADS, str(self.uploads_dir))
+
+    async def _release_held(self, route: dict, out, sender: str, wolt: str, generation: str | None) -> None:
+        """The one way a held message leaves, after a click on its picker or /wolt <name>: to
+        `wolt`, whatever the chat chooses meanwhile, never to the dog. Inbox on: taking it and
+        queueing it commit together, and a refusal leaves it held. Inbox off: taken, then one
+        attempt (lost if the lodge stops in between: resend)."""
+        chat, now = self.chat(route), time.time()
+        if inbox.enabled(self.wolts_dir):
+            store, status = inbox.Store(self.wolts_dir, inbox.LIMITS), None
+
+            def handoff():  # SQL only: no subprocess or network while the lodge's one write lock is held
+                with lodge_db.write(self.wolts_dir, durable=True, busy_ms=inbox.LIMITS.busy_ms) as conn:
+                    held = held_messages.claim(conn, self.name, chat, sender, generation, now)
+                    if not isinstance(held, held_messages.Held):
+                        return held, None
+                    key = f"{self.name}:{held.event_id}"
+                    body, where = self._inbox_body(chat, key, wolt, self._local(held.text), None)
+                    return held, store.admit_within(conn, f"connector:{self.name}", key, wolt, body,
+                                                    human=True, route=where)
+            try:
+                held, status = await asyncio.to_thread(handoff)
+            except (inbox.InboxError, sqlite3.Error, OSError) as e:
+                code = getattr(e, "code", "unavailable")
+                _bot_log(f"{self.name}_held_refused", {"wolt": wolt, "code": code})
+                await out.say(Reply(f"🪵 not queued for {self._shown(wolt)}: {code}. your message is still held."))
+                return
+            if status is not None:
+                await self._admitted(chat, wolt, self._local(held.text), status)
+        else:
+            def take():
+                with lodge_db.write(self.wolts_dir) as conn:
+                    return held_messages.claim(conn, self.name, chat, sender, generation, now)
+            held = await asyncio.to_thread(take)
+            if isinstance(held, held_messages.Held) and not await messages.route_message(
+                    self._message_ports(route, out), chat, self._local(held.text), target=wolt):
+                await out.say(Reply("🪵 your held message was not delivered: send it again."))
+        if held == held_messages.EXPIRED:
+            await out.say(Reply(EXPIRED_TEXT + " send it again."))
+        elif held is None and generation is not None:
+            await out.say(Reply("🪵 nothing is waiting for that choice any more: it was delivered or it expired."))
 
     # --- the dog ------------------------------------------------------------------------
 

@@ -69,6 +69,8 @@ jobs:
           test/test_native_adapters.py
           test/test_iwcl_inbox.py
           test/test_chat_lodge_inbox.py
+          test/test_chat_lodge_hold.py
+          test/test_held_message_negative.py
           test/test_inbox_notice.py
           test/test_restore_guard.py
           test/test_restore_guard_independent.py

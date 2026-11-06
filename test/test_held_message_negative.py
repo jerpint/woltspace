@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 for part in ("container", "container/lib"):
     sys.path.insert(0, str(ROOT / part))
 
+import held_messages  # noqa: E402
 import inbox  # noqa: E402
 import lodge_db  # noqa: E402
 
@@ -66,6 +67,8 @@ def side(tmp_path, monkeypatch):
         ("dog_available", lambda: False), ("get_tunnel_url", lambda: ""),
         ("_bot_log", lambda *a: None), ("notify_admitted", wake),
         ("message_session", unexpected), ("start_claude_session", unexpected),
+        # bot.core reads the wolts dir it was first imported with
+        ("list_wolts", lambda: [{"name": "alpha", "type": "beaver"}, {"name": "beta", "type": "beaver"}]),
     ):
         monkeypatch.setattr(chat_lodge, name, value)
     lodge: Any = chat_lodge.ChatLodge(connector_registry.spec("telegram"), [OWNER, OTHER])
@@ -83,7 +86,7 @@ def event(side, key="first", *, kind="message", sender=OWNER, chat=CHAT, body=No
 
 def pick(side, generation="first", *, sender=OWNER, chat=CHAT):
     return event(side, f"click-{generation}", kind="selection", sender=sender, chat=chat,
-                 body={"action": f"hold:alpha:{generation}"})
+                 body={"action": f"hold:alpha:{held_messages.generation(generation)}"})  # the picker carries a short generation
 
 
 def command(side, target="alpha", sender=OWNER):
@@ -145,7 +148,7 @@ def test_expired_picker_cannot_consume_a_replacement(side):
 def test_refused_admission_rolls_back_claim_then_same_picker_can_retry(side, monkeypatch):
     event(side)
     with monkeypatch.context() as m:
-        m.setattr(inbox, "LIMITS", limits(mailbox_pending=0))
+        m.setattr(inbox, "LIMITS", limits(mailbox_bytes=1))  # every body is too big: refused
         refused = pick(side)
     assert mail(side) == []
     assert side.wakes == []

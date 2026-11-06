@@ -133,17 +133,17 @@
      [
       [
        "🦝 pal",
-       "wolt:pal"
+       "hold:pal:<gen>"
       ],
       [
        "🦫 bud",
-       "wolt:bud"
+       "hold:bud:<gen>"
       ]
      ],
      [
       [
        "🦦 ots",
-       "wolt:ots"
+       "hold:ots:<gen>"
       ]
      ]
     ],
@@ -152,7 +152,7 @@
    },
    {
     "kind": "reply",
-    "text": "your message was not delivered: pick a wolt above (or send /wolt <name>), then send it again."
+    "text": "your message is held: pick a wolt above (or send /wolt <name>) and it goes there."
    }
   ],
   "sent": [],
@@ -1825,17 +1825,17 @@
      [
       [
        "🦝 pal",
-       "wolt:pal"
+       "hold:pal:<gen>"
       ],
       [
        "🦫 bud",
-       "wolt:bud"
+       "hold:bud:<gen>"
       ]
      ],
      [
       [
        "🦦 ots",
-       "wolt:ots"
+       "hold:ots:<gen>"
       ]
      ]
     ],
@@ -1844,7 +1844,7 @@
    },
    {
     "kind": "reply",
-    "text": "your message was not delivered: pick a wolt above (or send /wolt <name>), then send it again."
+    "text": "your message is held: pick a wolt above (or send /wolt <name>) and it goes there."
    }
   ],
   "sent": [],

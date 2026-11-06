@@ -129,8 +129,10 @@ def _session_link(tunnel_url: str | None, name: str) -> str | None:
 
 # --- reply builders ----------------------------------------------------------
 
-def wolt_picker(ports: Ports, wolts: list, active: str | None) -> Reply:
-    """Header naming the active wolt, and a two-per-row grid of the others."""
+def wolt_picker(ports: Ports, wolts: list, active: str | None, hold: str | None = None) -> Reply:
+    """Header naming the active wolt, and a two-per-row grid of the others.
+
+    `hold`: the generation of a held message, which these choices then carry to it."""
     if active:
         active_type = next((w.get("type", "") for w in wolts if wolt_name(w) == active), "")
         line = f"active: {emoji_from(WOLT_TYPE_EMOJI, active_type, '🦫')} {ports.shown(active)}"
@@ -138,17 +140,18 @@ def wolt_picker(ports: Ports, wolts: list, active: str | None) -> Reply:
         line = "active: none"
     others = [w for w in wolts if wolt_name(w) != active]
     text = f"{line}\n\ntap to switch" if others else f"{line}\n\nno other wolts yet."
-    return Reply(text, wolt_picker_choices(ports, wolts, active))
+    return Reply(text, wolt_picker_choices(ports, wolts, active, hold))
 
 
-def wolt_picker_choices(ports: Ports, wolts: list, active: str | None):
+def wolt_picker_choices(ports: Ports, wolts: list, active: str | None, hold: str | None = None):
     buttons = []
     for w in wolts:
         name = wolt_name(w)
         if not name or name == active:
             continue
         emoji = emoji_from(WOLT_TYPE_EMOJI, w.get("type", ""), "🦫")
-        buttons.append(Choice(f"{emoji} {ports.shown(name)}", action=f"wolt:{name}"))
+        action = f"hold:{name}:{hold}" if hold else f"wolt:{name}"
+        buttons.append(Choice(f"{emoji} {ports.shown(name)}", action=action))
     return _rows(buttons, 2)
 
 
@@ -451,7 +454,8 @@ async def run_selection(ports: Ports, chat, action: str) -> Outcome:
     if kind == "noop":
         return Outcome(Ack())
 
-    if kind == "wolt":
+    if kind in ("wolt", "hold"):  # hold:<wolt>:<generation>; the lodge then releases the held message
+        name = name.partition(":")[0]
         if not ports.wolt_exists(name):
             return Outcome(Ack("that wolt no longer exists", alert=True))
         set_active_wolt(ports, chat, name)
