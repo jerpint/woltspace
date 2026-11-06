@@ -454,8 +454,11 @@ async def run_selection(ports: Ports, chat, action: str) -> Outcome:
     if kind == "noop":
         return Outcome(Ack())
 
-    if kind in ("wolt", "hold"):  # hold:<wolt>:<generation>; the lodge then releases the held message
-        name = name.partition(":")[0]
+    if kind == "hold":  # hold:<wolt>:<generation>: the lodge releases the held message, which switches
+        exists = ports.wolt_exists(name.partition(":")[0])
+        return Outcome(Ack() if exists else Ack("that wolt no longer exists", alert=True))
+
+    if kind == "wolt":
         if not ports.wolt_exists(name):
             return Outcome(Ack("that wolt no longer exists", alert=True))
         set_active_wolt(ports, chat, name)

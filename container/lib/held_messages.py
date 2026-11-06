@@ -45,6 +45,12 @@ def hold(conn, connector: str, chat, sender: str, event_id: str, text: str, now:
     return EXPIRED if live else "held"
 
 
+def waiting(conn, connector: str, chat, now: float) -> bool:
+    """Whether a message is held in this chat, so another may not overtake it."""
+    return conn.execute("SELECT 1 FROM pending_messages WHERE id=? AND state='pending' AND expires_at>?",
+                        (f"{connector}:{chat}", now)).fetchone() is not None
+
+
 def claim(conn, connector: str, chat, sender: str, gen: str | None, now: float):
     """The held message, for its own sender and, when a click names one, its picker's
     generation (a typed /wolt names none). Its text is cleared as it is taken, so it is handed

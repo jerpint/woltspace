@@ -19,11 +19,13 @@ import hashlib
 import json
 import logging
 import random
+import re
 import secrets
 import shutil
 import sqlite3
 import threading
 import time
+from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -74,8 +76,6 @@ DOG_ACK_MESSAGES = [
 #   {tunnel_url}/tui?session={session_name}
 REPLY_FOOTER_MARKER = "↩️ reply to this message to talk to this session directly"
 
-# A held text names its upload under this mark, so a restored copy delivers its own file.
-UPLOADS = "<uploads>"
 EXPIRED_TEXT = "🪵 your held message waited over 10 minutes for a wolt and was not delivered."
 
 # What each kind of attachment is called in the message a session reads.
@@ -192,12 +192,14 @@ class ChatLodge:
         sender = str(event["sender"])
         if kind == "command":
             args = list(body.get("args") or [])
+            # /wolt <name> releases a held message first; the switch waits until nothing stays held.
+            if body["name"] == "wolt" and args and self._wolt_exists(args[0]) and \
+                    await self._release_held(route, out, sender, args[0], None):
+                return
             reply = await commands.run_command(
                 self.ports(route), self.chat(route), body["name"], args, tips=self.help_tips,
             )
             await out.say(reply)
-            if body["name"] == "wolt" and args and self._wolt_exists(args[0]):
-                await self._release_held(route, out, sender, args[0], None)
         elif kind == "selection":
             outcome = await commands.run_selection(self.ports(route), self.chat(route), body["action"])
             await out.ack(outcome.ack or Ack())
@@ -477,6 +479,7 @@ class ChatLodge:
             if queue else None,
             hold=(lambda text: self._hold(route, out, sender, event_id, text))
             if event_id and sender else None,
+            waiting=lambda: self._waiting(route),
             log=lambda event, data: _bot_log(f"{self.name}_{event}", data),
             log_error=lambda message: logger.error(message),
         )
@@ -571,7 +574,7 @@ class ChatLodge:
         def write():
             with lodge_db.write(self.wolts_dir) as conn:
                 return held_messages.hold(conn, self.name, self.chat(route), sender, event_id,
-                                          text.replace(str(self.uploads_dir), UPLOADS), time.time())
+                                          self._portable(text), time.time())
         status = await asyncio.to_thread(write)
         if status == "waiting":
             return None
@@ -579,15 +582,27 @@ class ChatLodge:
             await out.say(Reply(EXPIRED_TEXT))
         return held_messages.generation(event_id)
 
-    def _local(self, text: str) -> str:
-        """A held text with this lodge's uploads dir: a restored copy's, not the old one's."""
-        return text.replace(UPLOADS, str(self.uploads_dir))
+    async def _waiting(self, route: dict) -> bool:
+        def read():  # a read: no lodge.db yet holds nothing
+            if not lodge_db.path(self.wolts_dir).exists():
+                return False
+            with closing(lodge_db.connect(self.wolts_dir, readonly=True)) as conn:
+                return held_messages.waiting(conn, self.name, self.chat(route), time.time())
+        return await asyncio.to_thread(read)
 
-    async def _release_held(self, route: dict, out, sender: str, wolt: str, generation: str | None) -> None:
+    def _portable(self, text: str) -> str:
+        """A held text naming the uploads dir as "%U" ("%" itself as "%25"), so a restored copy
+        delivers its own file and the owner's own words come back unchanged (_local)."""
+        return "%U".join(part.replace("%", "%25") for part in text.split(str(self.uploads_dir)))
+
+    def _local(self, text: str) -> str:
+        return re.sub("%(25|U)", lambda m: "%" if m[1] == "25" else str(self.uploads_dir), text)
+
+    async def _release_held(self, route: dict, out, sender: str, wolt: str, generation: str | None) -> bool:
         """The one way a held message leaves, after a click on its picker or /wolt <name>: to
         `wolt`, whatever the chat chooses meanwhile, never to the dog. Inbox on: taking it and
-        queueing it commit together, and a refusal leaves it held. Inbox off: taken, then one
-        attempt (lost if the lodge stops in between: resend)."""
+        queueing it commit together, and a refusal leaves it held (then True: the chat must
+        not switch). Inbox off: taken, then one attempt (lost if the lodge stops in between)."""
         chat, now = self.chat(route), time.time()
         if inbox.enabled(self.wolts_dir):
             store, status = inbox.Store(self.wolts_dir, inbox.LIMITS), None
@@ -607,7 +622,7 @@ class ChatLodge:
                 code = getattr(e, "code", "unavailable")
                 _bot_log(f"{self.name}_held_refused", {"wolt": wolt, "code": code})
                 await out.say(Reply(f"🪵 not queued for {self._shown(wolt)}: {code}. your message is still held."))
-                return
+                return True
             if status is not None:
                 await self._admitted(chat, wolt, self._local(held.text), status)
         else:
@@ -622,6 +637,7 @@ class ChatLodge:
             await out.say(Reply(EXPIRED_TEXT + " send it again."))
         elif held is None and generation is not None:
             await out.say(Reply("🪵 nothing is waiting for that choice any more: it was delivered or it expired."))
+        return False
 
     # --- the dog ------------------------------------------------------------------------
 

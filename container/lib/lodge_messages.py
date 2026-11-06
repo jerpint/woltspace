@@ -62,6 +62,8 @@ class MessagePorts:
     # hold(text): keep the message while the owner picks a wolt; the picker's generation,
     # or None when another message is already held. None (no hold): ask to resend.
     hold: Callable[[str], Awaitable[str | None]] | None = None
+    # waiting(): whether a held message waits in this chat; nothing else overtakes it.
+    waiting: Callable[[], Awaitable[bool]] | None = None
     log: Callable[[str, dict], None] = lambda event, data: None
     log_error: Callable[[str], None] = lambda message: None
 
@@ -202,6 +204,9 @@ async def route_message(p: MessagePorts, chat, text: str, *, reply_session: str 
                          f"🪵 session expired — new one for {wolt}")
             return
 
+    if p.waiting and await p.waiting():
+        await p.say(Reply(WAITING))
+        return None
     state = p.lodge.load_chat(chat)
     wolt = state.get("active_wolt")
     session_name = state.get("active_session")
