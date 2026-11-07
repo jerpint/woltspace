@@ -180,6 +180,8 @@ async def route_message(p: MessagePorts, chat, text: str, *, reply_session: str 
     if target:
         return await _spawn(p, chat, p.lodge.load_chat(chat), target, text,
                             f"🪵 new session for {p.lodge.shown(target)}")
+    # First, for every message: an expired held one is told; a waiting one holds the rest back.
+    held = bool(p.waiting and await p.waiting())
     if reply_session:
         wolt = wolt_from_session_name(reply_session)
         # A reply to a gone wolt's old message is routed like any message.
@@ -204,7 +206,7 @@ async def route_message(p: MessagePorts, chat, text: str, *, reply_session: str 
                          f"🪵 session expired — new one for {wolt}")
             return
 
-    if p.waiting and await p.waiting():
+    if held:  # a reply to a wolt's own message goes through all the same
         await p.say(Reply(WAITING))
         return None
     state = p.lodge.load_chat(chat)

@@ -8,18 +8,15 @@ from test.test_slack_connector import DM, OWNER, dm, run
 pytest_plugins = ["test.test_slack_connector"]
 
 
-def test_connector_alone_picks_then_routes_only_the_resent_message(slack):
+def test_with_the_hold_the_pick_delivers_the_first_message(slack):
+    # With the hold (this branch): the first message waits for the pick, and the pick delivers it.
     slack.side._save_chat_state(DM, {})
     run(slack.on_message(*dm("original before pick")))
     assert slack.pasted == []
-    assert any("send it again" in text for _, text, _ in slack.api.posts)
+    assert any("your message is held" in text for _, text, _ in slack.api.posts)
     run(slack.handle_action({"user": {"id": OWNER}, "channel": {"id": DM},
                             "actions": [{"value": "wolt:beta", "action_ts": "2"}]}))
-    assert slack.pasted == []
-    run(slack.on_message(*dm("resent after pick", event_id="Ev0002")))
-    assert len(slack.pasted) == 1
-    assert "resent after pick" in slack.pasted[0][1]
-    assert "original before pick" not in slack.pasted[0][1]
+    assert len(slack.pasted) == 1 and "original before pick" in slack.pasted[0][1]
 
 
 def test_dog_image_path_sweeps_aged_staged_images_without_needing_notify(slack, tmp_path, monkeypatch):
