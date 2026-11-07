@@ -53,6 +53,9 @@ API: Any = None
 BOT = {"user_id": "", "bot_id": ""}
 # The commands the lodge offers (its welcome), typed with PREFIX or registered as slash commands.
 COMMANDS: tuple[str, ...] = ()
+# Lodge commands whose name is a Slack built-in slash command, registered under another name.
+SLASH_NAMES = {"apps": "wapps"}
+LODGE_NAMES = {slash: name for name, slash in SLASH_NAMES.items()}
 # Where each event's answers go: its DM, and for a click the message holding the button. Bounded.
 PENDING: "collections.OrderedDict[str, dict]" = collections.OrderedDict()
 MAX_PENDING = 1000
@@ -232,6 +235,7 @@ async def handle_command(command: dict) -> None:
     if not _owner_dm(command.get("user_id"), channel):
         return
     name = str(command.get("command") or "").lstrip("/").lower()
+    name = LODGE_NAMES.get(name, name)
     if name not in COMMANDS:
         return
     args = str(command.get("text") or "").split()[:wire.MAX_ARGS]
@@ -363,7 +367,7 @@ def build_app(token: str):
 
     app.event("message")(on_message)
     for name in COMMANDS:
-        app.command(f"/{name}")(on_command)
+        app.command(f"/{SLASH_NAMES.get(name, name)}")(on_command)
     app.action(re.compile(".*"))(on_action)
     return app
 

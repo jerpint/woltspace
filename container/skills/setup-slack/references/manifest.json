@@ -42,6 +42,11 @@
         "should_escape": false
       },
       {
+        "command": "/wapps",
+        "description": "list apps (Slack keeps /apps for itself)",
+        "should_escape": false
+      },
+      {
         "command": "/kill",
         "description": "stop a session",
         "usage_hint": "[name]",

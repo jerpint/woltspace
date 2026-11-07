@@ -228,14 +228,23 @@ def test_the_bot_token_goes_only_to_slack_s_own_file_host(url):
         run(sc.SlackAPI(None, "xoxb-test").download(url))  # refused before any request
 
 
-def test_the_setup_manifest_registers_only_lodge_commands_slack_allows():
-    """Slack refuses a manifest that registers one of its built-ins; /apps is one.
+def test_the_setup_manifest_registers_every_lodge_command_under_a_name_slack_allows():
+    """Slack refuses a manifest that registers one of its built-ins; /apps is one, so it is /wapps.
 
     /start is Telegram's own greeting, not a Slack command."""
     import json
 
     import lodge_commands
+    sc = importlib.import_module("slack_connector")
     manifest = json.loads((ROOT / "container/skills/setup-slack/references/manifest.json").read_text())
     registered = {c["command"].lstrip("/") for c in manifest["features"]["slash_commands"]}
     assert "apps" not in registered
-    assert registered == set(lodge_commands.COMMAND_NAMES) - {"apps", "start"}
+    assert registered == {sc.SLASH_NAMES.get(n, n) for n in lodge_commands.COMMAND_NAMES if n != "start"}
+
+
+def test_slash_wapps_runs_the_lodge_s_apps_command(slack):
+    async def ack():
+        pass
+    run(slack.on_command(ack, {"command": "/wapps", "text": "", "user_id": OWNER, "channel_id": DM,
+                               "trigger_id": "t3"}))
+    assert [(e["kind"], e["body"]["name"]) for e in slack.events] == [("command", "apps")]
