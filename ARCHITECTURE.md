@@ -53,11 +53,11 @@ container/
 
   bot/                        Orchestration layer
     core.py                     Agent loop, tool registry, memory loading
-    slack_adapter.py            Slack handler (Socket Mode, threads, @mention routing)
     image_gen.py                AI image gen wrapper
 
   connectors/                 Chat connectors that ship with the lodge (see docs/connectors.md)
     telegram/                   connector.json + telegram_connector.py: Telegram, over the connector socket
+    slack/                      connector.json + slack_connector.py: Slack (Socket Mode), the same way
 
   lib/                        Shared building blocks (importable by server/ and bot/)
     chat_lodge.py               The lodge's side of a chat connector: owner check, commands, routing, dog
@@ -94,7 +94,7 @@ container/migrations/       Per-version migration docs, shipped in the wheel (se
 
 ```
 User sends "build me a homepage"
-  → telegram_connector.handle_message()           its own process (or slack_adapter)
+  → telegram_connector.handle_message()           its own process (or slack_connector)
   → connector socket → chat_lodge.ChatLodge.handle()   in the lodge
   → core.get_response()                            Haiku agent loop
   → Haiku picks a tool: claude_code

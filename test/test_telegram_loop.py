@@ -586,8 +586,7 @@ class TestOptionalDog:
     @pytest.mark.parametrize("builders,expected", [
         ([], "no wolts found. create a wolt in the lodge first."),
         ([{"name": "b", "type": "beaver"}, {"name": "a", "type": "raccoon"}],
-         "your message was not delivered: pick a wolt above (or send /wolt <name>), "
-         "then send it again."),
+         "your message is held: pick a wolt above (or send /wolt <name>) and it goes there."),
     ])
     async def test_selection_is_plain_text(self, routing, monkeypatch, builders, expected):
         import chat_lodge
@@ -602,9 +601,11 @@ class TestOptionalDog:
             ports = adapter.side.ports({"chat_id": "123"})
             assert calls[0].args == (commands.wolt_picker(ports, builders, None).text,)
             # plain text: no parse mode, so a typed name can never break the message
+            # the picker carries the held message's generation to it
+            generation = calls[0].kwargs["reply_markup"].inline_keyboard[0][0].callback_data.rsplit(":", 1)[1]
             assert calls[0].kwargs == {
                 "reply_markup": adapter.connector._keyboard(
-                    commands.wolt_picker_choices(ports, builders, None)),
+                    commands.wolt_picker_choices(ports, builders, None, hold=generation)),
             }
             assert calls[1].args == (expected,)
             assert calls[1].kwargs == {}

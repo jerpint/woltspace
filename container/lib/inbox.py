@@ -36,7 +36,7 @@ import json
 import secrets
 import sqlite3
 import time
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -345,6 +345,16 @@ class Store:
         return self._admit(lambda conn: (f"provider:{sender}", sender), key, to, body, HUMAN if human else AGENT,
                            mailbox, route)
 
+    def admit_within(self, conn, sender: str, key: str, to: str, body: str, *, human: bool = False,
+                     route: dict | None = None) -> Status:
+        """admit, inside the caller's open lodge_db write: the caller's own changes commit
+        with the message or not at all. Never call admit there: it opens a write of its
+        own and waits on this one."""
+        _text(sender, self.limits.name_chars, "sender")
+        self._prune(conn, time.time())
+        return self._admit(lambda conn: (f"provider:{sender}", sender), key, to, body,
+                           HUMAN if human else AGENT, route=route, within=conn)
+
     def fetch(self, token: str) -> Delivery | None:
         """The reader's open claim again, or a claim on the next queued
         message (human first, then oldest), or None when there is none."""
@@ -444,14 +454,14 @@ class Store:
 
     # -- inside a write ---------------------------------------------------------
 
-    def _admit(self, sender_of, key, to, body, priority, expected=None, route=None) -> Status:
+    def _admit(self, sender_of, key, to, body, priority, expected=None, route=None, within=None) -> Status:
         _text(key, self.limits.key_chars, "key")
         _text(to, self.limits.name_chars, "to")
         payload = _text(body, MAX_PAYLOAD_BYTES, "body", 0).encode("utf-8")
         if len(payload) > MAX_PAYLOAD_BYTES:
             raise Invalid(f"body exceeds {MAX_PAYLOAD_BYTES} bytes of UTF-8")
         digest, now = hashlib.sha256(payload).digest(), time.time()
-        with self._write() as conn:
+        with nullcontext(within) if within is not None else self._write() as conn:
             sender, name = sender_of(conn)
             row = conn.execute("SELECT * FROM inbox_messages WHERE sender=? AND key=?", (sender, key)).fetchone()
             if row is not None:

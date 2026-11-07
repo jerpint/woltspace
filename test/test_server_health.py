@@ -137,10 +137,6 @@ class TestSessionRouting:
         result = server_post("/sessions/new/telegram", {})
         assert result.get("error"), "should reject missing wolt"
 
-    def test_slack_requires_wolt(self, server_post):
-        result = server_post("/sessions/new/slack", {})
-        assert result.get("error"), "should reject missing wolt"
-
     @requires_real_spawn
     def test_lodge_spawns_session_for_valid_wolt(self, spawned_lodge_session):
         """Gnaw on a real wolt → session spawns under that wolt."""

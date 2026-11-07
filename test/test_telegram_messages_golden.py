@@ -17,6 +17,7 @@ Regenerate with WOLTSPACE_UPDATE_GOLDEN=1.
 import asyncio
 import json
 import os
+import re
 import sys
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
@@ -68,8 +69,9 @@ def _record(store, kind):
             if key in kwargs:
                 entry[key] = kwargs[key]
         if kwargs.get("reply_markup") is not None:
-            entry["buttons"] = [[[b.text, b.callback_data] for b in row]
-                                for row in kwargs["reply_markup"].inline_keyboard]
+            # a held message's picker carries its event's generation, random here
+            entry["buttons"] = [[[b.text, re.sub(r"^(hold:[^:]+):[0-9a-f]{8}$", r"\1:<gen>", b.callback_data)]
+                                 for b in row] for row in kwargs["reply_markup"].inline_keyboard]
         store.append(entry)
     return record
 

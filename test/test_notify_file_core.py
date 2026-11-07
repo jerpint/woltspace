@@ -260,15 +260,16 @@ async def test_every_route_carries_the_attachment(lodge, case):
         lodge.env["TELEGRAM_ALLOWED_USERS"] = "101,404"     # a file goes only to the lodge's own chats
         explicit, destination = {"adapter": "telegram", "chat_id": 404}, {"chat_id": "404"}
     elif case == "explicit_slack":
-        lodge.env["SLACK_NOTIFY_CHANNEL"] = "C123"
-        explicit = {"adapter": "slack", "channel": "C123", "thread_ts": "1.2"}
-        adapter, destination = "slack", {"channel": "C123", "thread_ts": "1.2"}
+        lodge.env["SLACK_NOTIFY_CHANNEL"] = "C0000000123"
+        explicit = {"adapter": "slack", "route": "C0000000123"}
+        adapter, destination = "slack", {"chat_id": "C0000000123"}
     elif case == "session_telegram":
         lodge.routing = {"adapter": "telegram", "chat_id": 303, "wolt": "testwolt"}
         destination = {"chat_id": "303"}
     elif case == "session_slack":
-        lodge.routing = {"adapter": "slack", "chat_id": "C123", "thread_ts": "1.2", "wolt": "testwolt"}
-        adapter, destination = "slack", {"channel": "C123", "thread_ts": "1.2"}
+        # an old threaded record: the file goes to its flat DM
+        lodge.routing = {"adapter": "slack", "chat_id": "D0000000123", "thread_ts": "1.2", "wolt": "testwolt"}
+        adapter, destination = "slack", {"chat_id": "D0000000123"}
     entry = _stage(lodge)
 
     result = await notify.send_notification(
