@@ -5,6 +5,7 @@ import json
 import os
 import re
 import sqlite3
+import shutil
 import subprocess
 import threading
 import time
@@ -3076,6 +3077,608 @@ async def wolves_page(request: Request):
         "active_nav": "wolves",
         "cache_bust": int(time.time()),
         "wolts": wolts,
+    })
+
+
+# --- Hub: share wolts the way model hubs share models ---
+
+_HUB_CATALOG = Path(__file__).with_name("hub_catalog.json")
+_HUB_EMOJI = {"fox": "🦊", "owl": "🦉", "badger": "🦡"}
+
+
+def _hub_catalog() -> dict:
+    """The hub's shelf: crafts and listed wolts. Read per request so edits show up live."""
+    try:
+        data = json.loads(_HUB_CATALOG.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {"crafts": [], "wolts": []}
+    listed = {w.get("source") for w in data.get("wolts", [])}
+    local = {w["dir"]: w for w in _configured_wolts()}
+    for name, rec in _hub_read("published.json").items():
+        if rec.get("source") in listed or name not in local or rec.get("audience", "everyone") != "everyone":
+            continue
+        lw = local[name]
+        learnings = WOLTS_DIR / name / "wolt" / "memory" / "learnings.md"
+        count = sum(1 for line in learnings.read_text(encoding="utf-8").splitlines()
+                    if line.startswith("- ")) if learnings.is_file() else 0
+        data.setdefault("wolts", []).insert(0, {
+            "owner": rec.get("owner", "you"), "name": name, "type": lw.get("type", "rodent"),
+            "craft": lw.get("craft", ""), "tagline": lw.get("description") or lw.get("role") or "",
+            "learnings": count, "local": name, "source": rec.get("source"), "featured": True,
+        })
+    published_names = {w["local"] for w in data.get("wolts", []) if w.get("local") and w.get("source")}
+    data["wolts"] = [w for w in data.get("wolts", [])
+                     if not (w.get("example") and w.get("local") in published_names)]
+    for w in data.get("wolts", []):
+        w["emoji"] = _HUB_EMOJI.get(w.get("type", ""), creature_emoji(w.get("type") or "rodent"))
+        if w.get("source") and not w.get("example"):
+            w["href"] = f"/hub/@{w['owner']}/{w['name']}"
+        else:
+            w["href"] = f"/hub/{w['local']}" if w.get("local") else "#"
+    return data
+
+
+def _hub_ago(ts: float) -> str:
+    """'3 days ago', the way a hub listing reads."""
+    secs = max(0, time.time() - ts)
+    for unit, n in (("year", 31536000), ("month", 2592000), ("day", 86400), ("hour", 3600), ("minute", 60)):
+        if secs >= n:
+            k = int(secs // n)
+            return f"{k} {unit}{'s' if k != 1 else ''} ago"
+    return "just now"
+
+
+def _hub_markdown(text: str) -> str:
+    """Render a wolt card. Raw HTML in the source is escaped, not passed through."""
+    try:
+        from markdown_it import MarkdownIt
+    except ImportError:  # rich normally brings it; fall back to plain text
+        from html import escape
+        return f"<pre>{escape(text)}</pre>"
+    return MarkdownIt("commonmark", {"html": False}).enable("table").render(text)
+
+
+def _hub_wolt_card(wolt: dict) -> dict:
+    """What sharing this wolt as a seed would carry, read from disk."""
+    from woltspace.seed import SeedError, _authored_rules
+
+    home = Path(wolt["home"])
+    memory = home / "wolt" / "memory"
+
+    def size(path: Path) -> int:
+        return path.stat().st_size if path.is_file() else 0
+
+    def mtime(path: Path) -> float:
+        return path.stat().st_mtime if path.exists() else 0.0
+
+    identity_path = memory / "identity.md"
+    identity = identity_path.read_text(encoding="utf-8") if identity_path.is_file() else ""
+    learnings_path = memory / "learnings.md"
+    learnings = [
+        line[2:].strip()
+        for line in (learnings_path.read_text(encoding="utf-8").splitlines() if learnings_path.is_file() else [])
+        if line.startswith("- ")
+    ]
+    try:
+        rules = _authored_rules(home / "CLAUDE.md")
+    except SeedError:
+        rules = ""
+    skills_dir = home / ".claude" / "skills"
+    skills = sorted(
+        p.name for p in skills_dir.iterdir()
+        if p.is_dir() and not p.name.startswith("woltspace")
+    ) if skills_dir.is_dir() else []
+
+    def row(name, note, path=None, travels="yes", nbytes=None):
+        stamp = mtime(path) if path else 0.0
+        return {
+            "name": name, "note": note, "travels": travels,
+            "bytes": size(path) if nbytes is None and path else (nbytes or 0),
+            "updated": _hub_ago(stamp) if stamp else "",
+            "viewable": name in _HUB_FILES,
+        }
+
+    files = [
+        row("wolt.json", "name, creature, role", home / "wolt" / "wolt.json"),
+        row("identity.md", "the wolt card: who it is, its voice", identity_path),
+        row("CLAUDE.md", "authored rules only", home / "CLAUDE.md", nbytes=len(rules.encode())),
+        *(row(f"skills/{s}/", "user skill", skills_dir / s) for s in skills),
+        row("learnings.md", f"{len(learnings)} lessons it learned from you", learnings_path, travels="proposed"),
+        row("context.md", "what it's working on right now", memory / "context.md", travels="no"),
+        row("site/ · sparks/ · .env", "artifacts and secrets", travels="no"),
+    ]
+    updated = max([mtime(identity_path), mtime(learnings_path), mtime(home / "wolt" / "wolt.json")])
+    provenance = wolt.get("provenance") or {}
+    return {
+        **wolt,
+        "identity": identity,
+        "card_html": _hub_markdown(identity) if identity else "",
+        "learnings": learnings,
+        "skills": skills,
+        "files": files,
+        "updated": _hub_ago(updated) if updated else "",
+        "source": provenance.get("url") or provenance.get("source") or "",
+        "source_handle": _hub_handle(provenance.get("url") or provenance.get("source") or ""),
+    }
+
+
+@app.get("/hub")
+async def hub_page(request: Request, craft: str = ""):
+    """The hub: trending wolts, shelves by craft, and the wolts you could share."""
+    catalog = _hub_catalog()
+    crafts = catalog["crafts"]
+    wolts = catalog["wolts"]
+    for c in crafts:
+        members = [w for w in wolts if w.get("craft") == c["id"]]
+        c["count"] = len(members)
+        c["types"] = [w.get("type", "rodent") for w in members][:6]
+    current = next((c for c in crafts if c["id"] == craft), None)
+    shelf = [w for w in wolts if current and w.get("craft") == current["id"]]
+    trending = sorted(wolts, key=lambda w: (not w.get("featured"), -w.get("learnings", 0)))[:3]
+    yours = [{"dir": w["dir"], "emoji": w["emoji"], "type": w.get("base_type") or w.get("type", "rodent")}
+             for w in _configured_wolts()]
+    return templates.TemplateResponse(request, "hub.html", context={
+        "active_nav": "hub",
+        "cache_bust": int(time.time()),
+        "crafts": [c for c in crafts if c["count"]],
+        "craft": current,
+        "shelf": shelf,
+        "trending": trending,
+        "wolts": wolts,
+        "yours": yours,
+        "installed": {w["dir"] for w in yours},
+    })
+
+
+def _hub_state() -> Path:
+    path = WOLTS_DIR / ".space" / "hub"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _hub_read(name: str) -> dict:
+    try:
+        return json.loads((_hub_state() / name).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def _hub_pack(wolt_name: str, output: Path):
+    """A seed of one wolt, learnings included: sharing a wolt means sharing what it learned."""
+    from woltspace.seed import create_seed
+    has_learnings = (WOLTS_DIR / wolt_name / "wolt" / "memory" / "learnings.md").is_file()
+    return create_seed(
+        wolts_dir=WOLTS_DIR, output=output, name=wolt_name, wolt_names=[wolt_name],
+        learnings=[wolt_name] if has_learnings else [],
+    )
+
+
+def _hub_install(source: str | Path, label: str = "") -> dict:
+    """Install a seed; `label` replaces a throwaway local path in provenance.
+
+    GitHub sources are cloned with the lodge's GitHub sign-in, so a private wolt
+    you were invited to (or one owned by your organization) installs the same way.
+    """
+    import tempfile
+    from woltspace.seed import SeedError, install_seed
+
+    def install(src) -> dict:
+        try:
+            return install_seed(source=src, wolts_dir=WOLTS_DIR, install_root=WOLTSPACE_DIR)
+        except SeedError as exc:
+            taken = re.search(r"overwrite existing names: (.+)", str(exc))
+            if taken:
+                raise SeedError(f"You already have a wolt named {taken.group(1)}.") from exc
+            archived = re.search(r"an archived wolt is named (\S+?):", str(exc))
+            if archived:
+                raise SeedError(f"{archived.group(1)} is in your archive. Restore or delete it in Settings, then try again.") from exc
+            raise
+
+    text = str(source)
+    if text.startswith("https://github.com/"):
+        with tempfile.TemporaryDirectory(prefix="woltspace-hub-get-") as tmp:
+            checkout = Path(tmp) / "wolt"
+            cloned = subprocess.run(["git", *_GH_GIT, "clone", "--depth", "1", "-q", "--", text, str(checkout)],
+                                    capture_output=True, text=True, timeout=120)
+            if cloned.returncode:
+                raise SeedError("Couldn't get that wolt. It may have been unpublished, or it's private and not shared with you.")
+            revision = subprocess.run(["git", "-C", str(checkout), "rev-parse", "HEAD"],
+                                      capture_output=True, text=True).stdout.strip()
+            result = install(checkout)
+        provenance = {"source": text, "url": text, "format": "woltspace.colony-seed/v1"}
+        if revision:
+            provenance["revision"] = revision
+        label = ""
+    else:
+        result = install(source)
+        provenance = None
+    for name in result.get("wolts", []) if (label or provenance) else []:
+        path = WOLTS_DIR / name / "wolt" / "wolt.json"
+        config = json.loads(path.read_text(encoding="utf-8"))
+        if provenance:
+            config["provenance"] = provenance
+        else:
+            config.setdefault("provenance", {})["source"] = label
+        write_json_atomic(path, config)
+    if provenance:
+        result["source"] = provenance
+    return result
+
+
+def _hub_github_login() -> str:
+    """The GitHub account the lodge's `gh` is signed in as, or ''."""
+    try:
+        result = subprocess.run(
+            ["gh", "api", "user", "--jq", ".login"], capture_output=True, text=True, timeout=15,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def _hub_err(exc: Exception, status: int = 400) -> JSONResponse:
+    return JSONResponse({"ok": False, "error": str(exc)}, status_code=status)
+
+
+@app.post("/hub/install-link")
+async def hub_install_link(payload: dict = Body(...)):
+    """Install a wolt from its hub name (owner/name) or a link to it."""
+    from woltspace.seed import SeedError
+    source = _hub_source_for(str(payload.get("url") or ""))
+    if not source:
+        return _hub_err(SeedError("Paste a wolt's hub name, like jerpint/onboardie."))
+    try:
+        result = await asyncio.to_thread(_hub_install, source)
+    except SeedError as exc:
+        return _hub_err(exc)
+    return {"ok": True, **result}
+
+
+@app.post("/hub/install")
+async def hub_install(payload: dict = Body(...)):
+    """Install a listed wolt from its public seed repository."""
+    from woltspace.seed import SeedError
+    source = str(payload.get("source") or "")
+    listed = {w.get("source") for w in _hub_catalog()["wolts"] if w.get("source")}
+    if source not in listed:
+        return _hub_err(SeedError("That wolt isn't on the hub."))
+    try:
+        result = await asyncio.to_thread(_hub_install, source)
+    except SeedError as exc:
+        return _hub_err(exc)
+    return {"ok": True, **result}
+
+
+# Files a hub page can show. Only the card and the learnings are editable here;
+# everything else is read-only, and nothing outside this list is reachable.
+_HUB_FILES = {
+    "wolt.json": ("wolt/wolt.json", False),
+    "identity.md": ("wolt/memory/identity.md", True),
+    "CLAUDE.md": ("CLAUDE.md", False),
+    "learnings.md": ("wolt/memory/learnings.md", True),
+    "context.md": ("wolt/memory/context.md", False),
+}
+
+
+def _hub_file_path(wolt_name: str, file_name: str) -> tuple[Path, bool] | None:
+    if file_name not in _HUB_FILES or not any(w.get("dir") == wolt_name for w in _configured_wolts()):
+        return None
+    rel, editable = _HUB_FILES[file_name]
+    return WOLTS_DIR / wolt_name / rel, editable
+
+
+@app.get("/hub/{wolt_name}/files/{file_name}")
+async def hub_file_read(wolt_name: str, file_name: str):
+    """Show one of a wolt's files inline on its hub page."""
+    found = _hub_file_path(wolt_name, file_name)
+    if found is None:
+        return JSONResponse({"ok": False, "error": "not found"}, status_code=404)
+    path, editable = found
+    content = path.read_text(encoding="utf-8") if path.is_file() else ""
+    if file_name == "CLAUDE.md":
+        from woltspace.seed import SeedError, _authored_rules
+        try:
+            content = _authored_rules(path)
+        except SeedError:
+            pass
+    return {"ok": True, "name": file_name, "content": content, "editable": editable}
+
+
+@app.put("/hub/{wolt_name}/files/{file_name}")
+async def hub_file_write(wolt_name: str, file_name: str, payload: dict = Body(...)):
+    """Save a human edit to a wolt's card or learnings."""
+    found = _hub_file_path(wolt_name, file_name)
+    if found is None or not found[1]:
+        return JSONResponse({"ok": False, "error": "This file can't be edited here."}, status_code=403)
+    content = payload.get("content")
+    if not isinstance(content, str) or len(content.encode()) > 1024 * 1024:
+        return JSONResponse({"ok": False, "error": "Send the file's text (under 1 MB)."}, status_code=400)
+    path = found[0]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    write_text_atomic(path, content if content.endswith("\n") else content + "\n")
+    return {"ok": True}
+
+
+@app.get("/hub/{wolt_name}/publish")
+async def hub_publish_preview(wolt_name: str):
+    """Everything that would go public, for the human to read before publishing."""
+    import tempfile
+    from woltspace.seed import SeedError
+    if not any(w.get("dir") == wolt_name for w in _configured_wolts()):
+        return PlainTextResponse("Not found", status_code=404)
+
+    def preview() -> dict:
+        with tempfile.TemporaryDirectory(prefix="woltspace-hub-") as tmp:
+            out = Path(tmp) / "seed"
+            try:
+                _hub_pack(wolt_name, out)
+            except SeedError as exc:
+                return {"ok": False, "error": str(exc)}
+            base = out / "wolts" / wolt_name
+            read = lambda n: (base / n).read_text(encoding="utf-8") if (base / n).is_file() else ""
+            return {"ok": True, "identity": read("identity.md"), "rules": read("rules.md"),
+                    "learnings": read("learnings.md")}
+
+    result = await asyncio.to_thread(preview)
+    result["github"] = await asyncio.to_thread(_hub_github_login)
+    result["published"] = _hub_read("published.json").get(wolt_name)
+    return result
+
+
+_GH_GIT = ("-c", "credential.helper=", "-c", "credential.helper=!gh auth git-credential")
+_GH_NAME = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})")
+
+
+def _hub_learning_count(wolt_name: str) -> int:
+    path = WOLTS_DIR / wolt_name / "wolt" / "memory" / "learnings.md"
+    if not path.is_file():
+        return 0
+    return sum(1 for line in path.read_text(encoding="utf-8").splitlines() if line.startswith("- "))
+
+
+def _hub_changes(wolt_name: str, record: dict) -> dict | None:
+    """What changed since this wolt was last published, or None if nothing did."""
+    import tempfile
+    from woltspace.seed import SeedError
+    if not record.get("digest"):
+        return None
+    with tempfile.TemporaryDirectory(prefix="woltspace-hub-") as tmp:
+        try:
+            digest = _hub_pack(wolt_name, Path(tmp) / "seed").digest
+        except SeedError:
+            return None
+    if digest == record["digest"]:
+        return None
+    return {"new_learnings": max(0, _hub_learning_count(wolt_name) - record.get("learnings", 0))}
+
+
+@app.post("/hub/{wolt_name}/unpublish")
+async def hub_unpublish(wolt_name: str):
+    """Take a wolt off GitHub and the hub. Copies people already installed are theirs to keep."""
+    from woltspace.seed import SeedError
+    record = _hub_read("published.json").get(wolt_name)
+    if not record:
+        return _hub_err(SeedError(f"{wolt_name} isn't published."))
+    repo = record["url"].removeprefix("https://github.com/")
+
+    def unpublish() -> dict:
+        deleted = subprocess.run(["gh", "repo", "delete", repo, "--yes"],
+                                 capture_output=True, text=True, timeout=60)
+        how = "deleted"
+        if deleted.returncode:
+            # Deleting needs an extra GitHub permission many sign-ins lack. Hiding
+            # the repo still takes the wolt off the hub and stops new installs.
+            hidden = subprocess.run(["gh", "repo", "edit", repo, "--visibility", "private",
+                                     "--accept-visibility-change-consequences"],
+                                    capture_output=True, text=True, timeout=60)
+            if hidden.returncode:
+                raise SeedError(f"Couldn't unpublish: {(deleted.stderr or hidden.stderr).strip()[:300]}")
+            how = "hidden"
+        published = _hub_read("published.json")
+        published.pop(wolt_name, None)
+        write_json_atomic(_hub_state() / "published.json", published)
+        shutil.rmtree(_hub_state() / "published" / wolt_name, ignore_errors=True)
+        return {"how": how, "url": record["url"], "handle": record.get("handle", "")}
+
+    try:
+        result = await asyncio.to_thread(unpublish)
+    except (SeedError, subprocess.TimeoutExpired) as exc:
+        return _hub_err(exc)
+    return {"ok": True, **result}
+
+
+@app.post("/hub/{wolt_name}/publish")
+async def hub_publish(wolt_name: str, payload: dict = Body(default={})):
+    """Put this wolt in its own GitHub repo, for everyone or for people you choose.
+
+    GitHub does the access control: "everyone" is a public repo listed on the hub,
+    "people" is a private repo with those people invited read-only.
+    """
+    from woltspace.seed import SeedError
+    if not any(w.get("dir") == wolt_name for w in _configured_wolts()):
+        return PlainTextResponse("Not found", status_code=404)
+    audience = payload.get("audience", "everyone")
+    people = [p.strip().lstrip("@") for p in payload.get("people", []) if isinstance(p, str) and p.strip()]
+
+    def publish() -> dict:
+        if audience not in {"everyone", "people"}:
+            raise SeedError("Choose who can get it.")
+        login = _hub_github_login()
+        if not login:
+            raise SeedError("Sign in once first: run `gh auth login` in a terminal.")
+        if audience == "people":
+            if not people:
+                raise SeedError("Add at least one GitHub username.")
+            bad = [p for p in people if not _GH_NAME.fullmatch(p)]
+            if bad:
+                raise SeedError(f"That doesn't look like a GitHub username: {bad[0]}")
+        owner = login
+        repo = f"{owner}/{wolt_name}-wolt"
+        visibility = "public" if audience == "everyone" else "private"
+
+        out = _hub_state() / "published" / wolt_name
+        if out.exists():
+            shutil.rmtree(out)
+        summary = _hub_pack(wolt_name, out)
+
+        def run(*cmd: str) -> subprocess.CompletedProcess:
+            return subprocess.run(cmd, cwd=out, capture_output=True, text=True, timeout=120)
+
+        def check(result: subprocess.CompletedProcess) -> None:
+            if result.returncode:
+                raise SeedError(f"Publishing failed: {(result.stderr or result.stdout).strip()[:300]}")
+
+        run("git", "init", "-q", "-b", "main")
+        run("git", "add", "-A")
+        check(run("git", "-c", "user.name=woltspace hub", "-c", "user.email=hub@woltspace.invalid",
+                  "commit", "-qm", f"Publish {wolt_name}"))
+        if run("gh", "repo", "view", repo).returncode == 0:
+            check(run("gh", "repo", "edit", repo, "--visibility", visibility,
+                      "--accept-visibility-change-consequences"))
+        else:
+            check(run("gh", "repo", "create", repo, f"--{visibility}",
+                      "--description", f"{wolt_name}, a wolt you can install with woltspace"))
+        check(run("git", *_GH_GIT, "push", "-q", "--force", f"https://github.com/{repo}.git", "main"))
+        for person in people if audience == "people" else []:
+            check(run("gh", "api", "-X", "PUT", f"repos/{repo}/collaborators/{person}", "-f", "permission=pull"))
+
+        record = {"owner": owner, "handle": f"{owner}/{wolt_name}", "audience": audience, "people": people if audience == "people" else [],
+                  "source": f"https://github.com/{repo}.git", "url": f"https://github.com/{repo}",
+                  "at": int(time.time()), "digest": summary.digest,
+                  "learnings": _hub_learning_count(wolt_name)}
+        published = _hub_read("published.json")
+        published[wolt_name] = record
+        write_json_atomic(_hub_state() / "published.json", published)
+        return record
+
+    try:
+        record = await asyncio.to_thread(publish)
+    except (SeedError, subprocess.TimeoutExpired) as exc:
+        return _hub_err(exc)
+    return {"ok": True, **record}
+
+
+_HUB_REMOTE_TTL = 600  # seconds a fetched listing stays fresh
+
+
+def _hub_handle(source: str) -> str:
+    """The short hub name for a wolt's storage URL: 'owner/name', like owner/model."""
+    for w in _hub_catalog()["wolts"]:
+        if w.get("source") == source:
+            return f"{w['owner']}/{w['name']}"
+    m = re.match(r"https://github\.com/([\w.-]+)/([\w.-]+?)(?:\.git)?/?$", source or "")
+    if not m:
+        return ""
+    name = m.group(2)[:-5] if m.group(2).endswith("-wolt") else m.group(2)
+    return f"{m.group(1)}/{name}"
+
+
+def _hub_source_for(text: str) -> str:
+    """Turn what someone pasted (a hub name, hub link, or storage link) into a storage URL."""
+    text = text.strip().rstrip("/")
+    m = re.search(r"/hub/@([\w.-]+)/([\w.-]+)$", text)
+    if m:
+        text = f"{m.group(1)}/{m.group(2)}"
+    m = re.fullmatch(r"https://github\.com/([\w.-]+)/([\w.-]+?)(?:\.git)?", text)
+    if m:
+        return f"https://github.com/{m.group(1)}/{m.group(2)}.git"
+    m = re.fullmatch(r"@?([\w.-]+)/([\w.-]+)", text)
+    if not m:
+        return ""
+    for w in _hub_catalog()["wolts"]:
+        if w.get("owner") == m.group(1) and w.get("name") == m.group(2) and w.get("source"):
+            return w["source"]
+    return f"https://github.com/{m.group(1)}/{m.group(2)}-wolt.git"
+
+
+def _hub_remote_card(listing: dict) -> dict:
+    """A listed wolt's page, read from its published seed (cached briefly)."""
+    from woltspace.seed import SeedError, inspect_seed
+
+    cache = _hub_state() / "cache" / f"{listing['owner']}--{listing['name']}"
+    fresh = cache.is_dir() and time.time() - cache.stat().st_mtime < _HUB_REMOTE_TTL
+    if not fresh:
+        tmp = cache.with_name(cache.name + ".partial")
+        shutil.rmtree(tmp, ignore_errors=True)
+        cloned = subprocess.run(["git", *_GH_GIT, "clone", "--depth", "1", "-q", "--",
+                                 listing["source"], str(tmp)], capture_output=True, text=True, timeout=120)
+        if cloned.returncode:
+            shutil.rmtree(tmp, ignore_errors=True)
+            raise SeedError("Couldn't reach this wolt right now. Try again in a minute.")
+        shutil.rmtree(cache, ignore_errors=True)
+        tmp.rename(cache)
+    summary = inspect_seed(cache)
+    name = listing["name"] if listing["name"] in summary.wolts else summary.wolts[0]
+    base = cache / "wolts" / name
+    read = lambda n: (base / n).read_text(encoding="utf-8") if (base / n).is_file() else ""
+    config = json.loads(read("wolt.json") or "{}")
+    identity, rules, learnings_text = read("identity.md"), read("rules.md"), read("learnings.md")
+    learnings = [l[2:].strip() for l in learnings_text.splitlines() if l.startswith("- ")]
+    skills = sorted(p.name for p in (base / "skills").iterdir()) if (base / "skills").is_dir() else []
+    when = subprocess.run(["git", "-C", str(cache), "log", "-1", "--format=%ct"],
+                          capture_output=True, text=True).stdout.strip()
+    kb = lambda n: (base / n).stat().st_size if (base / n).is_file() else 0
+    files = [
+        {"name": "wolt.json", "note": "name, creature, role", "bytes": kb("wolt.json"), "travels": "yes", "updated": "", "viewable": False},
+        {"name": "identity.md", "note": "the wolt card: who it is, its voice", "bytes": kb("identity.md"), "travels": "yes", "updated": "", "viewable": False},
+        {"name": "rules.md", "note": "its rules", "bytes": kb("rules.md"), "travels": "yes", "updated": "", "viewable": False},
+        *({"name": f"skills/{s}/", "note": "skill", "bytes": 0, "travels": "yes", "updated": "", "viewable": False} for s in skills),
+        *([{"name": "learnings.md", "note": f"{len(learnings)} lessons", "bytes": kb("learnings.md"), "travels": "yes", "updated": "", "viewable": False}] if learnings_text else []),
+    ]
+    wtype = config.get("type", listing.get("type", "rodent"))
+    return {
+        "dir": name, "type": wtype, "base_type": base_type(wtype), "emoji": listing.get("emoji") or creature_emoji(wtype),
+        "role": config.get("role", ""), "description": config.get("description", listing.get("tagline", "")),
+        "identity": identity, "card_html": _hub_markdown(identity) if identity else "",
+        "rules": rules, "learnings": learnings, "skills": skills, "files": files,
+        "updated": _hub_ago(float(when)) if when.isdigit() else "",
+        "source": listing["source"], "owner": listing["owner"],
+    }
+
+
+@app.get("/hub/@{owner}/{name}")
+async def hub_listed_page(request: Request, owner: str, name: str, tab: str = "card"):
+    """A listed wolt's own page, the way a model hub gives every model a page."""
+    from woltspace.seed import SeedError
+    listing = next((w for w in _hub_catalog()["wolts"]
+                    if w.get("owner") == owner and w.get("name") == name and w.get("source")), None)
+    if listing is None:
+        return PlainTextResponse("Not found", status_code=404)
+    try:
+        card = await asyncio.to_thread(_hub_remote_card, listing)
+    except (SeedError, subprocess.TimeoutExpired, OSError) as exc:
+        return templates.TemplateResponse(request, "hub_wolt.html", context={
+            "active_nav": "hub", "cache_bust": int(time.time()), "remote": True, "unreachable": str(exc),
+            "w": {"dir": name, "type": listing.get("type", "rodent"), "base_type": listing.get("type", "rodent"),
+                  "emoji": listing.get("emoji", ""), "role": "", "learnings": [], "skills": [], "files": [],
+                  "card_html": "", "description": listing.get("tagline", ""), "source": listing["source"],
+                  "owner": owner, "updated": ""},
+            "listing": listing, "installed": False, "tab": "card", "published": None, "changes": None,
+        })
+    installed = any(w.get("dir") == card["dir"] for w in _configured_wolts())
+    return templates.TemplateResponse(request, "hub_wolt.html", context={
+        "active_nav": "hub", "cache_bust": int(time.time()), "remote": True,
+        "w": card, "listing": listing, "installed": installed,
+        "tab": tab if tab in {"card", "files", "learnings"} else "card",
+        "published": None, "changes": None,
+    })
+
+
+@app.get("/hub/{wolt_name}")
+async def hub_wolt_page(request: Request, wolt_name: str, tab: str = "card"):
+    """One wolt's hub page: who it is, what it learned, and the buttons to share it."""
+    wolt = next((w for w in _configured_wolts() if w.get("dir") == wolt_name), None)
+    if wolt is None:
+        return PlainTextResponse("Not found", status_code=404)
+    published = _hub_read("published.json").get(wolt_name)
+    changes = await asyncio.to_thread(_hub_changes, wolt_name, published) if published else None
+    return templates.TemplateResponse(request, "hub_wolt.html", context={
+        "active_nav": "hub",
+        "cache_bust": int(time.time()),
+        "w": _hub_wolt_card(wolt),
+        "published": published,
+        "changes": changes,
+        "tab": tab if tab in {"card", "files", "learnings"} else "card",
     })
 
 

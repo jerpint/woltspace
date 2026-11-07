@@ -1,0 +1,157 @@
+{% extends 'base.html' %}
+
+{% block title %}{% if craft %}{{ craft.label }} · {% endif %}Hub · Woltspace{% endblock %}
+
+{% block head %}
+<link rel="stylesheet" href="/static/hub.css?v={{ cache_bust }}">
+{% endblock %}
+
+{% macro card(w, big=false) -%}
+{% set have = w.name in installed %}
+<div class="hcard{% if big %} hcard-big{% endif %}" data-craft="{{ w.craft }}" data-search="{{ w.owner }} {{ w.name }} {{ w.tagline }} {{ w.craft }} {{ w.type }}">
+  <a class="hcard-link" href="{{ w.href }}"{% if w.href.startswith('http') %} target="_blank" rel="noopener"{% endif %} aria-label="{{ w.name }} by {{ w.owner }}"></a>
+  <span class="hcard-ico" data-sprite="{{ w.type }}" data-size="{{ 40 if big else 30 }}">{{ w.emoji }}</span>
+  <span class="hcard-name">{{ w.name }}</span>
+  <span class="hcard-owner">by {{ w.owner }}</span>
+  <span class="hcard-tag">{{ w.tagline }}</span>
+  <span class="hcard-foot">
+    {% if w.learnings %}<span>🧠 {{ w.learnings }} learnings</span>{% else %}<span>🌱 starter</span>{% endif %}
+    {% if have %}<span class="hcard-have">✓ in your lodge</span>
+    {% elif w.source %}<button type="button" class="hcard-get" data-install="{{ w.source }}" data-name="{{ w.name }}">Get</button>
+    {% elif w.example %}<span class="hcard-example">example</span>{% endif %}
+  </span>
+</div>
+{%- endmacro %}
+
+{% block content %}
+<div class="hubx">
+
+  {% if craft %}
+    <a class="hubx-back" href="/hub">← Hub</a>
+    <header class="hubx-shelfhead">
+      <div><h1>{{ craft.label }}</h1><p>{{ craft.count }} wolt{{ 's' if craft.count != 1 }} taught to do this</p></div>
+    </header>
+    <div class="hubx-grid">
+      {% for w in shelf %}{{ card(w) }}{% else %}<p class="hubx-quiet">Nothing on this shelf yet. Yours could be first.</p>{% endfor %}
+    </div>
+
+  {% else %}
+    <header class="hubx-hero">
+      <h1>Share the wolt, <em>not the chat.</em></h1>
+      <p>Wolts other people taught, ready to move into your lodge.</p>
+      <label class="hubx-search">
+        <span aria-hidden="true">⌕</span>
+        <input type="search" placeholder="Search wolts…" data-hub-search aria-label="Search wolts">
+      </label>
+      <button type="button" class="hubx-add" data-add-toggle>＋ Add a wolt by name</button>
+      <form class="hubx-addform" data-add-form hidden>
+        <input type="text" placeholder="Paste a wolt's name, like jerpint/onboardie" data-add-url aria-label="Wolt name or link" required>
+        <button type="submit">Get</button>
+      </form>
+    </header>
+
+    <section class="hubx-results" data-hub-results hidden>
+      <div class="hubx-grid">{% for w in wolts %}{{ card(w) }}{% endfor %}</div>
+      <p class="hubx-quiet" data-hub-none hidden>No wolts match that yet.</p>
+    </section>
+
+    <div data-hub-shelves>
+      <section class="hubx-section">
+        <h2>Trending</h2>
+        <div class="hubx-trending">{% for w in trending %}{{ card(w, big=true) }}{% endfor %}</div>
+      </section>
+
+      <section class="hubx-section">
+        <h2>Browse by craft</h2>
+        <div class="hubx-shelves">
+          {% for c in crafts %}
+          <a class="hubx-shelf" href="/hub?craft={{ c.id }}">
+            <span class="hubx-shelf-crew">{% for t in c.types %}<span data-sprite="{{ t }}" data-size="34"></span>{% endfor %}</span>
+            <span class="hubx-shelf-plank" aria-hidden="true"></span>
+            <span class="hubx-shelf-name">{{ c.label }}</span>
+            <span class="hubx-shelf-count">{{ c.count }} {{ 'wolt' if c.count == 1 else 'wolts' }}</span>
+          </a>
+          {% endfor %}
+        </div>
+      </section>
+
+      {% if yours %}
+      <section class="hubx-section hubx-yours">
+        <h2>Yours to share</h2>
+        <div class="hubx-chips">
+          {% for w in yours %}<a class="hubx-chip" href="/hub/{{ w.dir }}"><span data-sprite="{{ w.type }}" data-size="18">{{ w.emoji }}</span>{{ w.dir }}</a>{% endfor %}
+        </div>
+      </section>
+      {% endif %}
+    </div>
+  {% endif %}
+
+</div>
+<div class="hubx-toast" data-hub-toast role="status" aria-live="polite" hidden></div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Pixel creatures, the same ones the lodge sidebar draws.
+document.querySelectorAll('[data-sprite]').forEach((el) => {
+  const svg = typeof woltSpriteElement === 'function' && woltSpriteElement(el.dataset.sprite, +el.dataset.size || 24);
+  if (svg) { el.replaceChildren(svg); el.classList.add('is-pixel'); } else { el.classList.add('is-emoji'); }
+});
+(() => {
+  const toast = document.querySelector('[data-hub-toast]');
+  const esc = (v) => String(v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+  const say = (html, ok = true) => {
+    toast.innerHTML = html; toast.className = 'hubx-toast ' + (ok ? 'ok' : 'bad'); toast.hidden = false;
+    clearTimeout(say.t); say.t = setTimeout(() => { toast.hidden = true; }, ok ? 6000 : 8000);
+  };
+  const movedIn = (r) => {
+    const names = r.wolts || [];
+    say(`🎉 <b>${esc(names.join(', '))}</b> moved in. Start a session from the sidebar.`);
+    setTimeout(() => location.reload(), 1800);
+  };
+  const post = async (url, body, headers) => {
+    const res = await fetch(url, { method: 'POST', body, headers });
+    const r = await res.json().catch(() => ({ ok: false, error: 'Something went wrong.' }));
+    if (!r.ok) throw new Error(r.error);
+    return r;
+  };
+  const addForm = document.querySelector('[data-add-form]');
+  document.querySelector('[data-add-toggle]')?.addEventListener('click', () => {
+    addForm.hidden = !addForm.hidden;
+    if (!addForm.hidden) addForm.querySelector('input').focus();
+  });
+  addForm?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const url = addForm.querySelector('[data-add-url]').value.trim();
+    say('Getting the wolt…');
+    try { movedIn(await post('/hub/install-link', JSON.stringify({ url }), { 'Content-Type': 'application/json' })); }
+    catch (err) { say(esc(err.message), false); }
+  });
+  document.querySelectorAll('[data-install]').forEach((b) => b.addEventListener('click', async () => {
+    b.disabled = true; b.textContent = 'Getting…';
+    try { movedIn(await post('/hub/install', JSON.stringify({ source: b.dataset.install }), { 'Content-Type': 'application/json' })); }
+    catch (e) { say(esc(e.message), false); b.disabled = false; b.textContent = 'Get'; }
+  }));
+
+  const input = document.querySelector('[data-hub-search]');
+  if (!input) return;
+  const results = document.querySelector('[data-hub-results]');
+  const shelves = document.querySelector('[data-hub-shelves]');
+  const cards = [...results.querySelectorAll('.hcard')];
+  let craft = '';
+  const apply = () => {
+    const q = input.value.trim().toLowerCase();
+    const filtering = !!(q || craft);
+    results.hidden = !filtering; shelves.hidden = filtering;
+    let n = 0;
+    cards.forEach((c) => {
+      const ok = (!q || c.dataset.search.toLowerCase().includes(q)) && (!craft || c.dataset.craft === craft);
+      c.hidden = !ok; if (ok) n++;
+    });
+    results.querySelector('[data-hub-none]').hidden = n > 0;
+  };
+  input.addEventListener('input', apply);
+
+})();
+</script>
+{% endblock %}

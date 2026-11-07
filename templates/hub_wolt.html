@@ -1,0 +1,382 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ w.dir }} · Hub · Woltspace{% endblock %}
+
+{% block head %}
+<link rel="stylesheet" href="/static/hub.css?v={{ cache_bust }}">
+{% endblock %}
+
+{% block content %}
+<header class="hubw-head">
+  <div class="hubw-head-in">
+    <a class="hub-back" href="/hub">← Hub</a>
+    <div class="hubw-title">
+      <span class="hubw-ico" data-sprite="{{ w.base_type or w.type }}" data-size="30">{{ w.emoji }}</span>
+      <span class="hub-owner">{{ w.owner if remote else (published.owner if published else 'you') }} /</span>
+      <h1>{{ w.dir }}</h1>
+      {% if remote and installed %}<span class="hubw-status">✓ in your lodge</span>{% endif %}
+      {% if published %}<span class="hubw-status">{{ '✓ public' if published.audience in (none, 'everyone') else '🔒 private' }}</span>{% endif %}
+      {% if changes %}<span class="hubw-changed">{% if changes.new_learnings %}{{ changes.new_learnings }} new learning{{ 's' if changes.new_learnings != 1 }} since you published{% else %}changed since you published{% endif %}</span>{% endif %}
+      <div class="hubw-cta">
+      {% if remote %}
+        {% if installed %}<a class="hubw-publish is-quiet" href="/hub/{{ w.dir }}">Open in your lodge</a>
+        {% else %}<button type="button" class="hubw-publish" data-get="{{ w.source }}">Get {{ w.dir }}</button>{% endif %}
+      {% elif w.source_handle and not published %}
+        <a class="hubw-publish is-quiet" href="/hub/@{{ w.source_handle }}">View on Hub</a>
+      {% elif published and not changes %}
+      <button type="button" class="hubw-publish is-quiet" data-publish-open title="Nothing new to publish">✓ Up to date</button>
+      {% else %}
+      <button type="button" class="hubw-publish{% if changes %} has-news{% endif %}" data-publish-open>{{ 'Update ' ~ w.dir if published else 'Publish ' ~ w.dir }}</button>
+      {% endif %}
+      </div>
+    </div>
+
+    <div class="hubw-tags">
+      <span class="hubw-pill"><span class="hubw-pill-ico hub-c-terra">{{ w.emoji }}</span>{{ w.type }}</span>
+      {% if w.role %}<span class="hubw-pill"><span class="hubw-pill-ico hub-c-blue">🎯</span>{{ w.role }}</span>{% endif %}
+      <span class="hubw-pill"><span class="hubw-pill-ico hub-c-amber">🧠</span>{{ w.learnings|length }} learnings</span>
+      {% if w.skills %}<span class="hubw-pill"><span class="hubw-pill-ico hub-c-blue">🧰</span>{{ w.skills|length }} skills</span>{% endif %}
+    </div>
+
+    <nav class="hubw-tabs">
+      <a href="?tab=card" class="{{ 'on' if tab == 'card' }}">📄 Wolt card</a>
+      <a href="?tab=learnings" class="{{ 'on' if tab == 'learnings' }}">🧠 What it learned <small>{{ w.learnings|length }}</small></a>
+      <a href="?tab=files" class="{{ 'on' if tab == 'files' }}">📁 What travels</a>
+    </nav>
+  </div>
+</header>
+
+<div class="hubw-body">
+  <main class="hubw-main">
+    {% if unreachable %}<p class="hubp-warn">{{ unreachable }}</p>{% endif %}
+    {% if tab == 'card' %}
+      <div class="hubw-editable"{% if not remote %} data-editable="identity.md"{% endif %}>
+        {% if not remote %}<button type="button" class="hubw-edit" data-edit>✎ Edit card</button>{% endif %}
+        {% if w.card_html %}<article class="hub-prose">{{ w.card_html | safe }}</article>
+        {% else %}<p class="hubx-quiet">No wolt card yet. Write one: who {{ w.dir }} is and what it's good at.</p>{% endif %}
+      </div>
+
+    {% elif tab == 'learnings' %}
+      <div class="hubw-editable"{% if not remote %} data-editable="learnings.md"{% endif %}>
+        {% if not remote %}<button type="button" class="hubw-edit" data-edit>✎ Edit learnings</button>{% endif %}
+        {% if w.learnings %}
+        <ol class="hubw-learnings">{% for l in w.learnings %}<li>{{ l }}</li>{% endfor %}</ol>
+        {% else %}<p class="hubx-quiet">Nothing yet. Learnings build up as you work together.</p>{% endif %}
+      </div>
+
+    {% else %}
+      <p class="hubw-lede">{% if remote %}Everything that comes with {{ w.dir }} when you press Get. It starts fresh in your lodge, with no one else's chats or work.{% else %}Publishing {{ w.dir }} shares only {{ w.dir }}. These are the files that go, and the ones that never leave your lodge.{% endif %}</p>
+      <div class="hubw-files">
+        {% for f in w.files %}
+        <div class="hubw-file{% if f.travels == 'no' %} is-home{% endif %}{% if f.viewable %} is-viewable{% endif %}"{% if f.viewable %} data-view="{{ f.name }}" role="button" tabindex="0" aria-expanded="false"{% endif %}>
+          <span class="hub-dot hub-{{ 'yes' if f.travels != 'no' else 'no' }}">{{ '✕' if f.travels == 'no' else '✓' }}</span>
+          <span class="hubw-fname">{{ f.name }}</span>
+          <span class="hubw-fsize">{% if f.bytes %}{{ (f.bytes/1024)|round(1) }} kB{% endif %}</span>
+          <span class="hubw-fnote">{{ f.note }}</span>
+          <span class="hubw-ftime">{{ f.updated }}</span>
+        </div>
+        {% endfor %}
+      </div>
+    {% endif %}
+  </main>
+
+  <aside class="hubw-side">
+    <section>
+      <h3>Learned so far</h3>
+      <div class="hubw-stat"><b>{{ w.learnings|length }}</b><span>learnings</span>{% if w.skills %}<b>{{ w.skills|length }}</b><span>skills</span>{% endif %}</div>
+      {% if w.updated %}<p class="hub-dim">{{ 'Last updated' if remote else 'Last taught' }} {{ w.updated }}</p>{% endif %}
+    </section>
+    <section>
+      {% if remote and installed %}
+        <h3>In your lodge</h3>
+        <p>You have {{ w.dir }}. Your copy learns from you, separately from {{ w.owner }}'s.</p>
+        <a class="hubw-sidelink" href="/hub/{{ w.dir }}">Open your {{ w.dir }} →</a>
+      {% elif remote %}
+        <h3>Get it</h3>
+        <p>Press <b>Get {{ w.dir }}</b> and it moves into your lodge, ready for your next session.</p>
+      {% elif published %}
+        <h3>Shared</h3>
+        <p>{% if published.audience == 'people' %}Only {{ published.people|join(', ') }} can get it. Send them its name:{% else %}Anyone can get it on the Hub, or by pasting its name:{% endif %}</p>
+        {% set handle = published.handle or (published.owner ~ '/' ~ w.dir) %}
+        <button type="button" class="hubw-linkbox" data-copy="{{ handle }}" title="Copy">{{ handle }}<span>Copy</span></button>
+        <button type="button" class="hubw-unpublish" data-unpublish-open>Unpublish {{ w.dir }}</button>
+      {% elif w.source_handle %}
+        <h3>Yours to keep</h3>
+        <p>{{ w.dir }} is {{ w.source_handle.split('/')[0] }}'s wolt. Your copy learns from you, separately from theirs.</p>
+      {% else %}
+        <h3>Not shared yet</h3>
+        <p class="hub-dim">Publish {{ w.dir }} and choose who can get it.</p>
+      {% endif %}
+    </section>
+    {% if remote %}
+    <section>
+      <h3>Share it</h3>
+      <p class="hub-dim">Anyone can paste this name into their Hub.</p>
+      <button type="button" class="hubw-linkbox" data-copy="{{ w.owner }}/{{ w.dir }}" title="Copy">{{ w.owner }}/{{ w.dir }}<span>Copy</span></button>
+    </section>
+    {% endif %}
+    <section>
+      <h3>Where it came from</h3>
+      <p class="hubw-origin">{% if remote %}Published by <b>{{ w.owner }}</b>{% elif w.source_handle %}You got it from <a href="/hub/@{{ w.source_handle }}">{{ w.source_handle }}</a>{% elif w.source %}You got it from a shared file{% else %}Born in your lodge{% endif %}</p>
+    </section>
+    {% if not remote %}
+    <section>
+      <button type="button" class="hubw-unpublish" data-remove-open>Remove {{ w.dir }} from your lodge</button>
+    </section>
+    {% endif %}
+  </aside>
+</div>
+
+{% if not remote %}
+<dialog class="hubp-dialog hubp-dialog-sm" data-remove>
+  <h2>Remove {{ w.dir }} from your lodge?</h2>
+  <p class="hubp-dialog-sub">{{ w.dir }} leaves your sidebar, and its memory goes with it: everything it learned while working with you.{% if published %} Its published copy on the Hub stays up unless you unpublish it too.{% endif %}</p>
+  <p class="hubp-note"><b>Archive</b> tucks it away so you can bring it back later from Settings. <b>Delete</b> removes it for good.</p>
+  <p class="hubp-warn" data-remove-err hidden></p>
+  <div class="hubp-dialog-actions">
+    <button type="button" class="hubp-ghost" data-remove-cancel autofocus>Cancel</button>
+    <button type="button" class="hubp-ghost" data-remove-go="delete">Delete for good</button>
+    <button type="button" class="hubp-btn" data-remove-go="archive">Archive</button>
+  </div>
+</dialog>
+
+{% if not w.source_handle or published %}
+<dialog class="hubp-dialog" data-publish>
+  <div data-step="review">
+    <h2>Publish {{ w.dir }}</h2>
+    <p class="hubp-dialog-sub">Only {{ w.dir }} is shared, never the rest of your lodge. This is exactly what goes out:</p>
+    <div class="hubp-preview" data-preview><p class="hubx-quiet">Packing {{ w.dir }}…</p></div>
+    <fieldset class="hubp-who" data-who disabled>
+      <legend>Who can get it?</legend>
+      <label class="hubp-choice"><input type="radio" name="audience" value="everyone" checked>
+        <span><b>Everyone</b><small>Public, and listed on the Hub. Check for names or anything you wouldn't post.</small></span></label>
+      <label class="hubp-choice"><input type="radio" name="audience" value="people">
+        <span><b>Only people I choose</b><small>Private. Only these people can install it.</small>
+        <input type="text" class="hubp-sub-input" data-people placeholder="their usernames, separated by commas"></span></label>
+    </fieldset>
+    <p class="hubp-gh" data-gh></p>
+    <div class="hubp-dialog-actions">
+      <button type="button" class="hubp-ghost" data-close>Cancel</button>
+      <button type="button" class="hubp-btn" data-publish-go disabled>Publish to everyone</button>
+    </div>
+  </div>
+  <div data-step="busy" hidden>
+    <div class="hubp-packing">
+      <span class="hubp-packing-sprite" data-sprite="{{ w.base_type or w.type }}" data-size="44"></span>
+      <span class="hubp-packing-ground" aria-hidden="true"></span>
+      <p>Packing {{ w.dir }}…</p>
+    </div>
+  </div>
+  <div data-step="done" hidden>
+    <p class="hubp-eyebrow" data-done-eyebrow>Published</p>
+    <h2 data-done-title>{{ w.dir }} is on the Hub.</h2>
+    <p class="hubp-dialog-sub" data-done-sub>This is what people see when they browse:</p>
+    <div class="hubp-result">
+      <div class="hcard hcard-big hubp-result-card">
+        <span class="hcard-ico" data-sprite="{{ w.base_type or w.type }}" data-size="40"></span>
+        <span class="hcard-name">{{ w.dir }}</span>
+        <span class="hcard-owner" data-done-owner></span>
+        <span class="hcard-tag">{{ w.description or w.role or '' }}</span>
+        <span class="hcard-foot"><span>🧠 {{ w.learnings|length }} learnings</span><span class="hcard-get-fake">Get</span></span>
+      </div>
+    </div>
+    <label class="hubp-linkrow"><span>Name</span>
+      <input type="text" readonly data-done-link aria-label="Link to {{ w.dir }}">
+      <button type="button" class="hubp-ghost" data-done-copy>Copy</button></label>
+    <div class="hubp-dialog-actions"><button type="button" class="hubp-btn" data-close-reload autofocus>Done</button></div>
+  </div>
+</dialog>
+{% endif %}
+{% endif %}
+
+{% if published %}
+<dialog class="hubp-dialog hubp-dialog-sm" data-unpublish>
+  <h2>Unpublish {{ w.dir }}?</h2>
+  <p class="hubp-dialog-sub">{{ w.dir }} comes off the Hub and its link stops working, so nobody new can get it.
+    {% if published.audience == 'people' %}{{ published.people|join(', ') }} won't be able to install it anymore.{% endif %}</p>
+  <p class="hubp-note">Anyone who already pressed Get keeps their copy. It's their wolt now, and it stays in their lodge. Your {{ w.dir }} stays exactly as it is.</p>
+  <p class="hubp-warn" data-unpublish-err hidden></p>
+  <div class="hubp-dialog-actions">
+    <button type="button" class="hubp-ghost" data-unpublish-cancel autofocus>Keep it published</button>
+    <button type="button" class="hubp-btn hubp-btn-danger" data-unpublish-go>Unpublish</button>
+  </div>
+</dialog>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.querySelectorAll('[data-sprite]').forEach((el) => {
+  const svg = typeof woltSpriteElement === 'function' && woltSpriteElement(el.dataset.sprite, +el.dataset.size || 24);
+  if (svg) { el.replaceChildren(svg); el.classList.add('is-pixel'); } else { el.classList.add('is-emoji'); }
+});
+(() => {
+  const wolt = {{ w.dir | tojson }};
+  const esc = (v) => String(v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+
+  // Get a listed wolt. Wired first: everything after this is for wolts you own.
+  document.querySelector('[data-get]')?.addEventListener('click', async (e) => {
+    const b = e.currentTarget; b.disabled = true; b.textContent = 'Getting…';
+    const r = await (await fetch('/hub/install', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source: b.dataset.get }) })).json().catch(() => ({ ok: false, error: 'Something went wrong.' }));
+    if (r.ok) { location.reload(); return; }
+    b.disabled = false; b.textContent = `Get ${wolt}`;
+    const warn = document.createElement('p'); warn.className = 'hubp-warn'; warn.textContent = r.error;
+    document.querySelector('.hubw-main').prepend(warn);
+  });
+
+  // Inline editing: the card and the learnings are the wolt's own memory files.
+  const getFile = async (name) => (await fetch(`/hub/${wolt}/files/${name}`)).json();
+  const openEditor = (host, name, content, after) => {
+    host.innerHTML = `<div class="hubw-editor">
+        <textarea spellcheck="true" aria-label="Edit ${esc(name)}">${esc(content)}</textarea>
+        <div class="hubw-editor-bar"><span class="hub-dim">${esc(name)} · Markdown</span>
+          <button type="button" class="hubp-ghost" data-cancel>Cancel</button>
+          <button type="button" class="hubp-btn" data-save>Save</button></div>
+        <p class="hubp-warn" data-err hidden></p></div>`;
+    const ta = host.querySelector('textarea');
+    ta.style.height = Math.min(Math.max(ta.scrollHeight + 8, 240), window.innerHeight * 0.7) + 'px';
+    ta.focus();
+    host.querySelector('[data-cancel]').onclick = () => location.reload();
+    host.querySelector('[data-save]').onclick = async (e) => {
+      e.target.disabled = true; e.target.textContent = 'Saving…';
+      const r = await (await fetch(`/hub/${wolt}/files/${name}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content: ta.value }) })).json().catch(() => ({ ok: false, error: 'Could not save.' }));
+      if (r.ok) { (after || (() => location.reload()))(); return; }
+      const err = host.querySelector('[data-err]'); err.textContent = r.error; err.hidden = false;
+      e.target.disabled = false; e.target.textContent = 'Save';
+    };
+  };
+  document.querySelectorAll('[data-editable]').forEach((box) => {
+    box.querySelector('[data-edit]')?.addEventListener('click', async () => {
+      const r = await getFile(box.dataset.editable);
+      openEditor(box, box.dataset.editable, r.content || '');
+    });
+  });
+
+  // What travels: click a file to read it in place, the way a model hub does.
+  document.querySelectorAll('[data-view]').forEach((row) => {
+    const toggle = async () => {
+      const open = row.nextElementSibling?.classList.contains('hubw-viewer');
+      document.querySelectorAll('.hubw-viewer').forEach((v) => v.remove());
+      document.querySelectorAll('[data-view]').forEach((r) => r.setAttribute('aria-expanded', 'false'));
+      if (open) return;
+      const r = await getFile(row.dataset.view);
+      const viewer = document.createElement('div');
+      viewer.className = 'hubw-viewer';
+      viewer.innerHTML = `<div class="hubw-viewer-bar"><b>${esc(r.name)}</b>
+          ${r.editable ? '<button type="button" class="hubw-edit" data-viewer-edit>✎ Edit</button>' : '<span class="hub-dim">read only</span>'}</div>
+        <pre>${esc(r.content || '(empty)')}</pre>`;
+      row.after(viewer);
+      row.setAttribute('aria-expanded', 'true');
+      viewer.querySelector('[data-viewer-edit]')?.addEventListener('click', () => openEditor(viewer, r.name, r.content || ''));
+    };
+    row.addEventListener('click', toggle);
+    row.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
+  });
+
+  document.querySelectorAll('[data-copy]').forEach((b) => b.addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(b.dataset.copy); const s = b.querySelector('span'); s.textContent = 'Copied'; setTimeout(() => { s.textContent = 'Copy'; }, 1400); } catch (_) {}
+  }));
+
+
+  const rm = document.querySelector('[data-remove]');
+  if (rm) {
+  document.querySelector('[data-remove-open]').addEventListener('click', () => rm.showModal());
+  rm.querySelector('[data-remove-cancel]').addEventListener('click', () => rm.close());
+  rm.addEventListener('click', (e) => { if (e.target === rm) rm.close(); });
+  rm.querySelectorAll('[data-remove-go]').forEach((b) => b.addEventListener('click', async () => {
+    const del = b.dataset.removeGo === 'delete';
+    rm.querySelectorAll('button').forEach((x) => { x.disabled = true; });
+    b.textContent = del ? 'Deleting…' : 'Archiving…';
+    const fail = (msg) => {
+      const err = rm.querySelector('[data-remove-err]'); err.textContent = msg; err.hidden = false;
+      rm.querySelectorAll('button').forEach((x) => { x.disabled = false; });
+      b.textContent = del ? 'Delete for good' : 'Archive';
+    };
+    let res = await fetch(`/wolts/${encodeURIComponent(wolt)}/archive`, { method: 'POST' });
+    if (!res.ok) return fail(((await res.json().catch(() => ({}))).error) || 'Could not remove it.');
+    if (del) {
+      res = await fetch(`/wolts/archived/${encodeURIComponent(wolt)}`, { method: 'DELETE' });
+      if (!res.ok) return fail(((await res.json().catch(() => ({}))).error) || 'Archived it, but could not delete it.');
+    }
+    location.href = '/hub';
+  }));
+  }
+
+  const un = document.querySelector('[data-unpublish]');
+  if (un) {
+    document.querySelector('[data-unpublish-open]').addEventListener('click', () => un.showModal());
+    un.querySelector('[data-unpublish-cancel]').addEventListener('click', () => un.close());
+    un.addEventListener('click', (e) => { if (e.target === un) un.close(); });
+    un.querySelector('[data-unpublish-go]').addEventListener('click', async (e) => {
+      e.target.disabled = true; e.target.textContent = 'Unpublishing…';
+      const r = await (await fetch(`/hub/${wolt}/unpublish`, { method: 'POST' })).json().catch(() => ({ ok: false, error: 'Something went wrong.' }));
+      if (r.ok && r.how === 'deleted') { location.reload(); return; }
+      if (r.ok) {
+        un.innerHTML = `<h2>${esc(wolt)} is off the Hub.</h2>
+          <p class="hubp-dialog-sub">It's hidden now, so nobody new can get ${esc(wolt)}.</p>
+          <p class="hubp-note">A hidden copy is still stored. To erase it completely, <a href="${esc(r.url)}/settings" target="_blank" rel="noopener">delete it here</a>.</p>
+          <div class="hubp-dialog-actions"><button type="button" class="hubp-btn" onclick="location.reload()" autofocus>Done</button></div>`;
+        return;
+      }
+      const err = un.querySelector('[data-unpublish-err]'); err.textContent = r.error; err.hidden = false;
+      e.target.disabled = false; e.target.textContent = 'Unpublish';
+    });
+  }
+
+  // Everything below is the publish dialog, which only wolts you can publish have.
+  const dlg = document.querySelector('[data-publish]');
+  if (!dlg) return;
+  const step = (name) => dlg.querySelectorAll('[data-step]').forEach((s) => { s.hidden = s.dataset.step !== name; });
+  const go = dlg.querySelector('[data-publish-go]');
+  document.querySelector('[data-publish-open]').addEventListener('click', async () => {
+    step('review'); go.disabled = true; dlg.showModal();
+    const r = await (await fetch(`/hub/${wolt}/publish`)).json();
+    const block = (title, text) => text.trim() ? `<h4>${title}</h4><pre>${esc(text.trim())}</pre>` : '';
+    dlg.querySelector('[data-preview]').innerHTML = r.ok
+      ? block('Who it is', r.identity) + block('Its rules', r.rules) + block('What it learned', r.learnings)
+      : `<p class="hubp-warn">${esc(r.error)}</p>`;
+    login = r.github || '';
+    dlg.querySelector('[data-who]').disabled = !(r.ok && r.github);
+    if (!r.github) dlg.querySelector('[data-gh]').innerHTML = `Sign in once first: run <code>gh auth login</code> in a terminal, then try again.`;
+    sync();
+  });
+  let login = '';
+  const choice = () => {
+    const audience = dlg.querySelector('input[name=audience]:checked').value;
+    const people = dlg.querySelector('[data-people]').value.split(/[\s,]+/).map((p) => p.replace(/^@/, '')).filter(Boolean);
+    return { audience, people };
+  };
+  const sync = () => {
+    const c = choice();
+    go.textContent = c.audience === 'everyone' ? 'Publish to everyone' : 'Share privately';
+    go.disabled = !login || (c.audience === 'people' && !c.people.length);
+    if (login) dlg.querySelector('[data-gh]').innerHTML = `It'll be on the Hub as <b>${esc(login)}/${esc(wolt)}</b>${c.audience === 'everyone' ? '' : ', private'}.`;
+  };
+  dlg.querySelector('[data-who]').addEventListener('input', sync);
+  dlg.querySelector('[data-people]').addEventListener('focus', () => { dlg.querySelector('input[value=people]').checked = true; sync(); });
+  dlg.querySelector('[data-close]').addEventListener('click', () => dlg.close());
+  dlg.addEventListener('click', (e) => { if (e.target === dlg) dlg.close(); });
+  dlg.querySelector('[data-close-reload]').addEventListener('click', () => location.reload());
+  go.addEventListener('click', async () => {
+    step('busy');
+    const c = choice();
+    const r = await (await fetch(`/hub/${wolt}/publish`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(c) })).json().catch(() => ({ ok: false, error: 'Something went wrong.' }));
+    if (!r.ok) { step('review'); dlg.querySelector('[data-gh]').innerHTML = `<span class="hubp-warn">${esc(r.error)}</span>`; return; }
+    const pub = r.audience === 'everyone';
+    const who = (r.people || []).map((p) => '@' + p).join(', ');
+    dlg.querySelector('[data-done-eyebrow]').textContent = pub ? 'Published' : 'Shared privately';
+    dlg.querySelector('[data-done-title]').textContent = pub ? `${wolt} is on the Hub.` : `${wolt} is ready for ${who}.`;
+    dlg.querySelector('[data-done-sub]').textContent = pub
+      ? 'This is what people see when they browse:'
+      : 'Send them its name below. They get an invite email first; once they accept, this is what they get:';
+    dlg.querySelector('[data-done-owner]').textContent = `by ${r.owner}`;
+    dlg.querySelector('[data-done-link]').value = r.handle || `${r.owner}/${wolt}`;
+    dlg.querySelector('[data-done-copy]').onclick = async (e) => {
+      try { await navigator.clipboard.writeText(r.handle || `${r.owner}/${wolt}`); e.target.textContent = 'Copied'; } catch (_) {}
+    };
+    step('done');
+    dlg.querySelector('[data-close-reload]').focus();
+  });
+})();
+</script>
+{% endblock %}

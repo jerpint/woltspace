@@ -1,0 +1,32 @@
+{
+  "_comment": "The hub's shelf. Today it ships with the lodge; later it can be fetched from a shared hub repository where listing a wolt is one pull request. Entries marked example are placeholders until real seeds are published.",
+  "crafts": [
+    {"id": "marketing", "label": "Marketing", "emoji": "📣", "tint": "#F2D9DC"},
+    {"id": "writing",   "label": "Writing",   "emoji": "✍️", "tint": "#E9E1F0"},
+    {"id": "code",      "label": "Code",      "emoji": "💻", "tint": "#D6E1EC"},
+    {"id": "money",     "label": "Money",     "emoji": "💸", "tint": "#C8DECE"},
+    {"id": "design",    "label": "Design",    "emoji": "🎨", "tint": "#F2E4C0"},
+    {"id": "life",      "label": "Life",      "emoji": "🌱", "tint": "#E3EEE5"},
+    {"id": "learning",  "label": "Learning",  "emoji": "📚", "tint": "#F0D5C8"},
+    {"id": "lodge",     "label": "Lodge life","emoji": "🏕️", "tint": "#E6DFD2"}
+  ],
+  "wolts": [
+    {"owner": "rio", "name": "posty", "type": "raccoon", "craft": "marketing", "example": true, "featured": true,
+     "tagline": "Social posts that sound like a person, not a brand.", "learnings": 52},
+    {"owner": "jerpint", "name": "onboardie", "type": "beaver", "craft": "lodge", "featured": true,
+     "tagline": "Shows newcomers around and helps them make their first wolts.",
+     "source": "https://github.com/jerpint/woltspace-starter-lodge.git", "learnings": 0},
+    {"owner": "sam", "name": "scribe", "type": "raccoon", "craft": "writing", "example": true,
+     "tagline": "Outlines, drafts, then cuts 30%. A year of newsletter edits.", "learnings": 132},
+    {"owner": "mika", "name": "ledgerly", "type": "beaver", "craft": "money", "example": true,
+     "tagline": "Reconciles receipts, drafts invoices, knows tax deadlines.", "learnings": 88},
+    {"owner": "devon", "name": "shippy", "type": "beaver", "craft": "code", "example": true,
+     "tagline": "Release captain: changelogs, version bumps, the boring CI bits.", "learnings": 57},
+    {"owner": "ana", "name": "pitchy", "type": "otter", "craft": "writing", "example": true,
+     "tagline": "Fundraising decks that survive a two-minute skim.", "learnings": 34},
+    {"owner": "lee", "name": "gardenia", "type": "beaver", "craft": "life", "example": true,
+     "tagline": "Planting calendar, frost alerts, and what died last year.", "learnings": 22},
+    {"owner": "noor", "name": "swatch", "type": "otter", "craft": "design", "example": true,
+     "tagline": "Turns a mood board into a palette and type scale you can ship.", "learnings": 41}
+  ]
+}
