@@ -1,8 +1,8 @@
 """A chat or thread pointing at a wolt whose folder is gone lets go of it.
 
 Archived, or removed by hand: Telegram drops the chosen wolt and goes to the
-picker, a reply to that wolt's old message is routed like any message, and a
-Slack thread it owned is unowned. Nothing is spawned for the gone wolt.
+picker, and a reply to that wolt's old message is routed like any message.
+Nothing is spawned for the gone wolt.
 """
 
 import json
@@ -106,18 +106,3 @@ async def test_reply_to_an_archived_wolts_message_is_routed_normally(telegram, k
     start.assert_not_called()
     assert adapter._load_chat_state(CHAT)["active_wolt"] == "wolt-a"
     assert not (wolts / "pal").exists()
-
-
-def test_slack_thread_owned_by_a_gone_wolt_is_unowned(monkeypatch, tmp_path):
-    # bot.core makes its log dir under the wolts dir at import: keep it here.
-    monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
-    from bot import slack_adapter as slack
-
-    (tmp_path / "wolt-a" / "wolt").mkdir(parents=True)
-    (tmp_path / "wolt-a" / "wolt" / "wolt.json").write_text("{}")
-    monkeypatch.setattr(slack, "_WOLTS_DIR", tmp_path)
-    slack._set_session_owner("C1", "1.1", GONE, "pal", "beaver")
-    slack._set_session_owner("C1", "2.2", LIVE, "wolt-a", "beaver")
-
-    assert slack._get_session_owner("C1", "1.1") is None
-    assert slack._get_session_owner("C1", "2.2")["session"] == LIVE

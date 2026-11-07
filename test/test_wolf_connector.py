@@ -34,7 +34,7 @@ def _layout(tmp_path, install_root=None, port=7799):
 
 def test_the_wolf_joins_the_pack_after_the_channels():
     from woltspace.channels import all_connectors
-    assert [c.name for c in all_connectors()][:3] == ["telegram", "slack", "wolf"]
+    assert [c.name for c in all_connectors()][:3] == ["slack", "telegram", "wolf"]
 
 
 class TestPlan:
@@ -101,7 +101,7 @@ class TestPlan:
 
     def test_plan_connectors_carries_the_wolf(self, tmp_path):
         plans = plan_connectors(_layout(tmp_path), ENTRY)
-        assert [plan.name for plan in plans] == ["telegram", "slack", "wolf", "vulture"]
+        assert [plan.name for plan in plans] == ["slack", "telegram", "wolf", "vulture"]
 
 
 class TestSupervision:

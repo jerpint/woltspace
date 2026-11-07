@@ -940,7 +940,7 @@ def test_a_true_duplicate_admission_keeps_the_route_and_accounting_it_was_accept
     assert wake_state(lodge) == answered and notices.lines == [("started", [status.seq], kw["name"], telegram)]
 
 
-@pytest.mark.parametrize("adapter, chat", [("telegram", "4242"), ("slack", "D1:1712345678.000100")])
+@pytest.mark.parametrize("adapter, chat", [("telegram", "4242"), ("slack", "D0000000001")])
 def test_a_session_the_wake_starts_for_owner_mail_is_routed_to_its_chat_as_chat_lodge_did(lodge, monkeypatch,
                                                                                            adapter, chat):
     monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(lodge.root))
