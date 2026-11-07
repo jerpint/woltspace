@@ -192,14 +192,20 @@ class ChatLodge:
         sender = str(event["sender"])
         if kind == "command":
             args = list(body.get("args") or [])
-            # /wolt or /new <name> releases a held message, which then makes the switch; else as ever.
-            if body["name"] in ("wolt", "new") and args and self._wolt_exists(args[0]) and \
+            # /wolt <name> releases a held message, which then makes the switch; else as ever.
+            if body["name"] == "wolt" and args and self._wolt_exists(args[0]) and \
                     await self._release_held(route, out, sender, args[0], None):
                 return
+            new = body["name"] == "new" and bool(args)
+            before = self._load_chat_state(self.chat(route)).get("active_session") if new else None
             reply = await commands.run_command(
                 self.ports(route), self.chat(route), body["name"], args, tips=self.help_tips,
             )
             await out.say(reply)
+            # /new <name> starts its session first; a held message then goes into that one (or stays held).
+            started = self._load_chat_state(self.chat(route)).get("active_session") if new else None
+            if new and started and started != before:
+                await self._release_held(route, out, sender, args[0], None, session=started)
         elif kind == "selection":
             outcome = await commands.run_selection(self.ports(route), self.chat(route), body["action"])
             await out.ack(outcome.ack or Ack())
@@ -480,7 +486,7 @@ class ChatLodge:
             if queue else None,
             hold=(lambda text: self._hold(route, out, sender, event_id, text))
             if event_id and sender else None,
-            waiting=lambda: self._waiting(route),
+            waiting=lambda: self._waiting(route, out),
             log=lambda event, data: _bot_log(f"{self.name}_{event}", data),
             log_error=lambda message: logger.error(message),
         )
@@ -583,13 +589,23 @@ class ChatLodge:
             await out.say(Reply(EXPIRED_TEXT))
         return held_messages.generation(event_id)
 
-    async def _waiting(self, route: dict) -> bool:
-        def read():  # a read: no lodge.db yet holds nothing
+    async def _waiting(self, route: dict, out) -> bool:
+        """Whether a held message waits here; one that expired unseen is told now, once."""
+        chat, now = self.chat(route), time.time()
+
+        def check():  # a read, and a write only for an expired one: no lodge.db yet holds nothing
             if not lodge_db.path(self.wolts_dir).exists():
-                return False
+                return None
             with closing(lodge_db.connect(self.wolts_dir, readonly=True)) as conn:
-                return held_messages.waiting(conn, self.name, self.chat(route), time.time())
-        return await asyncio.to_thread(read)
+                state = held_messages.waiting(conn, self.name, chat, now)
+            if state == held_messages.EXPIRED:
+                with lodge_db.write(self.wolts_dir) as conn:
+                    state = state if held_messages.expire(conn, self.name, chat, now) else None
+            return state
+        state = await asyncio.to_thread(check)
+        if state == held_messages.EXPIRED:
+            await out.say(Reply(EXPIRED_TEXT))
+        return state == "waiting"
 
     def _portable(self, text: str) -> str:
         """A held text naming the uploads dir as "%U" ("%" itself as "%25"), so a restored copy
@@ -599,12 +615,15 @@ class ChatLodge:
     def _local(self, text: str) -> str:
         return re.sub("%(25|U)", lambda m: "%" if m[1] == "25" else str(self.uploads_dir), text)
 
-    async def _release_held(self, route: dict, out, sender: str, wolt: str, generation: str | None) -> bool:
+    async def _release_held(self, route: dict, out, sender: str, wolt: str, generation: str | None,
+                            session: str | None = None) -> bool:
         """The one way a held message leaves, after a click on its picker or /wolt <name>: to
         `wolt`, whatever the chat chooses meanwhile, never to the dog. Inbox on: taking it and
         queueing it commit together, and a refusal leaves it held. Inbox off: taken, then one
         attempt (lost if the lodge stops in between). True when there was a held message to
-        take: the delivery switched the chat, or a refusal kept it as it was."""
+        take: the delivery switched the chat, or a refusal kept it as it was. `session` (from
+        /new): the session it goes to, the one just started. A click whose message is gone still
+        switches the chat to the wolt picked."""
         chat, now = self.chat(route), time.time()
         if inbox.enabled(self.wolts_dir):
             store, status = inbox.Store(self.wolts_dir, inbox.LIMITS), None
@@ -615,7 +634,7 @@ class ChatLodge:
                     if not isinstance(held, held_messages.Held):
                         return held, None
                     key = f"{self.name}:{held.event_id}"
-                    body, where = self._inbox_body(chat, key, wolt, self._local(held.text), None)
+                    body, where = self._inbox_body(chat, key, wolt, self._local(held.text), session)
                     return held, store.admit_within(conn, f"connector:{self.name}", key, wolt, body,
                                                     human=True, route=where)
             try:
@@ -634,14 +653,17 @@ class ChatLodge:
                     return held_messages.claim(conn, self.name, chat, sender, generation, now)
             held = await asyncio.to_thread(take)
             if isinstance(held, held_messages.Held):
-                if not await messages.route_message(self._message_ports(route, out), chat,
-                                                    self._local(held.text), target=wolt):
+                ports, text = self._message_ports(route, out), self._local(held.text)
+                if not (await messages.deliver(ports, session, wolt, text) if session
+                        else await messages.route_message(ports, chat, text, target=wolt)):
                     await out.say(Reply("🪵 your held message was not delivered: send it again."))
                 return True
         if held == held_messages.EXPIRED:
             await out.say(Reply(EXPIRED_TEXT + " send it again."))
-        elif held is None and generation is not None:
-            await out.say(Reply("🪵 nothing is waiting for that choice any more: it was delivered or it expired."))
+        if generation is not None:  # its picker, tapped after its message went: still a choice of wolt
+            commands.set_active_wolt(self.ports(route), chat, wolt)
+            gone = "" if held == held_messages.EXPIRED else " your held message had already gone."
+            await out.say(Reply(f"🪵 now talking to {self._shown(wolt)}.{gone}"))
         return False
 
     # --- the dog ------------------------------------------------------------------------

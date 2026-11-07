@@ -45,10 +45,18 @@ def hold(conn, connector: str, chat, sender: str, event_id: str, text: str, now:
     return EXPIRED if live else "held"
 
 
-def waiting(conn, connector: str, chat, now: float) -> bool:
-    """Whether a message is held in this chat, so another may not overtake it."""
-    return conn.execute("SELECT 1 FROM pending_messages WHERE id=? AND state='pending' AND expires_at>?",
-                        (f"{connector}:{chat}", now)).fetchone() is not None
+def waiting(conn, connector: str, chat, now: float) -> str | None:
+    """"waiting" while a message is held in this chat (another may not overtake it), EXPIRED
+    when one waited too long and nobody was told yet, else None."""
+    row = conn.execute("SELECT expires_at FROM pending_messages WHERE id=? AND state='pending'",
+                       (f"{connector}:{chat}",)).fetchone()
+    return None if row is None else "waiting" if row["expires_at"] > now else EXPIRED
+
+
+def expire(conn, connector: str, chat, now: float) -> bool:
+    """Close a held message that waited too long; True when this call closed it (tell once)."""
+    return conn.execute("UPDATE pending_messages SET state='expired', text=NULL WHERE id=? AND state='pending'"
+                        " AND expires_at<=?", (f"{connector}:{chat}", now)).rowcount > 0
 
 
 def claim(conn, connector: str, chat, sender: str, gen: str | None, now: float):

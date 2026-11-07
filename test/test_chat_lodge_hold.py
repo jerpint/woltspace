@@ -149,7 +149,7 @@ def test_a_pick_after_ten_minutes_says_it_expired_and_delivers_nothing(side):
     with lodge_db.write(side.root) as conn:
         conn.execute("UPDATE pending_messages SET expires_at = expires_at - ?", (held_messages.TTL_SECONDS,))
     out = click(side)
-    assert "waited over 10 minutes" in out.texts[-1]
+    assert any("waited over 10 minutes" in text for text in out.texts)
     assert queued_to(side) == []
     assert rows(side.root, "SELECT state, text FROM pending_messages") == [("expired", None)]
 

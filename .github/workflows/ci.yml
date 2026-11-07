@@ -72,6 +72,7 @@ jobs:
           test/test_chat_lodge_hold.py
           test/test_held_message_negative.py
           test/test_review_hold_regressions.py
+          test/test_review_hold_round2.py
           test/test_inbox_notice.py
           test/test_restore_guard.py
           test/test_restore_guard_independent.py
