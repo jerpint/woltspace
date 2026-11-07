@@ -561,6 +561,7 @@ class ChatLodge:
             # A connector sends files from the outbox only: the image is staged there (swept with the rest).
             try:
                 box = space_outbox_dir(self.wolts_dir)
+                await asyncio.to_thread(outbox.sweep, box)  # this path's own clean-up, as notify's
                 entry = await asyncio.to_thread(outbox.stage, Path(result["path"]), box)
             except (outbox.OutboxError, OSError) as e:
                 logger.error(f"{self.name}: image not staged: {e}")

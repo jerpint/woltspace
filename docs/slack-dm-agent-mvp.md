@@ -10,8 +10,8 @@ Telegram does.
 ## What the owner sees
 
 - **One flat DM.** Messages go to the chat's active wolt (`/wolt` switches,
-  `/new` starts fresh). With no wolt chosen and no dog, the picker; the first
-  message is held and goes to the wolt picked.
+  `/new` starts fresh). With no wolt chosen and no dog, the picker: pick a
+  wolt, then send the message again.
 - **Commands.** `/wolt /new /sessions /holds /idle /wapps /kill /help` as Slack
   slash commands at the top level of the DM. Slack runs no custom slash command
   inside a thread, so every command can also be typed with `!` anywhere
