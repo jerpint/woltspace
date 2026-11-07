@@ -63,5 +63,5 @@ history; a reply in an old thread routes like any message.
 
 ## Release
 
-A 0.6 change: thread-per-session routing and Agent View are replaced. The app
+A 0.7 change: thread-per-session routing and Agent View are replaced. The app
 needs its new manifest and one reinstall.

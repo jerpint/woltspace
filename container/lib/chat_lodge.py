@@ -39,7 +39,7 @@ from creature_types import emoji_from
 from env_compat import get_env
 from harnesses import platform_skill_invoke
 from notify_prompt import notify_reply_instruction
-from paths import space_dir
+from paths import space_dir, space_outbox_dir
 from sessions import resolve_active_session, wolt_harness
 from skills_sync import wolt_skills_delivery
 from wolts import get_active_creature, wolt_display_name, wolt_exists
@@ -558,7 +558,15 @@ class ChatLodge:
                 pass
         if result["type"] == "image":
             caption = result.get("text") or result.get("caption") or ""
-            await out.say(Reply(caption), photo=result["path"])
+            # A connector sends files from the outbox only: the image is staged there (swept with the rest).
+            try:
+                box = space_outbox_dir(self.wolts_dir)
+                entry = await asyncio.to_thread(outbox.stage, Path(result["path"]), box)
+            except (outbox.OutboxError, OSError) as e:
+                logger.error(f"{self.name}: image not staged: {e}")
+                await out.say(Reply(caption or "the image could not be sent"))
+                return
+            await out.say(Reply(caption), photo=str(box / entry))
         else:
             await out.say(Reply(self.format_response(result)))
 

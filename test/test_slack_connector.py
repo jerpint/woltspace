@@ -248,3 +248,27 @@ def test_slash_wapps_runs_the_lodge_s_apps_command(slack):
     run(slack.on_command(ack, {"command": "/wapps", "text": "", "user_id": OWNER, "channel_id": DM,
                                "trigger_id": "t3"}))
     assert [(e["kind"], e["body"]["name"]) for e in slack.events] == [("command", "apps")]
+
+
+@pytest.mark.parametrize("typed, read", [("a &lt; b &amp; c", "a < b & c"), ("<https://x.invalid|x>", "https://x.invalid"),
+                                         ("<@U0000000002> hi", "@U0000000002 hi")])
+def test_the_owner_s_text_reaches_the_wolt_as_typed_not_as_slack_stores_it(slack, typed, read):
+    run(slack.on_message(*dm(typed)))
+    assert slack.pasted[-1][1].split("\n")[0].endswith(f"]: {read}")
+
+
+def test_a_dog_image_is_staged_in_the_outbox_and_only_an_outbox_file_is_sent(slack, tmp_path, monkeypatch):
+    from test.connector_loopback import _Out
+
+    monkeypatch.setenv("WOLTSPACE_CONNECTOR_OUTBOX", str(tmp_path / ".space" / "outbox"))
+    image = tmp_path / "alpha" / "wolt" / "images" / "dog.png"
+    image.parent.mkdir(parents=True)
+    image.write_bytes(b"PNG")
+    out = _Out(slack, {"id": "e1", "route": {"chat_id": DM}})
+    run(slack.side._send_result(out, {"type": "image", "text": "a dog", "path": str(image)}))
+    [(channel, staged, name, comment)] = slack.api.uploads
+    assert (channel, name, comment) == (DM, "image.png", "a dog")
+    assert (tmp_path / ".space" / "outbox" / staged).read_bytes() == b"PNG"
+    with pytest.raises(PermissionError, match="not a staged file"):
+        run(slack.on_say({"route": {"chat_id": DM}, "reply": {"text": "x"}, "photo": str(image)}))
+    assert len(slack.api.uploads) == 1

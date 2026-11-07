@@ -200,7 +200,8 @@ async def handle_message(event: dict, body: dict) -> None:
     event_id = accept(event, body)
     if event_id is None:
         return
-    channel, text = event["channel"], event.get("text") or ""
+    # The owner's text as typed: Slack's stored mrkdwn (escapes, <links>, <@mentions>) unwrapped.
+    channel, text = event["channel"], plain(event.get("text") or "")
     reply_to = await _reply_to(event)
     command = parse_command(text, COMMANDS, PREFIX) if not event.get("files") else None
     if command is not None:
@@ -293,8 +294,8 @@ def render(reply: Reply) -> tuple[str, list | None]:
 async def on_say(frame: dict) -> None:
     reply = wire.reply_from_wire(frame["reply"])
     channel = frame["route"]["chat_id"]
-    if frame.get("photo"):
-        await API.upload(channel, frame["photo"], Path(frame["photo"]).name, reply.text)
+    if frame.get("photo"):  # staged by the lodge, so sent from the outbox like any file
+        await API.upload(channel, str(_outbox_file(frame["photo"])), "image.png", reply.text)
         return
     await API.post(channel, *render(reply))
 
