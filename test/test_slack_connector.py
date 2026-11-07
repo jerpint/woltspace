@@ -226,3 +226,16 @@ def test_the_bot_token_goes_only_to_slack_s_own_file_host(url):
     sc = importlib.import_module("slack_connector")
     with pytest.raises(ValueError, match="not a Slack file link"):
         run(sc.SlackAPI(None, "xoxb-test").download(url))  # refused before any request
+
+
+def test_the_setup_manifest_registers_only_lodge_commands_slack_allows():
+    """Slack refuses a manifest that registers one of its built-ins; /apps is one.
+
+    /start is Telegram's own greeting, not a Slack command."""
+    import json
+
+    import lodge_commands
+    manifest = json.loads((ROOT / "container/skills/setup-slack/references/manifest.json").read_text())
+    registered = {c["command"].lstrip("/") for c in manifest["features"]["slash_commands"]}
+    assert "apps" not in registered
+    assert registered == set(lodge_commands.COMMAND_NAMES) - {"apps", "start"}

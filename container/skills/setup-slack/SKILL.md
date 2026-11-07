@@ -48,8 +48,8 @@ The intentional surface is:
 
 - bot scopes `chat:write`, `commands`, `files:read`, `files:write` and `im:history`;
 - the bot event `message.im`, the Messages tab, Interactivity and Socket Mode;
-- the slash commands `/wolt`, `/new`, `/sessions`, `/holds`, `/idle`, `/apps`,
-  `/kill` and `/help`.
+- the slash commands `/wolt`, `/new`, `/sessions`, `/holds`, `/idle`, `/kill`
+  and `/help` (`/apps` is a Slack built-in and can't be registered; type `!apps`).
 
 `files:read` lets the connector download what the owner shares; `files:write`
 lets a wolt send a file. An app from before this connector carried Agent View

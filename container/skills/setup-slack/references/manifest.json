@@ -42,11 +42,6 @@
         "should_escape": false
       },
       {
-        "command": "/apps",
-        "description": "list apps",
-        "should_escape": false
-      },
-      {
         "command": "/kill",
         "description": "stop a session",
         "usage_hint": "[name]",

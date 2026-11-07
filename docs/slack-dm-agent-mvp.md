@@ -12,7 +12,7 @@ Telegram does.
 - **One flat DM.** Messages go to the chat's active wolt (`/wolt` switches,
   `/new` starts fresh). With no wolt chosen and no dog, the picker; the first
   message is held and goes to the wolt picked.
-- **Commands.** `/wolt /new /sessions /holds /idle /apps /kill /help` as Slack
+- **Commands.** `/wolt /new /sessions /holds /idle /kill /help` as Slack
   slash commands at the top level of the DM. Slack runs no custom slash command
   inside a thread, so every command can also be typed with `!` anywhere
   (`!wolt alpha`, `!help`); `!!` sends the text as it is. Buttons cover the pickers.
@@ -47,7 +47,8 @@ lodge's own chats.
 
 The Slack app: bot scopes `chat:write`, `commands`, `files:read`, `files:write`,
 `im:history`; app-level token `connections:write`; event `message.im`;
-Interactivity, Socket Mode and the Messages tab on; the eight slash commands.
+Interactivity, Socket Mode and the Messages tab on; seven slash commands
+(`/apps` is a Slack built-in, so it is typed as `!apps`).
 The manifest is `container/skills/setup-slack/references/manifest.json`, and the
 `setup-slack` skill walks an owner through it. Agent View and `assistant:write`
 are no longer used.
