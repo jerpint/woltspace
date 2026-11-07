@@ -539,3 +539,53 @@ def test_seed_and_backup_are_distinct_top_level_commands():
         action for action in seed_parser._actions if getattr(action, "choices", None)
     ).choices
     assert set(seed_verbs) == {"create", "inspect", "install"}
+
+
+def test_learnings_travel_only_when_chosen(tmp_path):
+    source_wolts = tmp_path / "source-wolts"
+    make_wolt(source_wolts)
+    install_root = make_template(tmp_path)
+
+    plain = tmp_path / "plain"
+    create_seed(wolts_dir=source_wolts, output=plain, name="plain", wolt_names=["raccoon"])
+    assert not (plain / "wolts/raccoon/learnings.md").exists()
+    assert "learnings" not in json.loads((plain / "seed.json").read_text())["wolts"][0]
+
+    taught = tmp_path / "taught"
+    create_seed(
+        wolts_dir=source_wolts, output=taught, name="taught",
+        wolt_names=["raccoon"], learnings=["raccoon"],
+    )
+    assert json.loads((taught / "seed.json").read_text())["wolts"][0]["learnings"] is True
+    assert (taught / "wolts/raccoon/learnings.md").read_text() == "private lived lesson\n"
+    assert not (taught / "wolts/raccoon/context.md").exists()
+
+    target = tmp_path / "new-lodge"
+    install_seed(source=taught, wolts_dir=target, install_root=install_root)
+    memory = target / "raccoon/wolt/memory"
+    assert memory.joinpath("learnings.md").read_text() == "private lived lesson\n"
+    assert "private current work" not in memory.joinpath("context.md").read_text()
+
+
+def test_learnings_must_match_the_manifest_and_pass_the_scans(tmp_path):
+    source_wolts = tmp_path / "source-wolts"
+    wolt = make_wolt(source_wolts)
+
+    with pytest.raises(SeedError, match="unselected wolt"):
+        create_seed(
+            wolts_dir=source_wolts, output=tmp_path / "x", name="x",
+            wolt_names=["raccoon"], learnings=["someone-else"],
+        )
+
+    package = tmp_path / "package"
+    create_seed(wolts_dir=source_wolts, output=package, name="pkg", wolt_names=["raccoon"])
+    (package / "wolts/raccoon/learnings.md").write_text("smuggled\n")
+    with pytest.raises(SeedError, match="learnings manifest"):
+        inspect_seed(package)
+
+    (wolt / "wolt/memory/learnings.md").write_text("render from /Users/someone/Desktop/x\n")
+    with pytest.raises(SeedError, match="home path"):
+        create_seed(
+            wolts_dir=source_wolts, output=tmp_path / "leaky", name="leaky",
+            wolt_names=["raccoon"], learnings=["raccoon"],
+        )

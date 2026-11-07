@@ -75,8 +75,14 @@ class SeedSummary:
 def create_seed(
     *, wolts_dir: Path, output: Path, name: str, wolt_names: Iterable[str],
     app_names: Iterable[str] = (), skills: Iterable[str] = (),
+    learnings: Iterable[str] = (),
 ) -> SeedSummary:
-    """Create one deterministic, allowlisted colony seed directory."""
+    """Create one deterministic, allowlisted colony seed directory.
+
+    `learnings` names the selected wolts whose learnings.md travels too. It is
+    opt-in per wolt: learnings are what a wolt picked up from its human, so they
+    are the most useful thing to share and the most likely to need a review.
+    """
     wolts_dir = Path(wolts_dir).resolve()
     output = Path(output).expanduser().resolve(strict=False)
     _valid_name(name, "seed")
@@ -87,6 +93,10 @@ def create_seed(
     if output.exists():
         raise SeedError(f"output already exists: {output}")
     skill_map = _parse_skills(skills, selected_wolts)
+    learning_wolts = set(_unique(learnings))
+    unknown = learning_wolts - set(selected_wolts)
+    if unknown:
+        raise SeedError(f"learnings selected for unselected wolt: {sorted(unknown)[0]}")
 
     output.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix=f".{output.name}.partial-", dir=output.parent))
@@ -120,7 +130,14 @@ def create_seed(
                 skill_target = target / "skills" / skill_name
                 _copy_explicit_tree(skill_source, skill_target)
                 exported_skills.append(skill_name)
-            manifest_wolts.append({"name": wolt_name, "skills": exported_skills})
+            entry = {"name": wolt_name, "skills": exported_skills}
+            if wolt_name in learning_wolts:
+                learnings_path = source / "wolt" / "memory" / "learnings.md"
+                if not learnings_path.is_file():
+                    raise SeedError(f"wolt has no learnings to share: {wolt_name}")
+                _copy_seed_text(learnings_path, target / "learnings.md")
+                entry["learnings"] = True
+            manifest_wolts.append(entry)
 
         manifest_apps = []
         for app_name in selected_apps:
@@ -208,6 +225,8 @@ def inspect_seed(root: Path) -> SeedSummary:
         actual_skills = {p.name for p in skills_dir.iterdir()} if skills_dir.is_dir() else set()
         if declared_skills != actual_skills:
             raise SeedError(f"wolt {name} skill manifest does not match files")
+        if bool(entry.get("learnings")) != (base / "learnings.md").is_file():
+            raise SeedError(f"wolt {name} learnings manifest does not match files")
 
     for entry in manifest["apps"]:
         name = entry["name"]
@@ -421,7 +440,10 @@ def _stage_wolt(source: Path, target: Path, name: str, template: Path, provenanc
     memory.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source / "identity.md", memory / "identity.md")
     (memory / "context.md").write_text("# Context\n\nNew independent starter copy.\n", encoding="utf-8")
-    (memory / "learnings.md").write_text("# Learnings\n\n", encoding="utf-8")
+    if (source / "learnings.md").is_file():
+        shutil.copy2(source / "learnings.md", memory / "learnings.md")
+    else:
+        (memory / "learnings.md").write_text("# Learnings\n\n", encoding="utf-8")
     _write_json(target / "wolt" / "wolt.json", config)
     from wolts import is_rodent, scaffold_starter_site
     if is_rodent(config.get("type", "raccoon")):
