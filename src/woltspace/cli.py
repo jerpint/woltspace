@@ -984,6 +984,7 @@ def _seed_create(args) -> int:
             wolt_names=args.wolt,
             app_names=args.app,
             skills=args.skill,
+            learnings=args.learnings,
         )
     except SeedError as exc:
         if args.json:
@@ -1562,6 +1563,10 @@ def build_parser() -> argparse.ArgumentParser:
     seed_create.add_argument(
         "--skill", action="append", default=[], metavar="WOLT:SKILL",
         help="explicit user-owned skill to include (repeatable)",
+    )
+    seed_create.add_argument(
+        "--learnings", action="append", default=[], metavar="WOLT",
+        help="also pack this selected wolt's learnings.md (opt-in; review it first)",
     )
     seed_create.add_argument("--json", action="store_true")
     seed_create.set_defaults(func=_seed_create)
