@@ -15,8 +15,7 @@ for part in ("container", "container/lib", "container/connectors/slack"):
 
 import connector_broker  # noqa: E402
 import connector_client  # noqa: E402
-
-from test.test_slack_connector import DM, LIVE, OWNER, FakeSlack, dm  # noqa: E402
+from test_slack_connector import DM, LIVE, OWNER, FakeSlack, dm  # noqa: E402
 
 
 def test_a_dm_resent_by_slack_is_delivered_once_and_a_click_edits_its_picker(monkeypatch):

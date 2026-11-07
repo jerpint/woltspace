@@ -1,12 +1,12 @@
 """Independent Slack boundary regressions: setup failure and retrieved mrkdwn."""
 
 import pytest
+from test_channel_connectors import write_config
+from test_slack_connector import FOOTER, dm, run
 
-from test.test_channel_connectors import write_config
-from test.test_slack_connector import FOOTER, dm, run
 from woltspace import channels
 
-pytest_plugins = ["test.test_slack_connector", "test.test_channel_connectors"]
+pytest_plugins = ["test_slack_connector", "test_channel_connectors"]
 
 
 @pytest.mark.parametrize("owner", ["", "not-a-member-id"])

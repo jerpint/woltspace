@@ -14,8 +14,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
-from test.connector_loopback import Loopback
+from connector_loopback import Loopback
 
 ROOT = Path(__file__).resolve().parents[1]
 for part in ("container", "container/lib", "container/connectors/slack"):
@@ -259,7 +258,7 @@ def test_the_owner_s_text_reaches_the_wolt_as_typed_not_as_slack_stores_it(slack
 
 
 def test_a_dog_image_is_staged_in_the_outbox_and_only_an_outbox_file_is_sent(slack, tmp_path, monkeypatch):
-    from test.connector_loopback import _Out
+    from connector_loopback import _Out
 
     monkeypatch.setenv("WOLTSPACE_CONNECTOR_OUTBOX", str(tmp_path / ".space" / "outbox"))
     image = tmp_path / "alpha" / "wolt" / "images" / "dog.png"

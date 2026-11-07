@@ -3,9 +3,9 @@
 import os
 from pathlib import Path
 
-from test.test_slack_connector import DM, OWNER, dm, run
+from test_slack_connector import DM, OWNER, dm, run
 
-pytest_plugins = ["test.test_slack_connector"]
+pytest_plugins = ["test_slack_connector"]
 
 
 def test_connector_alone_picks_then_routes_only_the_resent_message(slack):
