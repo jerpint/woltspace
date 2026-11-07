@@ -8,6 +8,7 @@ button clicks, files, Block Kit rendering and notifications out.
 
 import asyncio
 import importlib
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -264,11 +265,15 @@ def test_a_dog_image_is_staged_in_the_outbox_and_only_an_outbox_file_is_sent(sla
     image = tmp_path / "alpha" / "wolt" / "images" / "dog.png"
     image.parent.mkdir(parents=True)
     image.write_bytes(b"PNG")
+    aged = tmp_path / ".space" / "outbox" / "image-0000000000000000"
+    aged.mkdir(parents=True)
+    os.utime(aged, (1, 1))  # an image folder staged long ago
     out = _Out(slack, {"id": "e1", "route": {"chat_id": DM}})
     run(slack.side._send_result(out, {"type": "image", "text": "a dog", "path": str(image)}))
+    assert not aged.exists()
     [(channel, staged, name, comment)] = slack.api.uploads
-    assert (channel, name, comment) == (DM, "image.png", "a dog")
-    assert (tmp_path / ".space" / "outbox" / staged).read_bytes() == b"PNG"
+    assert (channel, staged, name, comment) == (DM, "dog.png", "dog.png", "a dog")  # its own name
+    assert [p.read_bytes() for p in (tmp_path / ".space" / "outbox").glob("image-*/dog.png")] == [b"PNG"]
     with pytest.raises(PermissionError, match="not a staged file"):
         run(slack.on_say({"route": {"chat_id": DM}, "reply": {"text": "x"}, "photo": str(image)}))
     assert len(slack.api.uploads) == 1

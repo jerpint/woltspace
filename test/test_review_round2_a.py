@@ -36,7 +36,7 @@ def test_dog_image_path_sweeps_aged_staged_images_without_needing_notify(slack, 
 
     class Out:
         async def say(self, reply, photo=None):
-            assert photo and Path(photo).parent == box
+            assert photo and Path(photo).parent.parent == box  # in its own folder, under its own name
             assert Path(photo).read_bytes() == b"dummy image"
             await slack.on_say({"route": {"chat_id": DM},
                                 "reply": {"text": reply.text}, "photo": photo})

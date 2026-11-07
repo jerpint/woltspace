@@ -295,7 +295,8 @@ async def on_say(frame: dict) -> None:
     reply = wire.reply_from_wire(frame["reply"])
     channel = frame["route"]["chat_id"]
     if frame.get("photo"):  # staged by the lodge, so sent from the outbox like any file
-        await API.upload(channel, str(_outbox_file(frame["photo"])), "image.png", reply.text)
+        photo = _outbox_file(frame["photo"])
+        await API.upload(channel, str(photo), photo.name, reply.text)
         return
     await API.post(channel, *render(reply))
 
