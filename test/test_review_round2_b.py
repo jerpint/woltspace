@@ -1,8 +1,8 @@
 """Additional round 2 B edges requested by the planner."""
 
-from test.test_held_message_negative import CHAT, event, mail, pending
+from test_held_message_negative import CHAT, event, mail, pending
 
-pytest_plugins = ["test.test_held_message_negative"]
+pytest_plugins = ["test_held_message_negative"]
 
 
 def test_new_with_inbox_off_delivers_into_exactly_the_new_session(side, monkeypatch):

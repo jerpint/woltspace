@@ -3,11 +3,10 @@
 
 import inbox
 import lodge_db
+from inbox_support import session
+from test_held_message_negative import CHAT, event, mail, pending, pick
 
-from test.inbox_support import session
-from test.test_held_message_negative import CHAT, event, mail, pending, pick
-
-pytest_plugins = ["test.test_held_message_negative"]
+pytest_plugins = ["test_held_message_negative"]
 
 
 def test_next_routed_message_reports_expired_hold_once_even_with_active_wolt(side):

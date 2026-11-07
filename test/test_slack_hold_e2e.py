@@ -1,9 +1,9 @@
 """Slack and the hold together: a first message with no wolt chosen waits for the pick,
 whether the owner taps the picker's button or types !wolt in a thread."""
 
-from test.test_slack_connector import DM, OWNER, dm, run
+from test_slack_connector import DM, OWNER, dm, run
 
-pytest_plugins = ["test.test_slack_connector"]
+pytest_plugins = ["test_slack_connector"]
 
 
 def _held_picker(slack) -> dict:

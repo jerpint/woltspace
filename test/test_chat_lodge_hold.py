@@ -12,8 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
-from test.inbox_support import rows, wolt
+from inbox_support import rows, wolt
 
 ROOT = Path(__file__).resolve().parents[1]
 for part in ("container", "container/lib"):
