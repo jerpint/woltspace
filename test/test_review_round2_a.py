@@ -3,9 +3,9 @@
 import os
 from pathlib import Path
 
-from test.test_slack_connector import DM, OWNER, dm, run
+from test_slack_connector import DM, OWNER, dm, run
 
-pytest_plugins = ["test.test_slack_connector"]
+pytest_plugins = ["test_slack_connector"]
 
 
 def test_with_the_hold_the_pick_delivers_the_first_message(slack):

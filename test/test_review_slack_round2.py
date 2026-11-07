@@ -2,10 +2,9 @@
 
 import pytest
 from connector_contract import Reply
+from test_slack_connector import DM, dm, run
 
-from test.test_slack_connector import DM, dm, run
-
-pytest_plugins = ["test.test_slack_connector"]
+pytest_plugins = ["test_slack_connector"]
 
 
 @pytest.mark.parametrize("encoded, expected", [
