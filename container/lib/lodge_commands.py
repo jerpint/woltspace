@@ -214,7 +214,9 @@ def apps_list(apps: list) -> Reply:
         name = a.get("name", "?")
         emoji = a.get("emoji") or "📦"
         on = bool(a.get("running"))
-        tunnel = a.get("tunnel_url")
+        # A shared app's public link: its domain address first, else its quick tunnel.
+        shared = a.get("shared") if isinstance(a.get("shared"), dict) else {}
+        tunnel = shared.get("domain_url") or shared.get("tunnel_url")
         label = f"{emoji} {name}" if on else f"{emoji} {name} (off)"
         primary = Choice(label, url=tunnel) if on and tunnel else Choice(label, action=f"noop:{name}")
         toggle = Choice("⏹", action=f"astop:{name}") if on else Choice("▶", action=f"astart:{name}")

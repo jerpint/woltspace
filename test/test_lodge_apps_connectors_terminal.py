@@ -2,11 +2,13 @@ import argparse
 import asyncio
 import json
 import runpy
+import subprocess
 import sys
 import time
 from pathlib import Path
 from unittest.mock import Mock
 
+import pytest
 from starlette.testclient import TestClient
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -94,6 +96,14 @@ def test_keeper_update_failure_paths_are_400(monkeypatch):
     assert response.json() == {"error": "keeper must name an existing wolt"}
 
 
+def test_a_stopped_app_is_not_alive_though_nothing_has_reaped_it():
+    proc = subprocess.Popen(["sh", "-c", "exit 0"])
+    deadline = time.monotonic() + 5
+    while apps._is_pid_alive(proc.pid) and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert not apps._is_pid_alive(proc.pid)
+
+
 def test_restart_waits_for_old_pid_and_verifies_new_one(monkeypatch):
     monkeypatch.setattr(apps, "get_app", lambda name: object())
     monkeypatch.setattr(apps, "_read_state", lambda name: {"pid": 7})
@@ -174,6 +184,37 @@ def test_app_cli_twins_only_call_api(capsys):
     assert "restart ok" in capsys.readouterr().out
 
 
+def test_app_list_shows_each_apps_own_port(capsys):
+    client = runpy.run_path(str(ROOT / "container" / "bin" / "woltspace"))
+    calls = []
+    apps_json = [{"name": "notes", "start": "npm start", "running": True, "port": 4321, "configured_port": 4321},
+                 {"name": "blog", "start": "npm start", "running": False, "port": None, "configured_port": 4012},
+                 {"name": "pages", "start": None, "running": False, "port": None, "configured_port": 4002}]
+    client["cmd_app_list"].__globals__["_req"] = lambda method, path, body=None: (calls.append((method, path)) or (200, apps_json))
+    client["cmd_app_list"](argparse.Namespace(json=False))
+    out = capsys.readouterr().out
+    assert calls == [("GET", "/apps")]
+    assert "notes" in out and "on" in out and "127.0.0.1:4321" in out
+    assert "blog" in out and "off" in out and "127.0.0.1:4012" in out
+    assert "static" in out and "127.0.0.1:4002" not in out
+
+
+def test_app_list_fails_on_a_refused_call(capsys):
+    client = runpy.run_path(str(ROOT / "container" / "bin" / "woltspace"))
+    client["cmd_app_list"].__globals__["_req"] = lambda method, path, body=None: (401, {"error": "lodge key required"})
+    with pytest.raises(SystemExit):
+        client["cmd_app_list"](argparse.Namespace(json=False))
+    assert "lodge key required" in capsys.readouterr().err
+
+
+def test_apps_skill_sends_wolts_to_the_apps_own_port():
+    skill = (ROOT / "container" / "skills" / "apps" / "SKILL.md").read_text()
+    assert "woltspace app start my-app" in skill
+    assert "curl -X POST http://localhost:7777/apps/my-app/start" not in skill
+    assert "127.0.0.1:" in skill and "Never go through the lodge's port" in skill
+    assert "these routes need the owner key" not in skill
+
+
 def test_ui_keeps_sharing_read_only_and_guards_terminal_resize():
     app_js = (ROOT / "public" / "static" / "app-page.js").read_text()
     terminal_js = (ROOT / "public" / "static" / "terminal.js").read_text()
@@ -182,3 +223,28 @@ def test_ui_keeps_sharing_read_only_and_guards_terminal_resize():
     assert "offsetWidth<50" in terminal_js
     assert "term.cols>=20&&term.rows>=5" in terminal_js
     assert (ROOT / "public" / "static" / "SymbolsNerdFontMono-Regular.woff2").stat().st_size > 1000
+
+
+def test_app_share_cli_says_plainly_that_the_app_is_public(capsys, monkeypatch):
+    client = runpy.run_path(str(ROOT / "container" / "bin" / "woltspace"))
+    calls = []
+    reply = {"ok": True, "tunnel_url": "https://quiet-otter.trycloudflare.com",
+             "warning": "Anyone with this link can use this app."}
+    client["cmd_app_share"].__globals__["_req"] = lambda method, path, body=None: (calls.append((method, path, body)) or (200, reply))
+    monkeypatch.setenv("WOLTSPACE_WOLT_NAME", "softie")
+    client["cmd_app_share"](argparse.Namespace(name="notes", verb="share", json=False))
+    out = capsys.readouterr().out
+    assert calls == [("POST", "/apps/notes/share", {"said_by": "softie"})]
+    assert "PUBLIC" in out and "quiet-otter" in out and "Anyone with this link" in out
+    assert "woltspace app unshare notes" in out
+    client["cmd_app_share"](argparse.Namespace(name=None, verb="unshare-all", json=False))
+    assert calls[-1][:2] == ("POST", "/apps/unshare-all")
+
+
+def test_app_list_flags_a_public_app(capsys):
+    client = runpy.run_path(str(ROOT / "container" / "bin" / "woltspace"))
+    apps_json = [{"name": "notes", "start": "npm start", "running": True, "port": 4321,
+                  "shared": {"tunnel_url": "https://quiet-otter.trycloudflare.com"}}]
+    client["cmd_app_list"].__globals__["_req"] = lambda method, path, body=None: (200, apps_json)
+    client["cmd_app_list"](argparse.Namespace(json=False))
+    assert "PUBLIC https://quiet-otter.trycloudflare.com" in capsys.readouterr().out

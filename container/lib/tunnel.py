@@ -22,17 +22,20 @@ def start_cloudflared(port: int, host_header: str | None = "localhost") -> dict:
         host_header: value for --http-host-header (None to skip)
 
     Returns:
-        {"url": str, "pid": int, "log_file": str}
+        {"url": str, "pid": int}  (the log it read the address from is gone)
 
     Raises:
         RuntimeError: if tunnel fails to start within 15s
     """
-    log_file = tempfile.mktemp(suffix="-cloudflared.log")
+    # The log holds the tunnel's address, which is the share itself: it's
+    # private from its first byte, and gone once the address has been read
+    # (cloudflared keeps writing to the open file, which nothing else can see).
+    fd, log_file = tempfile.mkstemp(suffix="-cloudflared.log")
     cmd = ["cloudflared", "tunnel", "--url", f"http://localhost:{port}"]
     if host_header:
         cmd += ["--http-host-header", host_header]
 
-    with open(log_file, "w") as lf:
+    with os.fdopen(fd, "w") as lf:
         proc = subprocess.Popen(
             cmd,
             stdout=lf,
@@ -42,19 +45,22 @@ def start_cloudflared(port: int, host_header: str | None = "localhost") -> dict:
 
     # Poll log for tunnel URL (up to 15s)
     url = ""
-    for _ in range(30):
-        time.sleep(0.5)
-        if proc.poll() is not None:
-            raise RuntimeError(f"cloudflared exited with code {proc.returncode}")
-        try:
-            with open(log_file) as f:
-                content = f.read()
-            m = re.search(r"https://[a-zA-Z0-9-]+\.trycloudflare\.com", content)
-            if m:
-                url = m.group(0)
-                break
-        except Exception:
-            pass
+    try:
+        for _ in range(30):
+            time.sleep(0.5)
+            if proc.poll() is not None:
+                raise RuntimeError(f"cloudflared exited with code {proc.returncode}")
+            try:
+                with open(log_file) as f:
+                    content = f.read()
+                m = re.search(r"https://[a-zA-Z0-9-]+\.trycloudflare\.com", content)
+                if m:
+                    url = m.group(0)
+                    break
+            except Exception:
+                pass
+    finally:
+        Path(log_file).unlink(missing_ok=True)
 
     if not url:
         try:
@@ -63,7 +69,7 @@ def start_cloudflared(port: int, host_header: str | None = "localhost") -> dict:
             pass
         raise RuntimeError("cloudflared tunnel failed to start — is cloudflared installed?")
 
-    return {"url": url, "pid": proc.pid, "log_file": log_file}
+    return {"url": url, "pid": proc.pid}
 
 
 CLOUDFLARED_NEEDLE = "cloudflared"
@@ -160,14 +166,14 @@ def start_named_tunnel(token: str, host_header: str | None = None) -> dict:
     Raises:
         RuntimeError: if tunnel fails to start
     """
-    log_file = tempfile.mktemp(suffix="-cloudflared.log")
+    fd, log_file = tempfile.mkstemp(suffix="-cloudflared.log")  # private (0600)
     # The token goes in TUNNEL_TOKEN, never argv: every user on the machine
     # can read any process's command line (ps), but not its environment.
     cmd = ["cloudflared", "tunnel", "run"]
     if host_header:
         cmd += ["--http-host-header", host_header]
 
-    with open(log_file, "w") as lf:
+    with os.fdopen(fd, "w") as lf:
         proc = subprocess.Popen(
             cmd,
             env={**os.environ, "TUNNEL_TOKEN": token},

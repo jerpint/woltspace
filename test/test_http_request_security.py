@@ -113,10 +113,9 @@ def test_configured_tunnel_lodge_and_app_hosts_remain_valid(monkeypatch):
     )
 
     assert lodge.status_code == 200
-    # It passed the request guard and reached the app proxy. The app is simply
-    # not running in this isolated test.
-    assert app.status_code == 503
-    assert "not running" in app.text
+    # An app through the tunnel goes to the Mill only with a valid Access
+    # token for the owner; this one has none.
+    assert app.status_code == 403
 
 
 def test_quick_tunnel_exact_host_remains_valid(monkeypatch):
@@ -241,21 +240,3 @@ def test_lodge_and_localhost_terminal_websockets_still_attach(monkeypatch):
     assert attached == ["main", "main"]
 
 
-def test_app_websocket_router_rewrites_before_fastapi_route_selection(monkeypatch):
-    monkeypatch.setattr(server_app.tunnel_mgr, "_tunnel_hostname", "owner.woltspace.test")
-    monkeypatch.setattr(server_app.tunnel_mgr, "_tunnel_domain", "woltspace.test")
-    seen = []
-
-    async def downstream(scope, _receive, _send):
-        seen.append(scope["path"])
-
-    middleware = server_app.AppWebSocketRoutingMiddleware(downstream)
-    scope = {
-        "type": "websocket",
-        "path": "/tui",
-        "headers": [(b"host", b"notes.woltspace.test")],
-    }
-    import asyncio
-    asyncio.run(middleware(scope, None, None))
-
-    assert seen == ["/__woltspace_app_ws__/tui"]

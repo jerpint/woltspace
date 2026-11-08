@@ -27,7 +27,7 @@ def _layout(tmp_path):
 
 def test_browser_bridge_is_not_a_supervised_node_connector():
     from woltspace.channels import all_connectors
-    assert [connector.name for connector in all_connectors()] == ["telegram", "slack", "wolf", "vulture"]
+    assert [connector.name for connector in all_connectors()] == ["telegram", "slack", "wolf", "vulture", "mill"]
 
 
 def test_doctor_reports_the_embedded_browser_terminal(tmp_path):

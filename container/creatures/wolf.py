@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Optional
 
 from creature_types import emoji_from
+import lodge_auth
 from env_compat import get_env
 import wolfcore
 from wolfcore import CATCH_UP_WINDOW, STAMP_FORMAT, CronError, cron_matches  # noqa: F401
@@ -133,7 +134,8 @@ def send_wolf_notify(message: str, channel: str | None = None):
         result = subprocess.run(
             ["curl", "-s", "-X", "POST", server_url("/notify"),
              "-H", "Content-Type: application/json",
-             "-d", payload],
+             "-d", payload, "-K", "-"],
+            input=lodge_auth.curl_config(),
             capture_output=True, text=True, timeout=10,
         )
         resp = json.loads(result.stdout) if result.stdout else {}
@@ -169,7 +171,8 @@ def dispatch_session(entry: dict) -> Optional[str]:
         result = subprocess.run(
             ["curl", "-s", "-X", "POST", server_url("/sessions/new/lodge"),
              "-H", "Content-Type: application/json",
-             "-d", payload],
+             "-d", payload, "-K", "-"],
+            input=lodge_auth.curl_config(),
             capture_output=True, text=True, timeout=10,
         )
         print(f"[wolf] session response: {result.stdout[:200]}")
