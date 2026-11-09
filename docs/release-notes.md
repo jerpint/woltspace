@@ -1,11 +1,21 @@
-# Woltspace 0.6.0rc2
+# Woltspace 0.6.0rc3
 
-Python **0.6.0rc2** is a release candidate. The TUI stays at
+Python **0.6.0rc3** is a release candidate. The TUI stays at
 **@woltspace/tui 0.5.4**.
 
 A plain `woltspace update` never installs a release candidate: install this
-one by naming it with `--version 0.6.0rc2`. Try it on a lodge you can
+one by naming it with `--version 0.6.0rc3`. Try it on a lodge you can
 restore.
+
+## Since 0.6.0rc2
+
+- **A lodge default of Auto needs no per-wolt grant.** With
+  `"sessions": {"default_execution_policy": "auto"}` in `woltspace.json`,
+  every new session on the host starts in its engine's own Auto mode, new
+  wolts included, and Auto can be picked by name. Setting it is the owner's
+  consent for the whole lodge. Bypass still needs the wolt's grant. Without
+  the setting, a host session with no grant starts in Ask, which for Claude
+  now means manual mode, even where Claude's own default is auto.
 
 ## Since 0.6.0rc1
 
@@ -34,8 +44,11 @@ Everything below describes 0.6 as a whole, compared with 0.5.25.
   own automatic mode, and the old skip-every-check behaviour is named
   "Bypass". The CLI has `--policy`, the TUI a level picker, and
   `woltspace.json` can set a lodge-wide default with
-  `"sessions": {"default_execution_policy": "..."}`. Defaults are unchanged in
-  effect: existing sessions keep running as they did (#652).
+  `"sessions": {"default_execution_policy": "..."}`. Existing sessions keep
+  running as they did. Ask now really asks: a new Claude session on Ask starts
+  in manual mode even if Claude's own default is auto, and on the host that is
+  the default for a wolt without a grant. Set the lodge default to `auto` to
+  keep auto mode (#652).
 - **Conversation history, opt in.** A lodge can keep a bounded archive of the
   inbox mail it admitted and the text `notify` sent, so an agent can read its
   own past conversation as context. It needs the inbox too:
@@ -78,12 +91,12 @@ are sure you are staying on 0.6:
 
 ```sh
 woltspace backup --tag pre-0.6
-woltspace update --version 0.6.0rc2
+woltspace update --version 0.6.0rc3
 ```
 
 Native upgrades stop and restart the control plane while preserving tmux
 sessions. A container lodge rebuilds from the host with
-`woltspace rebuild --version 0.6.0rc2`.
+`woltspace rebuild --version 0.6.0rc3`.
 
 To go back to 0.5.25, stop the lodge, reinstall 0.5.25 and start it from
 the backup. `woltspace restore` unpacks into a new folder and prints the exact

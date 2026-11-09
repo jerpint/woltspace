@@ -249,7 +249,8 @@ def test_an_old_session_file_imported_after_the_migration_resumes_as_bypass(
 
 @pytest.mark.parametrize("isolation,granted,lodge,want", [
     ("host", True, "auto", "auto"),        # the lodge's choice, where the grant allows it
-    ("host", False, "auto", "prompt"),     # no grant, no Auto: the built-in default stays
+    ("host", False, "auto", "auto"),       # a lodge default of Auto is itself the consent
+    ("host", False, "bypass", "prompt"),   # Bypass still needs the wolt's grant
     ("external", False, "auto", "auto"),
     ("host", True, "prompt", "prompt"),    # Ask needs no grant
     ("host", True, None, "bypass"),        # unset: nothing changes
@@ -258,6 +259,23 @@ def test_an_old_session_file_imported_after_the_migration_resumes_as_bypass(
 def test_the_lodge_default_level_applies_only_where_allowed(isolation, granted, lodge, want):
     from execution_policy import default_mode
     assert default_mode(isolation, granted, lodge) == want
+
+
+def test_a_lodge_default_of_auto_needs_no_grant_but_bypass_still_does(tmp_path):
+    """The owner writing "auto" as the lodge default consents for every wolt;
+    Bypass skips every check, so it stays behind the per-wolt grant."""
+    target, wolts = _target(tmp_path)
+    store = AutoGrantStore(wolts)
+    for requested in (None, "auto"):
+        policy, grant = resolve_execution_policy(
+            requested, isolation="host", target=target, grants=store, lodge_default="auto")
+        assert policy == ExecutionPolicy(mode="auto", isolation="host")
+        assert grant is None
+    with pytest.raises(PermissionError, match="not approved"):
+        resolve_execution_policy(
+            "bypass", isolation="host", target=target, grants=store, lodge_default="auto")
+    with pytest.raises(PermissionError, match="not approved"):
+        resolve_execution_policy("auto", isolation="host", target=target, grants=store)
 
 
 def test_the_lodge_default_level_is_read_per_engine(tmp_path, monkeypatch):
