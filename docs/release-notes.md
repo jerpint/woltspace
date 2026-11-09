@@ -1,11 +1,25 @@
-# Woltspace 0.6.0rc1
+# Woltspace 0.6.0rc2
 
-Python **0.6.0rc1** is a release candidate. The TUI stays at
+Python **0.6.0rc2** is a release candidate. The TUI stays at
 **@woltspace/tui 0.5.4**.
 
 A plain `woltspace update` never installs a release candidate: install this
-one by naming it with `--version 0.6.0rc1`. Try it on a lodge you can
+one by naming it with `--version 0.6.0rc2`. Try it on a lodge you can
 restore.
+
+## Since 0.6.0rc1
+
+- **A session can answer the chat its owner is talking to it from.** When
+  the owner routes a Telegram or Slack chat into a session (a reply to one of
+  its messages, say), `notify` to that chat is no longer refused as someone
+  else's (#668).
+- **A Codex session survives a slow start.** If Codex waits at its startup
+  prompt longer than the lodge's discovery windows, the lodge keeps watching
+  until it is ready: queued mail then reaches it, and it can rest and resume.
+  While it is not ready yet, senders get one clear "queued" notice per message
+  (#669).
+
+Everything below describes 0.6 as a whole, compared with 0.5.25.
 
 ## What's new
 
@@ -39,7 +53,7 @@ restore.
 ## Changes to know about
 
 - **This release changes the lodge database in a way 0.5 cannot read.**
-  Starting 0.6.0rc1 rewrites every stored session's permission record (0.5's
+  Starting 0.6 rewrites every stored session's permission record (0.5's
   "auto" becomes "bypass"), and from then on 0.5.x refuses to open the lodge.
   Installing 0.5.25 again does not undo it: going back means restoring the
   backup you took before upgrading.
@@ -64,12 +78,12 @@ are sure you are staying on 0.6:
 
 ```sh
 woltspace backup --tag pre-0.6
-woltspace update --version 0.6.0rc1
+woltspace update --version 0.6.0rc2
 ```
 
 Native upgrades stop and restart the control plane while preserving tmux
 sessions. A container lodge rebuilds from the host with
-`woltspace rebuild --version 0.6.0rc1`.
+`woltspace rebuild --version 0.6.0rc2`.
 
 To go back to 0.5.25, stop the lodge, reinstall 0.5.25 and start it from
 the backup. `woltspace restore` unpacks into a new folder and prints the exact
