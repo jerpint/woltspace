@@ -311,3 +311,31 @@ def test_a_spawn_that_asks_for_nothing_gets_the_lodge_default_level(
     assert implicit["execution_policy"]["mode"] == "auto"
     explicit = sessions.start_session(wolt="testwolt", workdir=repo, execution_policy="bypass")
     assert explicit["execution_policy"]["mode"] == "bypass"
+
+
+def test_a_lodge_default_of_auto_spawns_and_resumes_an_ungranted_wolt_in_auto(
+    tmp_path, monkeypatch, fake_runtime
+):
+    """No grant anywhere: the lodge's Auto reaches the engine on spawn and on
+    resume, the registry records no grant, and Bypass is still refused."""
+    import sessions
+
+    wolts = _host_wolt(tmp_path, monkeypatch)
+    monkeypatch.setenv("WOLTSPACE_ISOLATION", "host")
+    monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(wolts))
+    (wolts / "woltspace.json").write_text(
+        json.dumps({"sessions": {"default_execution_policy": "auto"}}))
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    started = sessions.start_session(wolt="testwolt", workdir=repo)
+    assert started["execution_policy"]["mode"] == "auto"
+    assert started["auto_grant"] is None
+    record = sessions.SessionRegistry().get(started["name"])
+    assert record["execution_policy"]["mode"] == "auto" and record["auto_grant"] is None
+    from harnesses import build_command
+    for mode, extra in (("spawn", {}), ("resume", {"resume_id": "r1"})):
+        command = build_command("claude", mode, execution_policy=record["execution_policy"], **extra)
+        assert "--permission-mode auto" in command
+    with pytest.raises(PermissionError, match="not approved"):
+        sessions.start_session(wolt="testwolt", workdir=repo, execution_policy="bypass")
