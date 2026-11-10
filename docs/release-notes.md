@@ -16,6 +16,11 @@ restore.
   consent for the whole lodge. Bypass still needs the wolt's grant. Without
   the setting, a host session with no grant starts in Ask, which for Claude
   now means manual mode, even where Claude's own default is auto.
+- **Known limitation: Codex Auto and Ask with native inbox hints.** With
+  `"inbox": {"native_hints": true}`, a Codex session runs against its own
+  app-server, which carries only Bypass: Auto and Ask are not passed to it, and
+  a resumed Auto session keeps a flag a remote resume may refuse. Keep native
+  hints off for Codex wolts on Auto or Ask until this is fixed before 0.6.0.
 
 ## Since 0.6.0rc1
 
