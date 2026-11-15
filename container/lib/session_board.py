@@ -59,11 +59,14 @@ def _place(record: dict) -> str:
 
 
 def build(records: list[dict], me: str, now: float) -> dict:
-    """The board `me` reads: its wolt's other live and recent sessions, running first,
-    then most recently active. {"rows": [...], "more": sessions only counted}."""
+    """The board `me` reads: its wolt's other live and recent sessions that have said what
+    they are doing, running first, then most recently active. A live session with no
+    title has nothing to say yet: it is counted (`untitled`), not listed, so a board is
+    never a list of blanks. {"rows": [...], "untitled": n, "more": older or finished}."""
     others = [r for r in records if r.get("name") != me]
-    shown = [r for r in others if r.get("status") in SHOWN
-             and (r.get("status") != "resting" or now - (r.get("last_activity") or 0) <= RECENT)]
+    live = [r for r in others if r.get("status") in SHOWN
+            and (r.get("status") != "resting" or now - (r.get("last_activity") or 0) <= RECENT)]
+    shown = [r for r in live if _flat(r.get("title"), TITLE_MAX)]
     shown.sort(key=lambda r: (r.get("status") != "running", -(r.get("last_activity") or 0)))
     rows = [{
         "name": _flat(r.get("name"), 80),
@@ -74,7 +77,8 @@ def build(records: list[dict], me: str, now: float) -> dict:
         "summary": _flat(r.get("summary"), SUMMARY_MAX),
         "stale": stale(r),
     } for r in shown[:ROWS]]
-    return {"rows": rows, "more": len(others) - len(rows)}
+    return {"rows": rows, "rows_total": len(shown), "untitled": len(live) - len(shown),
+            "more": len(others) - len(live)}
 
 
 def _ago(seconds: float) -> str:
@@ -91,9 +95,13 @@ def render(board: dict, now: float) -> str:
         return ""
     lines = [OPEN]
     for row in board["rows"]:
-        what = (f'"{row["title"]}": {row["summary"]}' if row["title"] else "no title")
         lines.append(f'{row["status"]} · {_ago(now - row["last_activity"])} · {row["place"]} · '
-                     f'{row["name"]} · {what}{" (stale)" if row["stale"] else ""}')
+                     f'{row["name"]} · "{row["title"]}": {row["summary"]}'
+                     f'{" (stale: it has worked a long time since it wrote this)" if row["stale"] else ""}')
+    if len(board["rows"]) < board["rows_total"]:
+        lines.append(f'+ {board["rows_total"] - len(board["rows"])} more with a title')
+    if board["untitled"]:
+        lines.append(f'+ {board["untitled"]} live or recent with no title')
     if board["more"]:
         lines.append(f'+ {board["more"]} older or finished')
     lines.append(CLOSE)

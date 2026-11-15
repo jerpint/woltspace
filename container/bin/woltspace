@@ -432,8 +432,10 @@ def cmd_session_board(args):
     if args.json:
         print(json.dumps(result, indent=2))
         return
-    print(result["text"] or f"no other session of {result['wolt']} is live or recent"
-          + (f" ({result['more']} older or finished)" if result.get("more") else ""))
+    counts = ", ".join(f"{result[key]} {what}" for key, what in (
+        ("untitled", "live or recent with no title"), ("more", "older or finished")) if result.get(key))
+    print(result["text"] or f"no other session of {result['wolt']} has said what it is doing"
+          + (f" ({counts})" if counts else ""))
     own = result["own"]
     if own["stale"]:
         print("your own line " + ("is out of date" if own["title"] else "is missing")

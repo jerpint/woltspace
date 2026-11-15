@@ -388,6 +388,26 @@ class TestDeliverWaitsForInput:
         ]
         assert [text for _pane, text, _settle in runtime.pastes] == ["hello"]
 
+    def test_the_session_board_rides_in_front_and_is_marked_seen_after_the_paste(self, lodge):
+        """Another session of the same wolt has said what it is doing: the next
+        message delivered here says so first, once (session_board.py)."""
+        lodge.reg.create("pal-other", wolt="pal", harness="claude")
+        lodge.reg.describe("pal-other", "Counting logs", "north bank")
+        runtime = lodge.boot(("agent", True))
+
+        first = sessions.deliver_message(NAME, "hello", registry=lodge.reg)
+        marked = len(lodge.events)
+        second = sessions.deliver_message(NAME, "again", registry=lodge.reg)
+
+        assert first["status"] == second["status"] == "delivered"
+        texts = [text for _pane, text, _settle in runtime.pastes]
+        assert texts[0].startswith("[Your other sessions") and texts[0].endswith("\n\nhello")
+        assert 'pal-other · "Counting logs": north bank' in texts[0]
+        assert texts[1] == "again"
+        # claim, paste, then the mark: a paste that never happened marks nothing
+        assert lodge.events[marked - 3:marked] == [("lock",), ("paste", PANE), ("lock",)]
+        assert lodge.events[-2:] == [("lock",), ("paste", PANE)]
+
     def test_raw_at_the_first_look_but_young_waits_out_the_age(self, lodge):
         runtime = lodge.boot(("agent", True), born=-1.0)
 

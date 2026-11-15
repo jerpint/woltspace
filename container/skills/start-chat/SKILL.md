@@ -31,6 +31,8 @@ You were invoked with two arguments: `<mode> <wolt-name>`.
 7. **Describe the session** after the first one or two turns, once its focus is clear:
    `woltspace session describe "Short title" "One-line summary of the work"`.
    Update it when the session's focus materially changes. Keep the title under 80 characters and the summary under 240; describe the work, never credentials or private message content.
+   Your wolt's other sessions read this line to know what you are doing, and you read theirs:
+   `woltspace session board` shows them (a new session also gets the board in its opening message).
 
 Do NOT summarize what you read. Just absorb the context and be ready to work.
 

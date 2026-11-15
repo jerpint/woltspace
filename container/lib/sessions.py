@@ -338,6 +338,13 @@ class SessionRegistry:
                   if visible.setdefault(row["wolt"], self._visible(row["wolt"])))
         return [data for data in loaded if data is not None]
 
+    def stored(self, wolt: str) -> list[dict]:
+        """A wolt's session records as stored: no process calls, so a "running" one may
+        have lost its agent since. For readers that must stay cheap (the session board
+        in front of a delivered message); list() is the accurate one."""
+        with self._reader() as conn:
+            return self._rows(conn, wolt)
+
     def _put(self, conn, data: dict) -> None:
         normalized = normalize_session_target(
             data, wolts_dir=self.wolts_dir, fallback_wolt=data.get("wolt", "")
@@ -1265,6 +1272,34 @@ def resolve_active_session(wolt: str, registry=None) -> str | None:
     return alive[0]["name"]
 
 
+def _with_board(reg: "SessionRegistry", data: dict, body: str) -> tuple[str, dict]:
+    """A message about to be pasted, with the session board in front of it when the board
+    changed since this session last saw it, and one reminder after it when the session's
+    own line is missing or old (session_board.py). Returns the text and the marks to save
+    once it is pasted ({} when nothing was added).
+
+    The board is read from stored records, without process calls: delivery stays as
+    fast as it was. Never raises: the message goes out as it is."""
+    try:
+        import session_board
+        name, wolt, now = data.get("name") or "", data.get("wolt") or "", time.time()
+        if not name or not wolt:
+            return body, {}
+        shown = {}
+        board = session_board.build(reg.stored(wolt), name, now)
+        seen = session_board.signature(board)
+        text = session_board.render(board, now)
+        if text and seen != data.get("board_seen"):
+            body, shown["board_seen"] = f"{text}\n\n{body}", seen
+        reminder = session_board.nudge(data, now)
+        if reminder:
+            body, shown["board_nudged"] = f"{body}\n\n{reminder[0]}", reminder[1]
+        return body, shown
+    except Exception as exc:
+        print(f"[sessions] no session board for {data.get('name')}: {exc}", file=sys.stderr)
+        return body, {}
+
+
 def deliver_message(session_id: str, text: str, from_wolt: str = "",
                     from_session: str = "", registry=None) -> dict:
     """Deliver a message into a running session, with optional attribution.
@@ -1343,8 +1378,16 @@ def deliver_message(session_id: str, text: str, from_wolt: str = "",
         return {"status": "session-dead", "session": session_id}
     settle = get_harness(harness).get("paste_settle", 0.0)
     body = format_attributed_message(text, from_wolt, from_session)
+    body, shown = _with_board(reg, data, body)
     with _paste_lock(session_id, reg.db_dir):
         _tmux_paste(target, _guard_paste_text(harness, body), settle=settle)
+    if shown:  # only what was pasted counts as seen
+        try:
+            with reg.edit(session_id, wolt=wolt) as record:
+                if record is not None:
+                    record.update(shown)
+        except Exception as exc:
+            print(f"[sessions] board marks not saved for {session_id}: {exc}", file=sys.stderr)
     return {"status": "delivered", "session": session_id, "harness": harness}
 
 
