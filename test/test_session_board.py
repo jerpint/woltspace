@@ -67,13 +67,13 @@ def test_stale_is_no_title_or_long_work_after_the_last_describe():
 def test_render_shows_status_age_place_and_marks_stale():
     board = session_board.build([
         _rec("otter-a", ago=120, title="Review", summary="reading the diff", adapter="telegram",
-             chat_id="-5356206787123", described_at=NOW - 120),
+             chat_id="-1000000000123", described_at=NOW - 120),
         _rec("otter-b", "resting", ago=2 * DAY, title="Old", summary="was here", described_at=NOW - 3 * DAY),
         _rec("otter-c", "resting", ago=2 * DAY),
     ], "me", NOW)
     lines = session_board.render(board, NOW).splitlines()
     assert lines[0] == session_board.OPEN and lines[-1] == session_board.CLOSE
-    assert lines[1] == 'running · 2m ago · telegram -53562067871 · otter-a · "Review": reading the diff'
+    assert lines[1] == 'running · 2m ago · telegram -10000000001 · otter-a · "Review": reading the diff'
     assert lines[2] == ('resting · 2d ago · lodge · otter-b · "Old": was here '
                         "(stale: it has worked a long time since it wrote this)")
     assert lines[3] == "+ 1 live or recent with no title"
