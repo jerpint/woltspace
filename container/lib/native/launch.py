@@ -27,6 +27,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from native_adapters import ASSETS, KINDS, RETIRED, announce_ready, clear_state, retire, write_ready, write_state  # noqa: E402
 
 CODEX_BYPASS = "--dangerously-bypass-approvals-and-sandbox"
+CODEX_LEVELS = {  # each policy block the lodge puts on a codex argv (harnesses.POLICY_FLAGS), as app-server config
+    ("-a", "on-request", "-s", "workspace-write"): ['approval_policy="on-request"', 'sandbox_mode="workspace-write"'],
+    # --approve-for-me, from its help: "automatic review using the workspace-write sandbox".
+    ("--approve-for-me", "-c", "sandbox_workspace_write.network_access=true"):
+        ['approval_policy="on-request"', 'approvals_reviewer="auto_review"', 'sandbox_mode="workspace-write"',
+         "sandbox_workspace_write.network_access=true"],
+    (CODEX_BYPASS,): ['approval_policy="never"', 'sandbox_mode="danger-full-access"'],
+}
 DISCOVERY = FIRST_STATE = 10.0  # seconds: one thread discovery pass; a connection's first usable status
 BACKOFF, BACKOFF_CAP = 0.5, 10.0  # the codex observer's pause after each try, doubling to the cap
 log = logging.getLogger("native.launch")
@@ -51,12 +59,15 @@ def plan_codex(argv: list[str], directory: Path) -> dict:
     config = []
     if model := _value(argv, "-m", "--model"):
         config += ["-c", f"model={json.dumps(model)}"]
-    if CODEX_BYPASS in argv:
-        config += ["-c", 'approval_policy="never"', "-c", 'sandbox_mode="danger-full-access"']
-    tui = [word for word in argv if word != "--no-daemon"]
-    at = 2 if tui[:1] == ["resume"] else 0
-    if at:  # a remote resume refuses permission flags; the server's config above carries the policy
-        tui = [word for word in tui if word != CODEX_BYPASS]
+    # The lodge's order: [resume <id>] [--no-daemon] <policy block> [-m <model>] [prompt]. Only the
+    # block in its place is policy: a prompt that looks like a flag (or --no-daemon) stays the prompt.
+    at = 2 if argv[:1] == ["resume"] else 0
+    start = at + (argv[at:at + 1] == ["--no-daemon"])
+    level = next((level for level in CODEX_LEVELS if tuple(argv[start:start + len(level)]) == level), ())
+    config += [part for item in CODEX_LEVELS.get(level, []) for part in ("-c", item)]
+    # A remote resume refuses permission flags; the server's config above carries the policy.
+    drop = range(at, start + len(level) if at else start)
+    tui = [word for i, word in enumerate(argv) if i not in drop]
     tui[at:at] = ["--remote", f"unix://{sock}"]
     return {"backend": ["codex", "app-server", *config, "--listen", f"unix://{sock}"], "backend_env": {},
             "tui": ["codex", *tui], "tui_env": {}, "sock": str(sock),

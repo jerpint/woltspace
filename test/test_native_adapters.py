@@ -227,16 +227,35 @@ def test_builders_are_unchanged_without_a_locator_and_carry_the_attempt_with_one
     assert build_command(harness, "login", native=native) == build_command(harness, "login")
 
 
-def test_codex_plan_runs_the_tui_remote_on_its_own_server_with_the_same_model_and_policy(tmp_path):
-    bypass = "--dangerously-bypass-approvals-and-sandbox"
-    plan = launch.plan_codex(["--no-daemon", bypass, "-m", "gpt-x", "hello"], tmp_path)
-    sock = f"unix://{tmp_path}/app.sock"
-    assert plan["backend"] == ["codex", "app-server", "-c", 'model="gpt-x"', "-c", 'approval_policy="never"',
-                               "-c", 'sandbox_mode="danger-full-access"', "--listen", sock]
-    assert plan["tui"] == ["codex", "--remote", sock, bypass, "-m", "gpt-x", "hello"]
-    resumed = launch.plan_codex(["resume", "t1", "--no-daemon", bypass, "-m", "gpt-x"], tmp_path)
-    assert resumed["tui"] == ["codex", "resume", "t1", "--remote", sock, "-m", "gpt-x"]  # remote resume refuses the flag
-    assert resumed["resume_id"] == "t1" and plan["resume_id"] is None
+CODEX_LEVELS = {  # level: (isolation, the app-server config it must carry)
+    "prompt": ("host", ['approval_policy="on-request"', 'sandbox_mode="workspace-write"']),
+    "auto": ("host", ['approval_policy="on-request"', 'approvals_reviewer="auto_review"', 'sandbox_mode="workspace-write"',
+                      "sandbox_workspace_write.network_access=true"]),
+    "bypass": ("external", ['approval_policy="never"', 'sandbox_mode="danger-full-access"']),
+}
+
+
+@pytest.mark.parametrize("daemon", [True, False])
+@pytest.mark.parametrize("resume_id", ["", "t1"])
+@pytest.mark.parametrize("level", list(CODEX_LEVELS))
+def test_codex_plan_gives_its_server_the_launch_s_policy_and_model_and_a_resume_no_permission_flags(
+        tmp_path, monkeypatch, level, resume_id, daemon):
+    import harnesses
+    monkeypatch.setattr(harnesses, "_codex_no_daemon", daemon)
+    isolation, config = CODEX_LEVELS[level]
+    policy = {"mode": level, "isolation": isolation, "policy_version": 2}
+    flags, sock = harnesses.policy_flags("codex", policy), f"unix://{tmp_path}/app.sock"
+    # The real launch argv; a prompt that looks like a flag stays the prompt, never policy.
+    for model, prompt in [("gpt-x", "hello"), ("", launch.CODEX_BYPASS), ("", "--approve-for-me"), ("", "--no-daemon")]:
+        argv = __import__("shlex").split(build_command("codex", "resume" if resume_id else "spawn", resume_id=resume_id,
+                                                       model=model, prompt=prompt, execution_policy=policy))[1:]
+        plan = launch.plan_codex(argv, tmp_path)
+        assert plan["backend"] == ["codex", "app-server", *(["-c", f'model="{model}"'] if model else []),
+                                   *[part for item in config for part in ("-c", item)], "--listen", sock]
+        head = ["resume", resume_id] if resume_id else []
+        assert plan["tui"] == ["codex", *head, "--remote", sock, *([] if resume_id else flags),
+                               *(["-m", model] if model else []), prompt]  # a remote resume refuses the flags
+        assert plan["resume_id"] == (resume_id or None)
     assert "-c" not in launch.plan_codex(["--no-daemon"], tmp_path)["backend"]
 
 
