@@ -95,7 +95,7 @@ def test_small_memory_prompt_is_unchanged(wolts_dir, capsys):
     assert (f"## identity.md\n{identity}\n\n## context.md\n{context}\n\n"
             f"## learnings.md\n{learnings}\n[/Woltspace boot context]") in prompt
     assert "[Cut by the lodge" not in prompt
-    assert capsys.readouterr().err == ""
+    assert capsys.readouterr().err == "Execution policy: requested=none resolved=bypass\n"
 
 
 def test_oversized_memory_fits_under_the_limit(wolts_dir):
@@ -181,6 +181,7 @@ def test_cut_is_logged_once(wolts_dir, capsys):
     _opening_prompt(wolts_dir)
 
     lines = capsys.readouterr().err.splitlines()
+    assert lines.pop(0) == "Execution policy: requested=none resolved=bypass"
     assert len(lines) == 1
     found = re.search(r"boot memory of probe cut from 222060 to (\d+) bytes "
                       rf"\(limit {sessions.BOOT_PROMPT_MAX_BYTES}\); trim wolt/memory/",
