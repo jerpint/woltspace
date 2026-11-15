@@ -227,22 +227,28 @@ def test_builders_are_unchanged_without_a_locator_and_carry_the_attempt_with_one
     assert build_command(harness, "login", native=native) == build_command(harness, "login")
 
 
-CODEX_LEVELS = {  # level: (isolation, the app-server config it must carry)
-    "prompt": ("host", ['approval_policy="on-request"', 'sandbox_mode="workspace-write"']),
-    "auto": ("host", ['approval_policy="on-request"', 'approvals_reviewer="auto_review"', 'sandbox_mode="workspace-write"',
-                      "sandbox_workspace_write.network_access=true"]),
-    "bypass": ("external", ['approval_policy="never"', 'sandbox_mode="danger-full-access"']),
+CODEX_CONFIG = {  # level: the app-server config it must carry
+    "prompt": ['approval_policy="on-request"', 'sandbox_mode="workspace-write"'],
+    "auto": ['approval_policy="on-request"', 'approvals_reviewer="auto_review"', 'sandbox_mode="workspace-write"',
+             "sandbox_workspace_write.network_access=true"],
+    "bypass": ['approval_policy="never"', 'sandbox_mode="danger-full-access"'],
 }
+CODEX_POLICY = __import__("harnesses").POLICY_FLAGS["codex"]
+CODEX_OFFERED = [(level, isolation) for level, table in CODEX_POLICY.items()  # every level the lodge launches
+                 for isolation in (table if isinstance(table, dict) else ["host", "external"])]
+
+
+def test_every_codex_level_the_lodge_launches_has_a_backend_config():
+    assert set(CODEX_POLICY) == set(CODEX_CONFIG) == set(launch.CODEX_CONFIG)
 
 
 @pytest.mark.parametrize("daemon", [True, False])
 @pytest.mark.parametrize("resume_id", ["", "t1"])
-@pytest.mark.parametrize("level", list(CODEX_LEVELS))
+@pytest.mark.parametrize("level, isolation", CODEX_OFFERED)
 def test_codex_plan_gives_its_server_the_launch_s_policy_and_model_and_a_resume_no_permission_flags(
-        tmp_path, monkeypatch, level, resume_id, daemon):
+        tmp_path, monkeypatch, level, isolation, resume_id, daemon):
     import harnesses
     monkeypatch.setattr(harnesses, "_codex_no_daemon", daemon)
-    isolation, config = CODEX_LEVELS[level]
     policy = {"mode": level, "isolation": isolation, "policy_version": 2}
     flags, sock = harnesses.policy_flags("codex", policy), f"unix://{tmp_path}/app.sock"
     # The real launch argv; a prompt that looks like a flag stays the prompt, never policy.
@@ -251,12 +257,41 @@ def test_codex_plan_gives_its_server_the_launch_s_policy_and_model_and_a_resume_
                                                        model=model, prompt=prompt, execution_policy=policy))[1:]
         plan = launch.plan_codex(argv, tmp_path)
         assert plan["backend"] == ["codex", "app-server", *(["-c", f'model="{model}"'] if model else []),
-                                   *[part for item in config for part in ("-c", item)], "--listen", sock]
+                                   *[part for item in CODEX_CONFIG[level] for part in ("-c", item)], "--listen", sock]
         head = ["resume", resume_id] if resume_id else []
         assert plan["tui"] == ["codex", *head, "--remote", sock, *([] if resume_id else flags),
                                *(["-m", model] if model else []), prompt]  # a remote resume refuses the flags
         assert plan["resume_id"] == (resume_id or None)
-    assert "-c" not in launch.plan_codex(["--no-daemon"], tmp_path)["backend"]
+
+
+SECRET = "/home/pal/private-prompt"
+
+
+@pytest.mark.parametrize("argv, table", [
+    (["--no-daemon", "-m", "gpt-x", SECRET], None),  # no policy block
+    (["--no-daemon", "-a", "on-request", SECRET], None),  # half of Ask
+    (["resume", "t1", "--no-daemon", "--approve-for-me", SECRET], None),  # Auto without its network
+    (["--no-daemon", "-a", "on-request", "-s", "read-only", SECRET], None),  # another sandbox
+    (["--no-daemon", "-m", "gpt-x", launch.CODEX_BYPASS], None),  # only a prompt that looks like the flag
+    ([SECRET, "--no-daemon", launch.CODEX_BYPASS], None),  # the block out of its place
+    (["--no-daemon", "-a", "on-request", "-s", "workspace-write"], {"prompt": {"host": ["-a", "untrusted"]}}),  # drift
+    (["--no-daemon", "--watch", SECRET], {"watch": ["--watch"]}),  # a new level without a backend config
+])
+def test_codex_launch_without_a_known_policy_block_starts_nothing(lodge, tmp_path, monkeypatch, argv, table):
+    if table:
+        monkeypatch.setitem(launch.POLICY_FLAGS, "codex", {**CODEX_POLICY, **table})
+    with pytest.raises(ValueError) as refused:
+        launch.plan_codex(argv, tmp_path)
+    assert not any(word in str(refused.value) for word in argv if len(word) > 4)
+    wolts, _ = lodge
+    native = na.prepare(wolts, "pal-x", "codex", "a1")
+    assert native is not None
+    fake_bin(tmp_path, "codex", f"echo started > {tmp_path}/started\n")
+    monkeypatch.setenv("PATH", f"{tmp_path / 'bin'}:{os.environ['PATH']}")
+    monkeypatch.setenv("WOLTSPACE_NATIVE_DIR", native["addr"])
+    monkeypatch.setenv("WOLTSPACE_NATIVE_ATTEMPT", "a1")
+    assert launch.main(["codex", *argv]) == 1
+    assert (Path(native["addr"]) / "retired").exists() and not (tmp_path / "started").exists()
 
 
 def test_opencode_plan_moves_model_and_auto_to_the_server_and_keeps_its_password_private(tmp_path):
@@ -310,7 +345,7 @@ exit 7
     monkeypatch.setenv("WOLTSPACE_NATIVE_ATTEMPT", "a1")
     previous = {s: signal.getsignal(s) for s in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)}
     try:
-        assert launch.main(["codex", "--no-daemon", "hi"]) == 7
+        assert launch.main(["codex", "--no-daemon", launch.CODEX_BYPASS, "hi"]) == 7
     finally:
         for sig, handler in previous.items():
             signal.signal(sig, handler)
@@ -405,7 +440,7 @@ fi
 exec sleep 60
 """)
     env = {**os.environ, "PATH": f"{tmp_path / 'bin'}:{os.environ['PATH']}", **na.launch_env(native)}
-    supervisor = subprocess.Popen([sys.executable, str(na.ASSETS / "launch.py"), "codex", "hi"], env=env,
+    supervisor = subprocess.Popen([sys.executable, str(na.ASSETS / "launch.py"), "codex", launch.CODEX_BYPASS, "hi"], env=env,
                                   stdin=subprocess.DEVNULL)
     pid_file = tmp_path / "backend.pid"
     deadline = time.monotonic() + 10
