@@ -249,7 +249,8 @@ def test_an_old_session_file_imported_after_the_migration_resumes_as_bypass(
 
 @pytest.mark.parametrize("isolation,granted,lodge,want", [
     ("host", True, "auto", "auto"),        # the lodge's choice, where the grant allows it
-    ("host", False, "auto", "prompt"),     # no grant, no Auto: the built-in default stays
+    ("host", False, "auto", "auto"),       # a lodge default of Auto is itself the consent
+    ("host", False, "bypass", "prompt"),   # Bypass still needs the wolt's grant
     ("external", False, "auto", "auto"),
     ("host", True, "prompt", "prompt"),    # Ask needs no grant
     ("host", True, None, "bypass"),        # unset: nothing changes
@@ -258,6 +259,23 @@ def test_an_old_session_file_imported_after_the_migration_resumes_as_bypass(
 def test_the_lodge_default_level_applies_only_where_allowed(isolation, granted, lodge, want):
     from execution_policy import default_mode
     assert default_mode(isolation, granted, lodge) == want
+
+
+def test_a_lodge_default_of_auto_needs_no_grant_but_bypass_still_does(tmp_path):
+    """The owner writing "auto" as the lodge default consents for every wolt;
+    Bypass skips every check, so it stays behind the per-wolt grant."""
+    target, wolts = _target(tmp_path)
+    store = AutoGrantStore(wolts)
+    for requested in (None, "auto"):
+        policy, grant = resolve_execution_policy(
+            requested, isolation="host", target=target, grants=store, lodge_default="auto")
+        assert policy == ExecutionPolicy(mode="auto", isolation="host")
+        assert grant is None
+    with pytest.raises(PermissionError, match="not approved"):
+        resolve_execution_policy(
+            "bypass", isolation="host", target=target, grants=store, lodge_default="auto")
+    with pytest.raises(PermissionError, match="not approved"):
+        resolve_execution_policy("auto", isolation="host", target=target, grants=store)
 
 
 def test_the_lodge_default_level_is_read_per_engine(tmp_path, monkeypatch):
@@ -293,3 +311,31 @@ def test_a_spawn_that_asks_for_nothing_gets_the_lodge_default_level(
     assert implicit["execution_policy"]["mode"] == "auto"
     explicit = sessions.start_session(wolt="testwolt", workdir=repo, execution_policy="bypass")
     assert explicit["execution_policy"]["mode"] == "bypass"
+
+
+def test_a_lodge_default_of_auto_spawns_and_resumes_an_ungranted_wolt_in_auto(
+    tmp_path, monkeypatch, fake_runtime
+):
+    """No grant anywhere: the lodge's Auto reaches the engine on spawn and on
+    resume, the registry records no grant, and Bypass is still refused."""
+    import sessions
+
+    wolts = _host_wolt(tmp_path, monkeypatch)
+    monkeypatch.setenv("WOLTSPACE_ISOLATION", "host")
+    monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(wolts))
+    (wolts / "woltspace.json").write_text(
+        json.dumps({"sessions": {"default_execution_policy": "auto"}}))
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    started = sessions.start_session(wolt="testwolt", workdir=repo)
+    assert started["execution_policy"]["mode"] == "auto"
+    assert started["auto_grant"] is None
+    record = sessions.SessionRegistry().get(started["name"])
+    assert record["execution_policy"]["mode"] == "auto" and record["auto_grant"] is None
+    from harnesses import build_command
+    for mode, extra in (("spawn", {}), ("resume", {"resume_id": "r1"})):
+        command = build_command("claude", mode, execution_policy=record["execution_policy"], **extra)
+        assert "--permission-mode auto" in command
+    with pytest.raises(PermissionError, match="not approved"):
+        sessions.start_session(wolt="testwolt", workdir=repo, execution_policy="bypass")

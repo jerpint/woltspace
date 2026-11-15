@@ -1,11 +1,40 @@
-# Woltspace 0.6.0rc1
+# Woltspace 0.6.0rc3
 
-Python **0.6.0rc1** is a release candidate. The TUI stays at
+Python **0.6.0rc3** is a release candidate. The TUI stays at
 **@woltspace/tui 0.5.4**.
 
 A plain `woltspace update` never installs a release candidate: install this
-one by naming it with `--version 0.6.0rc1`. Try it on a lodge you can
+one by naming it with `--version 0.6.0rc3`. Try it on a lodge you can
 restore.
+
+## Since 0.6.0rc2
+
+- **A lodge default of Auto needs no per-wolt grant.** With
+  `"sessions": {"default_execution_policy": "auto"}` in `woltspace.json`,
+  every new session on the host starts in its engine's own Auto mode, new
+  wolts included, and Auto can be picked by name. Setting it is the owner's
+  consent for the whole lodge. Bypass still needs the wolt's grant. Without
+  the setting, a host session with no grant starts in Ask, which for Claude
+  now means manual mode, even where Claude's own default is auto.
+- **Known limitation: Codex Auto and Ask with native inbox hints.** With
+  `"inbox": {"native_hints": true}`, a Codex session runs against its own
+  app-server, which carries only Bypass: Auto and Ask are not passed to it, and
+  a resumed Auto session keeps a flag a remote resume may refuse. Keep native
+  hints off for Codex wolts on Auto or Ask until this is fixed before 0.6.0.
+
+## Since 0.6.0rc1
+
+- **A session can answer the chat its owner is talking to it from.** When
+  the owner routes a Telegram or Slack chat into a session (a reply to one of
+  its messages, say), `notify` to that chat is no longer refused as someone
+  else's (#668).
+- **A Codex session survives a slow start.** If Codex waits at its startup
+  prompt longer than the lodge's discovery windows, the lodge keeps watching
+  until it is ready: queued mail then reaches it, and it can rest and resume.
+  While it is not ready yet, senders get one clear "queued" notice per message
+  (#669).
+
+Everything below describes 0.6 as a whole, compared with 0.5.25.
 
 ## What's new
 
@@ -20,8 +49,11 @@ restore.
   own automatic mode, and the old skip-every-check behaviour is named
   "Bypass". The CLI has `--policy`, the TUI a level picker, and
   `woltspace.json` can set a lodge-wide default with
-  `"sessions": {"default_execution_policy": "..."}`. Defaults are unchanged in
-  effect: existing sessions keep running as they did (#652).
+  `"sessions": {"default_execution_policy": "..."}`. Existing sessions keep
+  running as they did. Ask now really asks: a new Claude session on Ask starts
+  in manual mode even if Claude's own default is auto, and on the host that is
+  the default for a wolt without a grant. Set the lodge default to `auto` to
+  keep auto mode (#652).
 - **Conversation history, opt in.** A lodge can keep a bounded archive of the
   inbox mail it admitted and the text `notify` sent, so an agent can read its
   own past conversation as context. It needs the inbox too:
@@ -39,7 +71,7 @@ restore.
 ## Changes to know about
 
 - **This release changes the lodge database in a way 0.5 cannot read.**
-  Starting 0.6.0rc1 rewrites every stored session's permission record (0.5's
+  Starting 0.6 rewrites every stored session's permission record (0.5's
   "auto" becomes "bypass"), and from then on 0.5.x refuses to open the lodge.
   Installing 0.5.25 again does not undo it: going back means restoring the
   backup you took before upgrading.
@@ -64,12 +96,12 @@ are sure you are staying on 0.6:
 
 ```sh
 woltspace backup --tag pre-0.6
-woltspace update --version 0.6.0rc1
+woltspace update --version 0.6.0rc3
 ```
 
 Native upgrades stop and restart the control plane while preserving tmux
 sessions. A container lodge rebuilds from the host with
-`woltspace rebuild --version 0.6.0rc1`.
+`woltspace rebuild --version 0.6.0rc3`.
 
 To go back to 0.5.25, stop the lodge, reinstall 0.5.25 and start it from
 the backup. `woltspace restore` unpacks into a new folder and prints the exact

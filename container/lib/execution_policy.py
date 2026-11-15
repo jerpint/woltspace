@@ -197,11 +197,21 @@ def import_grants(conn, wolts_dir: str | Path) -> tuple[dict, list[Path]]:
     return counts, retire
 
 
+def needs_grant(mode: str, isolation: str, lodge_default: str | None = None) -> bool:
+    """Whether this level needs the wolt's host grant. Bypass always does on the
+    host. Auto does too, unless the lodge owner made Auto the lodge default:
+    writing that setting is the consent, for every wolt, and Auto is the
+    engine's own guarded mode, not a skip of every check."""
+    if isolation != "host" or mode not in GRANTED_MODES:
+        return False
+    return not (mode == "auto" and lodge_default == "auto")
+
+
 def default_mode(isolation: str, granted: bool, lodge_default: str | None = None) -> str:
     """The level of a session that asks for none: the lodge's own choice where it
     needs no grant or has one, else Bypass where granted or isolated, else Ask."""
     if lodge_default in VALID_MODES and (
-        lodge_default not in GRANTED_MODES or isolation != "host" or granted
+        granted or not needs_grant(lodge_default, isolation, lodge_default)
     ):
         return lodge_default
     return "bypass" if isolation == "external" or granted else "prompt"
@@ -229,11 +239,12 @@ def resolve_execution_policy(
     exists, and Auto or Bypass without a grant is refused rather than quietly
     downgraded. `lodge_default` (woltspace.json sessions.default_execution_policy,
     already checked against the engine) replaces that default; see default_mode.
+    A lodge default of Auto also stands in for the grant for Auto (needs_grant).
     """
     grant = grants.find(target) if isolation == "host" else None
     mode = requested or default_mode(isolation, grant is not None, lodge_default)
     policy = ExecutionPolicy(mode=mode, isolation=isolation)
-    if mode in GRANTED_MODES and isolation == "host" and grant is None:
+    if grant is None and needs_grant(mode, isolation, lodge_default):
         raise PermissionError(
             "Auto and Bypass are not approved for "
             f"wolt '{target.wolt_id}' in '{target.canonical_workdir}'. "

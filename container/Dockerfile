@@ -123,7 +123,7 @@ RUN git clone https://github.com/jerpint/worktui.git /home/node/worktui \
 ENV WORKTUI_DIR="/workspace/wolts/.worktui"
 
 # --- The woltspace runtime, from the registries ---
-ARG WOLTSPACE_PYPI_VERSION=0.6.0rc1
+ARG WOLTSPACE_PYPI_VERSION=0.6.0rc3
 # Both pins match this checkout's release (scripts/verify-packages.py). The two
 # artifacts are versioned independently. Pass a version to build another one.
 ARG WOLTSPACE_TUI_VERSION=0.5.4
