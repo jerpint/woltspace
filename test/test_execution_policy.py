@@ -350,21 +350,20 @@ def test_a_lodge_default_of_auto_spawns_and_resumes_an_ungranted_wolt_in_auto(
     ({"private-sentinel": []}, None, "prompt"),
 ])
 def test_startup_diagnostics_only_contain_levels(
-    tmp_path, monkeypatch, fake_runtime, caplog, configured, requested, resolved
+    tmp_path, monkeypatch, fake_runtime, caplog, capsys, configured, requested, resolved
 ):
-    import logging
-
     import sessions
     wolts = _host_wolt(tmp_path, monkeypatch)
     monkeypatch.setenv("WOLTSPACE_ISOLATION", "host")
     monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(wolts))
     (wolts / "woltspace.json").write_text(json.dumps({
         "sessions": {"default_execution_policy": configured}}))
-    with caplog.at_level(logging.INFO, logger="harnesses"):
-        started = sessions.start_session(wolt="testwolt", execution_policy=requested,
-                                         prompt="private-sentinel")
+    started = sessions.start_session(wolt="testwolt", execution_policy=requested,
+                                     prompt="private-sentinel")
     messages = [r.getMessage() for r in caplog.records if r.name == "harnesses"]
-    assert messages == [f"Execution policy: requested={requested or 'none'} resolved={resolved}"]
+    assert messages == []
+    assert capsys.readouterr().err == (
+        f"Execution policy: requested={requested or 'none'} resolved={resolved}\n")
     record = sessions.SessionRegistry().get(started["name"])
     assert record is not None
     assert record["execution_policy"]["mode"] == resolved
@@ -412,20 +411,17 @@ def test_old_client_copying_capability_default_starts_in_auto(
 
 
 def test_unsupported_default_warns_on_startup_after_validation(
-    tmp_path, monkeypatch, fake_runtime, caplog
+    tmp_path, monkeypatch, fake_runtime, caplog, capsys
 ):
-    import logging
-
     import sessions
     wolts = _host_wolt(tmp_path, monkeypatch)
     monkeypatch.setenv("WOLTSPACE_ISOLATION", "external")
     monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(wolts))
     (wolts / "woltspace.json").write_text(json.dumps({
         "sessions": {"default_execution_policy": "auto"}}))
-    with caplog.at_level(logging.INFO, logger="harnesses"):
-        started = sessions.start_session(wolt="testwolt", harness="codex")
+    started = sessions.start_session(wolt="testwolt", harness="codex")
     assert started["execution_policy"]["mode"] == "bypass"
     assert [r.getMessage() for r in caplog.records if r.name == "harnesses"] == [
         "Unsupported inherited execution policy: requested=auto",
-        "Execution policy: requested=none resolved=bypass",
     ]
+    assert capsys.readouterr().err == "Execution policy: requested=none resolved=bypass\n"

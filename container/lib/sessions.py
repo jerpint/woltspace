@@ -47,7 +47,6 @@ from harnesses import (
     get_harness,
     get_default_harness,
     get_default_level,
-    logger as harness_logger,
     harness_install_problem,
     build_command,
     policy_flags,
@@ -2190,11 +2189,9 @@ def start_session(
     policy_flags(harness, policy)  # a level this engine does not offer is refused here
     if not execution_policy:
         get_default_level(harness, isolation, warn_unsupported=True)
-    harness_logger.info(
-        "Execution policy: requested=%s resolved=%s",
-        execution_policy if execution_policy in ("prompt", "auto", "bypass") else "none",
-        policy.mode,
-    )
+    requested_level = execution_policy if execution_policy in ("prompt", "auto", "bypass") else "none"
+    print(f"Execution policy: requested={requested_level} resolved={policy.mode}",
+          file=sys.stderr)
 
     name = name or session_name(wolt)
     # pin wins if valid for the resolved harness, else the tier default (see resolve_model)
