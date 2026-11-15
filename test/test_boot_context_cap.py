@@ -222,8 +222,6 @@ def test_a_second_session_reads_what_the_first_is_doing(wolts_dir):
     assert board.startswith("[Your other sessions")
     assert f'{earlier} · "Counting logs": half way through the north bank' in board
     assert board.index("[/Your other sessions]") < board.index(HELLO)
-    (newest,) = [s for s in registry.list(wolt=WOLT) if s["name"] != earlier]
-    assert len(newest["board_seen"]) == 16
 
 
 def test_a_board_that_fails_never_stops_a_launch(wolts_dir, monkeypatch, capsys):
@@ -238,13 +236,27 @@ def test_a_board_that_fails_never_stops_a_launch(wolts_dir, monkeypatch, capsys)
     assert "no session board for" in capsys.readouterr().err
 
 
-def test_the_board_counts_toward_the_limit_and_memory_gives_way(wolts_dir):
-    _oversized(wolts_dir)
+def test_the_board_gives_way_when_the_memory_is_over_the_limit(wolts_dir):
+    memory, identity, context, learnings = _oversized(wolts_dir)
     _opening_prompt(wolts_dir)
+    registry = sessions.SessionRegistry(wolts_dir)
+    registry.describe(registry.list(wolt=WOLT)[0]["name"], "Counting logs", "north bank")
+
+    prompt = _opening_prompt(wolts_dir)
+
+    assert "[Your other sessions" not in prompt
+    assert len(prompt.encode()) > sessions.BOOT_PROMPT_MAX_BYTES - 1024  # the memory kept all its room
+
+
+def test_the_board_is_left_out_when_it_would_not_fit_beside_whole_memory(wolts_dir):
+    limit = sessions.BOOT_PROMPT_MAX_BYTES
+    _memory(wolts_dir, "I am probe.", "x", "Learn.")
+    around = len(_opening_prompt(wolts_dir).encode()) - 1
+    _memory(wolts_dir, "I am probe.", _text(limit - around - 200), "Learn.")  # 200 bytes of room left
     registry = sessions.SessionRegistry(wolts_dir)
     registry.describe(registry.list(wolt=WOLT)[0]["name"], "T" * 80, "s" * 240)
 
     prompt = _opening_prompt(wolts_dir)
 
-    assert len(prompt.encode()) <= sessions.BOOT_PROMPT_MAX_BYTES
-    assert '"' + "T" * 80 + '": ' + "s" * 240 in prompt
+    assert "[Your other sessions" not in prompt and "[Cut by the lodge" not in prompt
+    assert len(prompt.encode()) <= limit

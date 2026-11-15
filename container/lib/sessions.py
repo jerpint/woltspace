@@ -341,7 +341,7 @@ class SessionRegistry:
     def stored(self, wolt: str) -> list[dict]:
         """A wolt's session records as stored: no process calls, so a "running" one may
         have lost its agent since. For readers that must stay cheap (the session board
-        in front of a delivered message); list() is the accurate one."""
+        in a new session's opening message); list() is the accurate one."""
         with self._reader() as conn:
             return self._rows(conn, wolt)
 
@@ -1272,34 +1272,6 @@ def resolve_active_session(wolt: str, registry=None) -> str | None:
     return alive[0]["name"]
 
 
-def _with_board(reg: "SessionRegistry", data: dict, body: str) -> tuple[str, dict]:
-    """A message about to be pasted, with the session board in front of it when the board
-    changed since this session last saw it, and one reminder after it when the session's
-    own line is missing or old (session_board.py). Returns the text and the marks to save
-    once it is pasted ({} when nothing was added).
-
-    The board is read from stored records, without process calls: delivery stays as
-    fast as it was. Never raises: the message goes out as it is."""
-    try:
-        import session_board
-        name, wolt, now = data.get("name") or "", data.get("wolt") or "", time.time()
-        if not name or not wolt:
-            return body, {}
-        shown = {}
-        board = session_board.build(reg.stored(wolt), name, now)
-        seen = session_board.signature(board)
-        text = session_board.render(board, now)
-        if text and seen != data.get("board_seen"):
-            body, shown["board_seen"] = f"{text}\n\n{body}", seen
-        reminder = session_board.nudge(data, now)
-        if reminder:
-            body, shown["board_nudged"] = f"{body}\n\n{reminder[0]}", reminder[1]
-        return body, shown
-    except Exception as exc:
-        print(f"[sessions] no session board for {data.get('name')}: {exc}", file=sys.stderr)
-        return body, {}
-
-
 def deliver_message(session_id: str, text: str, from_wolt: str = "",
                     from_session: str = "", registry=None) -> dict:
     """Deliver a message into a running session, with optional attribution.
@@ -1378,16 +1350,8 @@ def deliver_message(session_id: str, text: str, from_wolt: str = "",
         return {"status": "session-dead", "session": session_id}
     settle = get_harness(harness).get("paste_settle", 0.0)
     body = format_attributed_message(text, from_wolt, from_session)
-    body, shown = _with_board(reg, data, body)
     with _paste_lock(session_id, reg.db_dir):
         _tmux_paste(target, _guard_paste_text(harness, body), settle=settle)
-    if shown:  # only what was pasted counts as seen
-        try:
-            with reg.edit(session_id, wolt=wolt) as record:
-                if record is not None:
-                    record.update(shown)
-        except Exception as exc:
-            print(f"[sessions] board marks not saved for {session_id}: {exc}", file=sys.stderr)
     return {"status": "delivered", "session": session_id, "harness": harness}
 
 
@@ -1604,26 +1568,21 @@ def _wolt_boot_context(data: dict, over: int = 0) -> str:
     )
 
 
-def _boot_board(data: dict) -> str:
+def _boot_board(data: dict, room: int) -> str:
     """What the wolt's other sessions are doing (session_board.py), for a new session's
-    opening message; "" when there is nothing to show. It also records what was shown
-    (board_seen), so the first message delivered afterwards does not repeat it.
+    opening message; "" when there is nothing to show or it does not fit in `room` bytes.
 
+    Read from stored records, without process checks: a launch stays as fast as it was,
+    and a "running" row may have lost its agent (its age is shown beside it).
     Never raises: a board is a convenience, and a launch must not fail for it."""
     name, wolt = data.get("name") or "", data.get("wolt_id") or data.get("wolt") or ""
     if not name or not wolt:
         return ""
     try:
         import session_board
-        registry = SessionRegistry()
         now = time.time()
-        board = session_board.build(registry.list(wolt=wolt), name, now)
-        text = session_board.render(board, now)
-        if text:
-            with registry.edit(name, wolt=wolt) as record:
-                if record is not None:
-                    record["board_seen"] = session_board.signature(board)
-        return text
+        text = session_board.render(session_board.build(SessionRegistry().stored(wolt), name, now), now)
+        return text if len(text.encode()) <= room else ""
     except Exception as exc:
         print(f"[sessions] no session board for {name}: {exc}", file=sys.stderr)
         return ""
@@ -1687,12 +1646,13 @@ def _assemble_spawn_prompt(data: dict, prompt: str, harness: str) -> str:
     boot_context = _wolt_boot_context(data)
     if not boot_context:
         return rest
-    board = _boot_board(data)
-    if board:  # after the memory, before the request; part of "the rest", so it is never cut
-        rest = f"{board}\n\n{rest}"
     over = len(f"{boot_context}\n\n{rest}".encode()) - BOOT_PROMPT_MAX_BYTES
     if over > 0:
         boot_context = _wolt_boot_context(data, over=over)
+    else:  # the board gives way first: it is there only when the memory is whole and it fits
+        board = _boot_board(data, -over - 2)
+        if board:  # after the memory, before the request
+            rest = f"{board}\n\n{rest}"
     return f"{boot_context}\n\n{rest}"
 
 

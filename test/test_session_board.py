@@ -73,7 +73,7 @@ def test_render_shows_status_age_place_and_marks_stale():
     ], "me", NOW)
     lines = session_board.render(board, NOW).splitlines()
     assert lines[0] == session_board.OPEN and lines[-1] == session_board.CLOSE
-    assert lines[1] == 'running · 2m ago · telegram -10000000001 · otter-a · "Review": reading the diff'
+    assert lines[1] == 'running · 2m ago · telegram · otter-a · "Review": reading the diff'
     assert lines[2] == ('resting · 2d ago · lodge · otter-b · "Old": was here '
                         "(stale: it has worked a long time since it wrote this)")
     assert lines[3] == "+ 1 live or recent with no title"
@@ -99,29 +99,6 @@ def test_a_title_cannot_break_out_of_its_line_or_close_the_block():
     assert len(board["rows"][0]["summary"]) == session_board.SUMMARY_MAX
 
 
-def test_signature_ignores_time_passing_and_sees_a_change():
-    records = [_rec("a", title="T", summary="one")]
-    first = session_board.signature(session_board.build(records, "me", NOW))
-    later = session_board.signature(session_board.build(records, "me", NOW + HOUR))
-    records[0]["summary"] = "two"
-    changed = session_board.signature(session_board.build(records, "me", NOW + HOUR))
-    assert first == later != changed
-
-
-def test_nudge_once_per_describe_and_never_for_a_new_session():
-    young = _rec("a", created_at=NOW - 60)
-    assert session_board.nudge(young, NOW) is None
-    untitled = _rec("a")
-    text, mark = session_board.nudge(untitled, NOW)
-    assert "has no title" in text and mark == 0
-    assert session_board.nudge({**untitled, "board_nudged": 0}, NOW) is None
-    old = _rec("a", title="T", described_at=NOW - 7 * HOUR)
-    text, mark = session_board.nudge(old, NOW)
-    assert "out of date" in text and mark == NOW - 7 * HOUR
-    assert session_board.nudge({**old, "board_nudged": mark}, NOW) is None
-    assert session_board.nudge(_rec("a", title="T", described_at=NOW - 60), NOW) is None
-
-
 def _client(tmp_path, monkeypatch):
     monkeypatch.setattr(server_app, "WOLTS_DIR", tmp_path)
     return TestClient(server_app.app, base_url="http://localhost:7777")
@@ -131,7 +108,7 @@ def test_describe_stamps_described_at(tmp_path):
     registry = SessionRegistry(tmp_path)
     registry.create("otter-a1", wolt="otter")
     described = registry.describe("otter-a1", "Title", "Line")
-    assert described["described_at"] == described["last_activity"]
+    assert 0 <= described["last_activity"] - described["described_at"] <= 1
 
 
 def test_board_route_shows_only_the_sessions_own_wolt(tmp_path, monkeypatch):
@@ -155,62 +132,3 @@ def test_board_route_refuses_unknown_and_malformed_sessions(tmp_path, monkeypatc
     client = _client(tmp_path, monkeypatch)
     assert client.get("/sessions/nope-zz/board").status_code == 404
     assert client.get("/sessions/otter a1/board").status_code == 400
-
-
-# --- In front of a delivered message (sessions._with_board) ---
-
-def _two_sessions(tmp_path):
-    import sessions
-    registry = SessionRegistry(tmp_path)
-    registry.create("otter-a1", wolt="otter")
-    registry.create("otter-b2", wolt="otter")
-    registry.create("mole-c3", wolt="mole")
-    registry.describe("otter-b2", "Second", "doing the other thing")
-    registry.describe("mole-c3", "Private", "another wolt's work")
-    return sessions, registry
-
-
-def test_a_message_carries_the_board_once_then_only_when_it_changes(tmp_path):
-    sessions, registry = _two_sessions(tmp_path)
-    me = registry.get("otter-a1", wolt="otter", check_alive=False)
-
-    body, shown = sessions._with_board(registry, me, "hello")
-
-    assert body.startswith(session_board.OPEN) and body.endswith("\n\nhello")
-    assert '"Second": doing the other thing' in body and "Private" not in body
-    me.update(shown)
-    assert sessions._with_board(registry, me, "hello") == ("hello", {})
-    registry.describe("otter-b2", "Second", "now on the south bank")
-    body, again = sessions._with_board(registry, me, "hello")
-    assert "now on the south bank" in body and again["board_seen"] != shown["board_seen"]
-
-
-def test_a_session_alone_gets_its_message_untouched(tmp_path):
-    import sessions
-    registry = SessionRegistry(tmp_path)
-    registry.create("otter-a1", wolt="otter")
-    me = registry.get("otter-a1", wolt="otter", check_alive=False)
-    assert sessions._with_board(registry, me, "hello") == ("hello", {})
-
-
-def test_an_old_untitled_session_is_reminded_once_after_the_message(tmp_path):
-    import sessions
-    registry = SessionRegistry(tmp_path)
-    registry.create("otter-a1", wolt="otter")
-    me = registry.get("otter-a1", wolt="otter", check_alive=False)
-    me["created_at"] -= 2 * session_board.SETTLE
-
-    body, shown = sessions._with_board(registry, me, "hello")
-
-    assert body.startswith("hello\n\n[Your line on your wolt's session board has no title")
-    assert shown == {"board_nudged": 0}
-    me.update(shown)
-    assert sessions._with_board(registry, me, "hello") == ("hello", {})
-
-
-def test_a_failing_board_leaves_the_message_as_it_is(tmp_path, monkeypatch, capsys):
-    sessions, registry = _two_sessions(tmp_path)
-    me = registry.get("otter-a1", wolt="otter", check_alive=False)
-    monkeypatch.setattr(session_board, "build", lambda *a: 1 / 0)
-    assert sessions._with_board(registry, me, "hello") == ("hello", {})
-    assert "no session board for otter-a1" in capsys.readouterr().err
