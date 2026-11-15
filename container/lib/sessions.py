@@ -1561,6 +1561,31 @@ def _wolt_boot_context(data: dict, over: int = 0) -> str:
     )
 
 
+def _boot_board(data: dict) -> str:
+    """What the wolt's other sessions are doing (session_board.py), for a new session's
+    opening message; "" when there is nothing to show. It also records what was shown
+    (board_seen), so the first message delivered afterwards does not repeat it.
+
+    Never raises: a board is a convenience, and a launch must not fail for it."""
+    name, wolt = data.get("name") or "", data.get("wolt_id") or data.get("wolt") or ""
+    if not name or not wolt:
+        return ""
+    try:
+        import session_board
+        registry = SessionRegistry()
+        now = time.time()
+        board = session_board.build(registry.list(wolt=wolt), name, now)
+        text = session_board.render(board, now)
+        if text:
+            with registry.edit(name, wolt=wolt) as record:
+                if record is not None:
+                    record["board_seen"] = session_board.signature(board)
+        return text
+    except Exception as exc:
+        print(f"[sessions] no session board for {name}: {exc}", file=sys.stderr)
+        return ""
+
+
 # A platform-skill invocation, in either delivered spelling: a sigil at the
 # start of a word, then the woltspace namespace (`woltspace:`) or the
 # copy-sync prefix (`woltspace-`), then a name. Anchored on the sigil so a
@@ -1619,6 +1644,9 @@ def _assemble_spawn_prompt(data: dict, prompt: str, harness: str) -> str:
     boot_context = _wolt_boot_context(data)
     if not boot_context:
         return rest
+    board = _boot_board(data)
+    if board:  # after the memory, before the request; part of "the rest", so it is never cut
+        rest = f"{board}\n\n{rest}"
     over = len(f"{boot_context}\n\n{rest}".encode()) - BOOT_PROMPT_MAX_BYTES
     if over > 0:
         boot_context = _wolt_boot_context(data, over=over)

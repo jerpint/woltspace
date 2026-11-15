@@ -204,3 +204,47 @@ def test_real_exec_with_oversized_memory(wolts_dir, tmp_path, harness):
                           str(script)], capture_output=True, text=True)
 
     assert run.returncode == 0, run.stderr
+
+
+# --- The session board in the opening message (session_board.py) ---
+
+def test_a_second_session_reads_what_the_first_is_doing(wolts_dir):
+    _memory(wolts_dir, "I am probe.", "Nothing yet.", "Learn.")
+    first = _opening_prompt(wolts_dir)
+    registry = sessions.SessionRegistry(wolts_dir)
+    earlier = registry.list(wolt=WOLT)[0]["name"]
+    registry.describe(earlier, "Counting logs", "half way through the north bank")
+
+    second = _opening_prompt(wolts_dir)
+
+    assert "[Your other sessions" not in first
+    board = second.split("[/Woltspace boot context]\n\n", 1)[1]
+    assert board.startswith("[Your other sessions")
+    assert f'{earlier} · "Counting logs": half way through the north bank' in board
+    assert board.index("[/Your other sessions]") < board.index(HELLO)
+    (newest,) = [s for s in registry.list(wolt=WOLT) if s["name"] != earlier]
+    assert len(newest["board_seen"]) == 16
+
+
+def test_a_board_that_fails_never_stops_a_launch(wolts_dir, monkeypatch, capsys):
+    import session_board
+    _memory(wolts_dir, "I am probe.", "Nothing yet.", "Learn.")
+    _opening_prompt(wolts_dir)
+    monkeypatch.setattr(session_board, "build", lambda *a: 1 / 0)
+
+    prompt = _opening_prompt(wolts_dir)
+
+    assert "[Your other sessions" not in prompt and prompt.count(HELLO) == 1
+    assert "no session board for" in capsys.readouterr().err
+
+
+def test_the_board_counts_toward_the_limit_and_memory_gives_way(wolts_dir):
+    _oversized(wolts_dir)
+    _opening_prompt(wolts_dir)
+    registry = sessions.SessionRegistry(wolts_dir)
+    registry.describe(registry.list(wolt=WOLT)[0]["name"], "T" * 80, "s" * 240)
+
+    prompt = _opening_prompt(wolts_dir)
+
+    assert len(prompt.encode()) <= sessions.BOOT_PROMPT_MAX_BYTES
+    assert '"' + "T" * 80 + '": ' + "s" * 240 in prompt
