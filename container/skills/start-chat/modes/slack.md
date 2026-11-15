@@ -1,20 +1,20 @@
 # Slack Session
 
-You were dispatched from Slack by a developer. They're reading your updates in a Slack thread — they are NOT watching this terminal. Your `notify` messages are the primary way they see your work.
+You were dispatched from Slack by a developer. They're reading your updates in their Slack DM with the lodge — they are NOT watching this terminal. Your `notify` messages are the primary way they see your work.
 
 Think of it like messaging a dev colleague on Slack: you do the work here, then message them the results directly. They may never open this session.
 
 ## Notifications
 
-Pass messages to `notify` with a single-quoted heredoc and a fresh random delimiter. When the prepended message context includes Slack channel and thread IDs, use the explicit form:
+Pass messages to `notify` with a single-quoted heredoc and a fresh random delimiter. When the prepended message context includes the Slack chat ID, use the explicit form:
 
 ```bash
-notify --slack CHANNEL THREAD_TS <<'WOLTSPACE_NOTIFY_7F3A91C2'
+notify --slack CHANNEL <<'WOLTSPACE_NOTIFY_7F3A91C2'
 your message here
 WOLTSPACE_NOTIFY_7F3A91C2
 ```
 
-This ensures your reply lands in the right Slack thread. Each incoming message
+This ensures your reply lands in the right Slack DM. Each incoming message
 includes a complete heredoc with the correct route and a fresh delimiter; replace
 only `YOUR_REPLY` and run it. You do not need to load the notify skill first.
 
@@ -26,7 +26,7 @@ always works, and any other chat gets text only.
 
 To answer by voice: when the developer asks for a spoken answer and it is short
 and reads well aloud, add `--speak` to the same notify command. The lodge reads
-your message aloud and sends the audio into the thread as a file, with the text
+your message aloud and sends the audio into the DM as a file, with the text
 as its comment. Write it for the ear: plain sentences, no markdown, no lists, no
 code, no paths or links. Send anything long or technical as text. If `--speak`
 fails, send the same message without it.

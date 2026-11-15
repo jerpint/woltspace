@@ -1,4 +1,4 @@
-"""Notification system — send messages to Telegram/Slack.
+"""Notification system — send messages to the owner's chats (Telegram, Slack, ...).
 
 Routing is explicit: the caller (rodent) tells us where to send via adapter flags.
 Falls back to session registry lookup, then Telegram default.
@@ -9,17 +9,15 @@ import json
 import logging
 import mimetypes
 import time
-import urllib.parse
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from secrets import token_hex
 
 from .notification_senders import (
-    slack_send, slack_sender, slack_set_agent_status, telegram_send, telegram_sender,
+    telegram_send, telegram_sender,
     TELEGRAM_MAX_ATTACHMENT_BYTES, telegram_send_audio, telegram_send_document,
     telegram_send_voice,
-    SLACK_MAX_ATTACHMENT_BYTES, slack_upload_file,
 )
 from .notification_types import Attachment, OutboundMessage, Plugin, SendContext
 from .speech import (
@@ -71,22 +69,6 @@ class NoNotificationTarget(RuntimeError):
     """
 
 
-def _slack_session_link(session: str, routing: dict | None) -> str:
-    """Return only the adapter-validated link bound to this exact session."""
-    url = (routing or {}).get("slack_session_link", "")
-    try:
-        parsed = urllib.parse.urlsplit(url)
-        query = urllib.parse.parse_qs(parsed.query, strict_parsing=True)
-    except (TypeError, ValueError):
-        return ""
-    if (parsed.scheme != "https" or not parsed.hostname or parsed.username or
-            parsed.password or parsed.path != "/tui" or parsed.fragment or
-            query != {"session": [session]}):
-        return ""
-    return url
-
-
-
 def read_session_registry(session: str) -> dict | None:
     """The session's registry record, or None."""
     return SessionRegistry(WOLTS_DIR).get(sanitize_session(session), check_alive=False)
@@ -129,17 +111,6 @@ SENDERS = {
         secrets=(),
         max_attachment_bytes=TELEGRAM_MAX_ATTACHMENT_BYTES,
         speech_format="opus",
-    ),
-    "slack": Plugin(
-        "slack", slack_sender(
-            lambda *args: slack_send(*args),
-            lambda *args: slack_set_agent_status(*args),
-            lambda *args: slack_upload_file(*args),
-        ),
-        secrets=("SLACK_BOT_TOKEN",),
-        route_state=("slack_progress_mode", "slack_progress_ts"),
-        max_attachment_bytes=SLACK_MAX_ATTACHMENT_BYTES,
-        speech_format="mp3",
     ),
 }
 
@@ -219,33 +190,6 @@ def _telegram_default() -> str | None:
     return None
 
 
-def _slack_destination(session, chat_id, thread_ts, routing, secrets):
-    if not secrets.get("SLACK_BOT_TOKEN"):
-        raise RuntimeError("SLACK_BOT_TOKEN not set")
-    if not chat_id:
-        chat_id = dotenv_env("SLACK_NOTIFY_CHANNEL")
-    if not chat_id:
-        raise RuntimeError("no slack channel provided and SLACK_NOTIFY_CHANNEL not set")
-    destination = {"channel": chat_id}
-    if thread_ts is not None:
-        destination["thread_ts"] = thread_ts
-    return destination, chat_id, _slack_session_link(session, routing)
-
-
-def _slack_explicit(session, explicit, routing):
-    """A progress surface is usable only when the route is exactly the session's own."""
-    channel = explicit.get("channel", "")
-    thread_ts = explicit.get("thread_ts")
-    exact = bool(
-        routing
-        and routing.get("adapter") == "slack"
-        and routing.get("chat_id") == channel
-        and routing.get("thread_ts") == thread_ts
-    )
-    return {"session": session if exact else "", "chat_id": channel, "thread_ts": thread_ts,
-            "routing": routing if exact else None}
-
-
 # Keyed by connector name; a connector with a manifest must match it.
 OUTBOUND = {
     "telegram": _Outbound(
@@ -255,14 +199,6 @@ OUTBOUND = {
         explicit=_telegram_explicit,
         from_session=_telegram_from_session,
         default_chat=_telegram_default,
-    ),
-    "slack": _Outbound(
-        route_key="channel",
-        destination=_slack_destination,
-        owner_chats=lambda: {dotenv_env("SLACK_NOTIFY_CHANNEL")},
-        explicit=_slack_explicit,
-        from_session=lambda routing: (routing.get("chat_id", ""), routing.get("thread_ts")),
-        history_subdir="slack",
     ),
 }
 
@@ -294,7 +230,8 @@ def _declared_outbound(spec) -> _Outbound:
         return dict(route), route_text, session_link
 
     def explicit(session, explicit, routing):
-        text = str(explicit.get("route", ""))
+        # No route named: the one the connector declares as its default, if set (SLACK_NOTIFY_CHANNEL).
+        text = str(explicit.get("route", "") or (spec.default_route_env and dotenv_env(spec.default_route_env)))
         route = codec.canonical(text)
         # Exact binding: the session's own route keeps the session (and its link).
         exact = codec.matches(route, routing)
@@ -308,7 +245,8 @@ def _declared_outbound(spec) -> _Outbound:
     return _Outbound(
         route_key="route",
         destination=destination,
-        owner_chats=lambda: set(),
+        # Its declared default route (SLACK_NOTIFY_CHANNEL) is the lodge's own, as it was.
+        owner_chats=lambda: {dotenv_env(spec.default_route_env)} if spec.default_route_env else set(),
         explicit=explicit,
         from_session=from_session,
         history_subdir=spec.name,
@@ -650,21 +588,13 @@ async def _send_telegram(session: str, message: str, chat_id: str) -> dict:
     return await _send("telegram", session, message, chat_id)
 
 
-async def _send_slack(
-    message: str, channel: str, thread_ts: str | None = None, *,
-    session: str = "", routing: dict | None = None,
-) -> dict:
-    """Compatibility wrapper; routing and local state remain in core."""
-    return await _send("slack", session, message, channel, thread_ts, routing)
-
-
 async def send_notification(
     session: str, message: str, explicit: dict | None = None, attachments=(), speak=None,
 ) -> dict:
     """Send a notification. Explicit routing takes priority over session lookup.
 
     explicit dict can contain:
-      {"adapter": "slack", "channel": "C123", "thread_ts": "1234.5678"}
+      {"adapter": "slack", "route": "D0000000001"}
       {"adapter": "telegram", "chat_id": "98765"}
 
     attachments is what the request carried: [{"id": <outbox entry>, "name": ...}],

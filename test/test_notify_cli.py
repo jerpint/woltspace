@@ -101,17 +101,17 @@ def test_quoted_heredoc_keeps_command_looking_text_literal(tmp_path):
 def test_notify_prompt_uses_fresh_delimiter_for_valid_route():
     from notify_prompt import notify_heredoc
 
-    first = notify_heredoc("--slack", "C0123ABC", "123.456")
-    second = notify_heredoc("--slack", "C0123ABC", "123.456")
+    first = notify_heredoc("--slack", "C0000000001", "123.456")
+    second = notify_heredoc("--slack", "C0000000001", "123.456")
 
     assert first != second
-    assert "notify --slack C0123ABC 123.456" in first
+    assert "notify --slack C0000000001 123.456" in first
 
 
 def test_notify_prompt_rejects_channel_the_cli_would_reject():
     from notify_prompt import notify_heredoc
 
-    with pytest.raises(ValueError, match="channel has invalid characters"):
+    with pytest.raises(ValueError, match="slack route chat_id is not valid"):
         notify_heredoc("--slack", "channel with spaces", "123.456")
 
 
@@ -162,12 +162,8 @@ def test_rejects_message_arguments_without_sending(tmp_path):
     [
         (["--telegram", "-100123"], {"adapter": "telegram", "chat_id": "-100123"}),
         (
-            ["--slack", "C0123ABC", "123.456"],
-            {
-                "adapter": "slack",
-                "channel": "C0123ABC",
-                "thread_ts": "123.456",
-            },
+            ["--slack", "C0000000001", "123.456"],
+            {"adapter": "slack", "route": "C0000000001"},  # the thread of an old route is ignored
         ),
     ],
 )
@@ -269,7 +265,7 @@ exit 7
     env["SLACK_BOT_TOKEN"] = token
 
     result = subprocess.run(
-        [NOTIFY, "--slack", "C0123ABC", "123.456"],
+        [NOTIFY, "--slack", "C0000000001", "123.456"],
         input=message,
         text=True,
         capture_output=True,
@@ -315,8 +311,8 @@ def test_session_context_inlines_complete_heredocs_for_explicit_routes():
     slack = _adapter_context(
         {
             "adapter": "slack",
-            "chat_id": "C123",
-            "thread_ts": "123.456",
+            "chat_id": "C0000000003",
+            "thread_ts": "123.456",  # an old threaded record: replies go to the flat DM
             "session_url": "https://lodge.test/tui?session=two",
         }
     )
@@ -327,7 +323,7 @@ def test_session_context_inlines_complete_heredocs_for_explicit_routes():
         telegram,
     )
     slack_match = re.search(
-        r"notify --slack C123 123[.]456 <<'(WOLTSPACE_NOTIFY_[A-F0-9]{16})'\n"
+        r"notify --slack C0000000003 <<'(WOLTSPACE_NOTIFY_[A-F0-9]{16})'\n"
         r"YOUR_REPLY\n\1",
         slack,
     )
@@ -411,7 +407,7 @@ def test_file_path_may_be_relative_to_the_current_directory(tmp_path):
 @pytest.mark.parametrize("file_first", [True, False])
 @pytest.mark.parametrize(
     "route_args",
-    [["--telegram", "-100123"], ["--slack", "C0123", "1711234567.890123"]],
+    [["--telegram", "-100123"], ["--slack", "C0000000002", "1711234567.890123"]],
 )
 def test_file_flag_works_before_and_after_route_flags(tmp_path, route_args, file_first):
     env, capture, _ = _file_environment(tmp_path)
@@ -505,7 +501,7 @@ def test_a_bad_file_is_refused_before_stdin_is_read(tmp_path):
         (["--file"], "notify: --file requires PATH"),
         (["--telegram", "123", "--file"], "notify: --file requires PATH"),
         (["--file", "a.html", "--file", "b.html"], "notify: only one --file per notify"),
-        (["--file", "a.html", "--slack", "C0123", "1.2", "--file", "b.html"],
+        (["--file", "a.html", "--slack", "C0000000002", "1.2", "--file", "b.html"],
          "notify: only one --file per notify"),
     ],
 )
@@ -1170,7 +1166,7 @@ def test_help_names_the_voice_flags(tmp_path):
 
 @pytest.mark.parametrize(
     "route",
-    [[], ["--telegram", "12345"], ["--slack", "D0123456789", "1700000000.000100"]],
+    [[], ["--telegram", "12345"]],
 )
 def test_voice_request_and_answer_are_the_ones_the_lodge_really_reads_and_writes(
     tmp_path, monkeypatch, route,
@@ -1198,7 +1194,6 @@ def test_voice_request_and_answer_are_the_ones_the_lodge_really_reads_and_writes
     # The lodge, with its outbound transports replaced: nothing leaves the process.
     lodge_env = {
         "TELEGRAM_BOT_TOKEN": "telegram-token", "TELEGRAM_ALLOWED_USERS": "101,12345",
-        "SLACK_BOT_TOKEN": "slack-token", "SLACK_NOTIFY_CHANNEL": "D0123456789",
     }
     uploaded = []
 
@@ -1209,8 +1204,6 @@ def test_voice_request_and_answer_are_the_ones_the_lodge_really_reads_and_writes
     monkeypatch.setattr(notify, "telegram_send", AsyncMock())
     monkeypatch.setattr(notify, "telegram_send_document", AsyncMock())
     monkeypatch.setattr(notify, "telegram_send_voice", upload)
-    monkeypatch.setattr(notify, "slack_send", AsyncMock())
-    monkeypatch.setattr(notify, "slack_upload_file", upload)
     monkeypatch.setattr(notify, "dotenv_env", lambda key: lodge_env.get(key, ""))
     # Telegram sends through its connector: connected here while the lodge has its token.
     monkeypatch.setattr(notify, "_connector_up",
@@ -1239,7 +1232,7 @@ def test_voice_request_and_answer_are_the_ones_the_lodge_really_reads_and_writes
 
 @pytest.mark.parametrize(
     "route",
-    [[], ["--telegram", "12345"], ["--slack", "D0123456789", "1700000000.000100"]],
+    [[], ["--telegram", "12345"]],
 )
 def test_speak_request_and_answer_are_the_ones_the_lodge_really_reads_and_writes(
     tmp_path, monkeypatch, route,
@@ -1264,7 +1257,6 @@ def test_speak_request_and_answer_are_the_ones_the_lodge_really_reads_and_writes
 
     lodge_env = {
         "TELEGRAM_BOT_TOKEN": "telegram-token", "TELEGRAM_ALLOWED_USERS": "101,12345",
-        "SLACK_BOT_TOKEN": "slack-token", "SLACK_NOTIFY_CHANNEL": "D0123456789",
         "OPENAI_API_KEY": "sk-test",
     }
     said, uploaded = [], []
@@ -1282,8 +1274,6 @@ def test_speak_request_and_answer_are_the_ones_the_lodge_really_reads_and_writes
     monkeypatch.setattr(notify, "telegram_send", AsyncMock())
     monkeypatch.setattr(notify, "telegram_send_document", AsyncMock())
     monkeypatch.setattr(notify, "telegram_send_voice", upload)
-    monkeypatch.setattr(notify, "slack_send", AsyncMock())
-    monkeypatch.setattr(notify, "slack_upload_file", upload)
     monkeypatch.setattr(notify, "dotenv_env", lambda key: lodge_env.get(key, ""))
     # Telegram sends through its connector: connected here while the lodge has its token.
     monkeypatch.setattr(notify, "_connector_up",
@@ -1301,7 +1291,7 @@ def test_speak_request_and_answer_are_the_ones_the_lodge_really_reads_and_writes
     assert response.status_code == 200, response.json()
     # The words alone are spoken, in the format the destination asks for, and
     # the message with its name in front travels as the text.
-    assert said == [("The build is green.", "mp3" if "--slack" in route else "opus")]
+    assert said == [("The build is green.", "opus")]
     assert uploaded == [("voice", OGG, request["message"].rstrip("\n"))]
     assert request["message"].endswith(": The build is green.\n")
     assert _entries(box) == []                          # the lodge removed its audio
@@ -1375,7 +1365,7 @@ def test_a_file_for_a_chat_that_is_not_the_lodge_s_own_is_refused_and_removed(
 
 @pytest.mark.parametrize("legacy, generic", [
     (["--telegram", "-100123"], ["--to", "telegram:-100123"]),
-    (["--slack", "C0123ABC", "123.456"], ["--to", "slack:C0123ABC:123.456"]),
+    (["--slack", "C0000000001", "123.456"], ["--to", "slack:C0000000001:123.456"]),
 ])
 def test_notify_to_sends_what_the_legacy_flag_sends(tmp_path, legacy, generic):
     """`--to <connector>:<route>` is the general form; the old flags are aliases."""

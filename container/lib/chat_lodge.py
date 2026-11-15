@@ -19,7 +19,10 @@ import hashlib
 import json
 import logging
 import random
+import secrets
+import shutil
 import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -39,7 +42,7 @@ from creature_types import emoji_from
 from env_compat import get_env
 from harnesses import platform_skill_invoke
 from notify_prompt import notify_reply_instruction
-from paths import space_dir
+from paths import space_dir, space_outbox_dir
 from sessions import resolve_active_session, wolt_harness
 from skills_sync import wolt_skills_delivery
 from wolts import get_active_creature, wolt_display_name, wolt_exists
@@ -558,9 +561,32 @@ class ChatLodge:
                 pass
         if result["type"] == "image":
             caption = result.get("text") or result.get("caption") or ""
-            await out.say(Reply(caption), photo=result["path"])
+            # A connector sends files from the outbox only: the image is staged there first.
+            try:
+                staged = await asyncio.to_thread(self._stage_image, Path(result["path"]))
+            except (outbox.OutboxError, OSError) as e:
+                logger.error(f"{self.name}: image not staged: {e}")
+                await out.say(Reply(caption or "the image could not be sent"))
+                return
+            await out.say(Reply(caption), photo=str(staged))
         else:
             await out.say(Reply(self.format_response(result)))
+
+    def _stage_image(self, source: Path) -> Path:
+        """A copy of the image in a folder of its own in the outbox, under its own name (what a
+        connector shows). The outbox is swept first, and image folders past its age limit go too."""
+        box = space_outbox_dir(self.wolts_dir)
+        outbox.sweep(box)
+        cutoff = time.time() - outbox.MAX_ENTRY_AGE_SECONDS
+        for old in box.glob("image-*"):
+            if old.is_dir() and old.stat().st_mtime < cutoff:
+                shutil.rmtree(old, ignore_errors=True)
+        outbox.check_source(source)
+        folder = box / f"image-{secrets.token_hex(8)}"
+        folder.mkdir(mode=0o700, parents=True)
+        staged = folder / outbox.display_name(source.name)
+        shutil.copyfile(source, staged)
+        return staged
 
     async def _dog_ack(self, out) -> None:
         try:

@@ -5,19 +5,66 @@
     "background_color": "#3A6644"
   },
   "features": {
-    "agent_view": {
-      "agent_description": "gnaw. build. repeat"
+    "app_home": {
+      "home_tab_enabled": false,
+      "messages_tab_enabled": true,
+      "messages_tab_read_only_enabled": false
     },
     "bot_user": {
       "display_name": "Woltspace",
       "always_online": false
-    }
+    },
+    "slash_commands": [
+      {
+        "command": "/wolt",
+        "description": "switch or show the active wolt",
+        "usage_hint": "[name]",
+        "should_escape": false
+      },
+      {
+        "command": "/new",
+        "description": "start a fresh session",
+        "should_escape": false
+      },
+      {
+        "command": "/sessions",
+        "description": "list sessions",
+        "should_escape": false
+      },
+      {
+        "command": "/holds",
+        "description": "sessions kept awake",
+        "should_escape": false
+      },
+      {
+        "command": "/idle",
+        "description": "when idle sessions rest",
+        "should_escape": false
+      },
+      {
+        "command": "/wapps",
+        "description": "list apps (Slack keeps /apps for itself)",
+        "should_escape": false
+      },
+      {
+        "command": "/kill",
+        "description": "stop a session",
+        "usage_hint": "[name]",
+        "should_escape": false
+      },
+      {
+        "command": "/help",
+        "description": "what you can do here",
+        "should_escape": false
+      }
+    ]
   },
   "oauth_config": {
     "scopes": {
       "bot": [
-        "assistant:write",
         "chat:write",
+        "commands",
+        "files:read",
         "files:write",
         "im:history"
       ]
@@ -26,7 +73,6 @@
   "settings": {
     "event_subscriptions": {
       "bot_events": [
-        "app_home_opened",
         "message.im"
       ]
     },

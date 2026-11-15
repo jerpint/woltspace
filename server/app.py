@@ -838,10 +838,7 @@ async def post_notify(request: Request):
     explicit = {}
     if body.get("adapter"):
         explicit["adapter"] = body["adapter"]
-        if body["adapter"] == "slack":
-            explicit["channel"] = body.get("channel", "")
-            explicit["thread_ts"] = body.get("thread_ts")
-        elif body["adapter"] == "telegram":
+        if body["adapter"] == "telegram":
             explicit["chat_id"] = body.get("chat_id", "")
         else:
             # A connector declared in the registry: its own route text (notify --to).
@@ -1258,7 +1255,7 @@ async def wolt_message(name: str, request: Request):
 
 # --- Session spawning ---
 # All session creation goes through start_session() from container/lib/sessions.py.
-# Each adapter (lodge, telegram, slack) has its own route for adapter-specific params.
+# Each adapter (lodge, telegram) has its own route for adapter-specific params.
 
 @app.post("/sessions/new/create")
 async def session_new_create(request: Request):
@@ -1439,39 +1436,6 @@ async def session_new_telegram(request: Request):
         )
         # Site auto-start + viewport URL handled by start_session()
         print(f"[sessions/telegram] spawned {result['name']} for {wolt}")
-        return result
-    except PermissionError as e:
-        return JSONResponse({"error": str(e)}, status_code=403)
-    except ValueError as e:
-        return JSONResponse({"error": str(e)}, status_code=404)
-    except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=500)
-
-
-@app.post("/sessions/new/slack")
-async def session_new_slack(request: Request):
-    """Start a session from Slack."""
-    body = await request.json()
-    wolt = body.get("wolt")
-    if not wolt:
-        return JSONResponse({"error": "wolt required"}, status_code=400)
-    try:
-        result = start_session(
-            wolt=wolt,
-            prompt=body.get("prompt", ""),
-            creature=body.get("creature", ""),
-            app=body.get("app", ""),
-            workdir=body.get("workdir"),
-            execution_policy=body.get("execution_policy"),
-            routing={
-                "adapter": "slack",
-                "chat_id": body.get("channel", ""),
-                "user_id": body.get("user_id", ""),
-                "thread_ts": body.get("thread_ts", ""),
-            },
-        )
-        # Site auto-start + viewport URL handled by start_session()
-        print(f"[sessions/slack] spawned {result['name']} for {wolt}")
         return result
     except PermissionError as e:
         return JSONResponse({"error": str(e)}, status_code=403)

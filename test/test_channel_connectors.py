@@ -21,7 +21,6 @@ from woltspace.channel_supervisor import (  # noqa: E402
 )
 from woltspace.channels import (  # noqa: E402
     ConnectorPlan,
-    SlackConnector,
     TelegramConnector,
     connector_secrets,
     plan_connectors,
@@ -77,156 +76,29 @@ class TestTelegramPlan:
 
 
 class TestSlackPlan:
-    BASE = {
-        "ENABLE_SLACK_BOT": "true",
-        "SLACK_BOT_TOKEN": "xoxb-test",
-        "SLACK_APP_TOKEN": "xapp-test",
-        "SLACK_OWNER_USER": "U12345678",
-        "WOLTSPACE_ENTRYPOINT": "1",
-    }
+    """Slack runs from its folder, like Telegram, on the config block it always had."""
 
-    def test_disabled_without_an_explicit_owner(self, layout):
-        env = dict(self.BASE)
-        env.pop("SLACK_OWNER_USER")
-        plan = SlackConnector().plan(layout, env)
+    def _plan(self, layout, **slack):
+        write_config(layout, {"channels": {"slack": {"enabled": True, **slack}}})
+        return channels.FolderConnector(channels._registry().spec("slack")).plan(layout, {})
+
+    def test_the_old_config_block_runs_the_folder_connector(self, layout):
+        plan = self._plan(layout, bot_token="xoxb-test", app_token="xapp-test", owner_user="U0000000001")
+        assert plan.enabled is True
+        assert plan.command[-1] == "slack_connector.py"
+        assert (plan.env["SLACK_BOT_TOKEN"], plan.env["SLACK_APP_TOKEN"]) == ("xoxb-test", "xapp-test")
+        assert plan.env["SLACK_OWNER_USER"] == plan.env["WOLTSPACE_CONNECTOR_OWNERS"] == "U0000000001"
+        assert "xoxb-test" not in json.dumps(plan.to_record())
+
+    def test_enabled_without_the_app_token_names_the_fix(self, layout):
+        plan = self._plan(layout, bot_token="xoxb-test", owner_user="U0000000001")
         assert plan.enabled is False
-        assert "owner user ID" in plan.detail
+        assert plan.detail == "enabled without SLACK_APP_TOKEN"
+        assert '"app_token": "<SLACK_APP_TOKEN>"' in plan.remedy
 
-    @pytest.mark.parametrize("owner", ["", "jerpint", "C12345678", "U12 345678"])
-    def test_malformed_owner_configuration_fails_closed(self, layout, owner):
-        plan = SlackConnector().plan(layout, dict(self.BASE, SLACK_OWNER_USER=owner))
-        assert plan.enabled is False
+    def test_slack_is_planned_once_and_only_as_a_folder(self, layout):
+        assert [p.name for p in plan_connectors(layout, {})].count("slack") == 1
 
-    def test_enabled_plan_carries_private_credentials_only_in_child_env(self, layout):
-        plan = SlackConnector().plan(layout, self.BASE)
-        assert plan.enabled is True
-        assert plan.command[-2:] == ("-m", "bot.slack_adapter")
-        assert plan.env["SLACK_OWNER_USER"] == "U12345678"
-        assert plan.env["SLACK_BOT_TOKEN"] == "xoxb-test"
-        public = json.dumps(plan.to_record())
-        assert "xoxb-test" not in public
-        assert "xapp-test" not in public
-        assert "U12345678" not in public
-
-    def test_custom_adapter_environment_cannot_replace_owner_dm_runtime(self, layout):
-        plan = SlackConnector().plan(layout, {
-            **self.BASE,
-            "SLACK_BOT_DIR": "/tmp/legacy-slack",
-            "SLACK_BOT_MODULE": "legacy.slack_adapter",
-        })
-
-        assert plan.cwd == str(layout.install_root / "container")
-        assert plan.command[-2:] == ("-m", "bot.slack_adapter")
-        assert "legacy" not in plan.detail
-
-    def test_config_shape_and_all_three_secrets_are_resolved(self, layout):
-        write_config(layout, {"channels": {"slack": {
-            "enabled": True,
-            "bot_token": "xoxb-config",
-            "app_token": "xapp-config",
-            "owner_user": "U87654321",
-        }}})
-        plan = SlackConnector().plan(layout, {"WOLTSPACE_ENTRYPOINT": "1"})
-        assert plan.enabled is True
-        assert connector_secrets([plan]) == {
-            "SLACK_BOT_TOKEN": "xoxb-config",
-            "SLACK_APP_TOKEN": "xapp-config",
-            "SLACK_OWNER_USER": "U87654321",
-        }
-
-    def test_ambient_tokens_never_start_a_guest(self, layout):
-        env = dict(self.BASE)
-        env.pop("WOLTSPACE_ENTRYPOINT")
-        plan = SlackConnector().plan(layout, env)
-        assert plan.enabled is False
-        assert "not the platform entrypoint" in plan.detail
-
-    def test_enabled_from_data_root_config(self, layout):
-        write_config(layout, {
-            "channels": {
-                "telegram": {"enabled": True, "token": TOKEN, "allowed_users": [7, 8]}
-            }
-        })
-        plan = TelegramConnector().plan(layout, {})
-        assert plan.enabled is True
-        assert plan.command[-2:] == (sys.executable, "telegram_connector.py")
-        assert plan.env["TELEGRAM_BOT_TOKEN"] == TOKEN
-        assert plan.env["TELEGRAM_ALLOWED_USERS"] == "7,8"
-        assert plan.owners == ("7", "8")
-        assert plan.env["WOLTSPACE_CONNECTOR_DATA"] == str(layout.wolts_dir / ".space" / "telegram")
-
-    def test_environment_overrides_the_config_file(self, layout):
-        write_config(layout, {
-            "channels": {"telegram": {"enabled": True, "token": "from-file"}}
-        })
-        plan = TelegramConnector().plan(
-            layout, {"TELEGRAM_BOT_TOKEN": "from-env"}
-        )
-        assert plan.env["TELEGRAM_BOT_TOKEN"] == "from-env"
-
-    def test_environment_can_disable_an_enabled_config(self, layout):
-        write_config(layout, {
-            "channels": {"telegram": {"enabled": True, "token": TOKEN}}
-        })
-        plan = TelegramConnector().plan(layout, {"ENABLE_TELEGRAM_BOT": "false"})
-        assert plan.enabled is False
-
-    def test_enabled_without_a_token_names_the_fix(self, layout):
-        write_config(layout, {"channels": {"telegram": {"enabled": True}}})
-        plan = TelegramConnector().plan(layout, {})
-        assert plan.enabled is False
-        assert "TELEGRAM_BOT_TOKEN" in plan.detail
-        assert "TELEGRAM_BOT_TOKEN" in plan.remedy
-
-    def _container(self, layout):
-        return RuntimeLayout(
-            layout.wolts_dir, layout.install_root, layout.host, layout.port, "external"
-        )
-
-    def test_the_container_runs_the_adapter_on_the_installed_interpreter(self, layout):
-        """The slim image installs `woltspace`, so this one owns it.
-
-        The `bot` uv project now lives inside the installed wheel, where
-        syncing a venv would mean writing into site-packages. When the
-        interpreter running the control plane already has the dependency, it is
-        the interpreter — container or not.
-        """
-        plan = TelegramConnector().plan(self._container(layout), {
-            "WOLTSPACE_ENTRYPOINT": "1",
-            "ENABLE_TELEGRAM_BOT": "true",
-            "TELEGRAM_BOT_TOKEN": TOKEN,
-        })
-        assert plan.enabled is True
-        assert plan.cwd == str(ROOT / "container" / "connectors" / "telegram")
-        assert plan.command == (sys.executable, "telegram_connector.py")
-
-    def test_an_image_missing_dependencies_falls_back_to_the_bot_project(self, layout, monkeypatch):
-        """A container built some other way keeps the uv project it always had."""
-        monkeypatch.setattr(channels, "_module_available", lambda name: False)
-        # Such an image has uv; a test runner need not.
-        monkeypatch.setattr(channels.shutil, "which", lambda name: "/usr/local/bin/uv")
-        plan = TelegramConnector().plan(self._container(layout), {
-            "WOLTSPACE_ENTRYPOINT": "1",
-            "ENABLE_TELEGRAM_BOT": "true",
-            "TELEGRAM_BOT_TOKEN": TOKEN,
-        })
-        assert plan.enabled is True
-        assert plan.command[0].endswith("uv")
-        assert plan.command[1:5] == ("run", "--project", str(ROOT / "container" / "bot"), "python")
-        assert plan.command[-1] == "telegram_connector.py"
-
-    def test_dev_mode_keeps_hot_reload_as_one_supervised_child(self, layout):
-        plan = TelegramConnector().plan(self._container(layout), {
-            "WOLTSPACE_ENTRYPOINT": "1",
-            "ENABLE_TELEGRAM_BOT": "true",
-            "TELEGRAM_BOT_TOKEN": TOKEN,
-            "DEV_MODE": "true",
-        })
-        assert plan.enabled is True
-        assert "watchfiles" in plan.command
-        assert plan.command[-1] == str(ROOT / "container" / "connectors" / "telegram")
-        assert plan.command[-2].endswith(" telegram_connector.py")
-        assert "dev reload" in plan.detail
 
 class TestAmbientEnvironmentIsNeverEnough:
     """A stray `woltspace serve` in the container must not spawn a rival bot.
