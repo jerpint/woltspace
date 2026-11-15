@@ -420,6 +420,26 @@ def cmd_session_describe(args):
         print(f"described → {session}")
 
 
+def cmd_session_board(args):
+    session = args.session or get_env("WOLTSPACE_WOLT_SESSION", "")
+    if not session:
+        print("session id required: run inside a session or pass --session", file=sys.stderr)
+        sys.exit(2)
+    status, result = _req("GET", f"/sessions/{session}/board")
+    if status != 200:
+        print(result.get("error", f"HTTP {status}"), file=sys.stderr)
+        sys.exit(1)
+    if args.json:
+        print(json.dumps(result, indent=2))
+        return
+    print(result["text"] or f"no other session of {result['wolt']} is live or recent"
+          + (f" ({result['more']} older or finished)" if result.get("more") else ""))
+    own = result["own"]
+    if own["stale"]:
+        print("your own line " + ("is out of date" if own["title"] else "is missing")
+              + ': woltspace session describe "Short title" "One line"')
+
+
 HOLD_HELP = """\
 Keep this session from resting while a background task you started runs.
 Only for a background task that must keep running (a build, a dev server, a
@@ -715,6 +735,11 @@ def main():
     sd.add_argument("--session", default="", help="session id (default: current session)")
     sd.add_argument("--json", action="store_true", help="raw JSON output")
     sd.set_defaults(func=cmd_session_describe)
+
+    sb = ssub.add_parser("board", help="what this wolt's other sessions are doing")
+    sb.add_argument("--session", default="", help="session id (default: current session)")
+    sb.add_argument("--json", action="store_true", help="raw JSON output")
+    sb.set_defaults(func=cmd_session_board)
 
     sh = ssub.add_parser("hold", help="keep this session up while a background task runs",
                          description=HOLD_HELP, formatter_class=argparse.RawDescriptionHelpFormatter)

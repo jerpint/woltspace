@@ -519,12 +519,16 @@ class SessionRegistry:
         return data
 
     def describe(self, name: str, title: str, summary: str, *, wolt: str = None) -> dict | None:
-        """Set the short, human-facing description for a session."""
+        """Set the short, human-facing description for a session.
+
+        described_at lets the session board (session_board.py) tell an old line
+        from a current one: update() stamps last_activity too, so the two start equal."""
         return self.update(
             name,
             wolt=wolt,
             title=title,
             summary=summary,
+            described_at=int(time.time()),
         )
 
     def update(self, name: str, *, wolt: str = None, **fields) -> dict | None:
