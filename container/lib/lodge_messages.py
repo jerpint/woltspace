@@ -24,6 +24,8 @@ PICK_THEN_RESEND = (
     "your message was not delivered: pick a wolt above (or send /wolt <name>), "
     "then send it again."
 )
+HELD = "your message is held: pick a wolt above (or send /wolt <name>) and it goes there."
+WAITING = "your first message is still waiting for a wolt: send the next one after you pick."
 
 
 @dataclass
@@ -57,6 +59,11 @@ class MessagePorts:
     # delivering it to a session; session is the one the owner meant, a wake
     # preference only. None (the inbox is off) keeps delivery.
     admit: Callable[[str, str, str | None], Awaitable[None]] | None = None
+    # hold(text): keep the message while the owner picks a wolt; the picker's generation,
+    # or None when another message is already held. None (no hold): ask to resend.
+    hold: Callable[[str], Awaitable[str | None]] | None = None
+    # waiting(): whether a held message waits in this chat; nothing else overtakes it.
+    waiting: Callable[[], Awaitable[bool]] | None = None
     log: Callable[[str, dict], None] = lambda event, data: None
     log_error: Callable[[str], None] = lambda message: None
 
@@ -122,27 +129,36 @@ async def say_switch(p: MessagePorts, old_state: dict, wolt: str, session_name: 
             f"🪵 now talking to {p.creature_emoji(wolt)} {p.lodge.shown(wolt)} ({session_name})"))
 
 
-async def _spawn(p: MessagePorts, chat, state: dict, wolt: str, text: str, announce: str) -> None:
+async def _spawn(p: MessagePorts, chat, state: dict, wolt: str, text: str, announce: str) -> bool:
     try:
         session = p.spawn_with_message(wolt, text)
         state["active_wolt"] = wolt
         state["active_session"] = session["name"]
         p.lodge.save_chat(chat, state)
         await p.say(Reply(f"{announce}\n{_link(p, session['name'])}"))
+        return True
     except Exception as e:
         p.log_error(f"Failed to spawn session for {wolt}: {e}")
         await p.say(Reply(f"couldn't start session for {p.lodge.shown(wolt)}: {e}"))
+        return False
 
 
-async def _choose_wolt(p: MessagePorts, chat, state: dict) -> bool:
-    """With no dog: pick the only wolt, or offer the picker and ask to resend."""
+async def _choose_wolt(p: MessagePorts, chat, state: dict, text: str) -> bool:
+    """With no dog: pick the only wolt, or offer the picker and hold the message (or ask to resend)."""
     wolts = commands.chat_wolts(p.lodge)
     if len(wolts) == 1:
         state["active_wolt"] = commands.wolt_name(wolts[0])
         state.pop("active_session", None)
         p.lodge.save_chat(chat, state)
         return True
-    if wolts:
+    if wolts and p.hold:
+        generation = await p.hold(text)
+        if generation is None:
+            await p.say(Reply(WAITING))
+        else:
+            await p.say(commands.wolt_picker(p.lodge, wolts, None, hold=generation))
+            await p.say(Reply(HELD))
+    elif wolts:
         await p.say(commands.wolt_picker(p.lodge, wolts, None))
         await p.say(Reply(PICK_THEN_RESEND))
     else:
@@ -151,13 +167,21 @@ async def _choose_wolt(p: MessagePorts, chat, state: dict) -> bool:
 
 
 async def route_message(p: MessagePorts, chat, text: str, *, reply_session: str | None = None,
-                        reply_text: str | None = None, dog_content: Any = None) -> None:
+                        reply_text: str | None = None, dog_content: Any = None,
+                        target: str | None = None) -> bool | None:
     """Route one owner message.
 
     `reply_session` is the session whose message this replies to, if any, and
     `reply_text` the message as that session should read it (with the quote).
     `dog_content` is what the dog sees instead of the text (an image, say).
+    `target` is a held message's chosen wolt (inbox off): a new session there,
+    whatever the chat chose since, never the dog; True when it started.
     """
+    if target:
+        return await _spawn(p, chat, p.lodge.load_chat(chat), target, text,
+                            f"🪵 new session for {p.lodge.shown(target)}")
+    # First, for every message: an expired held one is told; a waiting one holds the rest back.
+    held = bool(p.waiting and await p.waiting())
     if reply_session:
         wolt = wolt_from_session_name(reply_session)
         # A reply to a gone wolt's old message is routed like any message.
@@ -182,6 +206,9 @@ async def route_message(p: MessagePorts, chat, text: str, *, reply_session: str 
                          f"🪵 session expired — new one for {wolt}")
             return
 
+    if held:  # a reply to a wolt's own message goes through all the same
+        await p.say(Reply(WAITING))
+        return None
     state = p.lodge.load_chat(chat)
     wolt = state.get("active_wolt")
     session_name = state.get("active_session")
@@ -190,7 +217,7 @@ async def route_message(p: MessagePorts, chat, text: str, *, reply_session: str 
         if p.dog_available():
             await p.ask_dog(text, dog_content)
             return
-        if not await _choose_wolt(p, chat, state):
+        if not await _choose_wolt(p, chat, state, text):
             return
         wolt = state["active_wolt"]
         session_name = None

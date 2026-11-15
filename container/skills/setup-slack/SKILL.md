@@ -99,8 +99,8 @@ With restart approval, record `woltspace status`, restart through the normal
 Woltspace lifecycle, then verify:
 
 - lodge health and the Slack connector are `running`;
-- a DM reaches the active wolt (with none chosen: the picker, then the
-  message sent again after the pick);
+- a DM reaches the active wolt (with none chosen: the picker, and the first
+  message is delivered once after the pick);
 - `/wolt`, `/help` and `!help` (typed, also inside a thread) answer;
 - a reply in a thread under a wolt's message reaches that wolt;
 - a file and a voice note reach the wolt, and `notify --file` arrives in the DM.

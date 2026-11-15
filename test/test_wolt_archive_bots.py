@@ -80,7 +80,7 @@ async def test_chat_pointing_at_a_gone_wolt_goes_to_the_picker(telegram):
     deliver.assert_not_called()
     replies = [c.args[0] for c in update.message.reply_text.await_args_list]
     import lodge_messages
-    assert replies[-1] == lodge_messages.PICK_THEN_RESEND
+    assert replies[-1] == lodge_messages.HELD
     assert "active_wolt" not in adapter._load_chat_state(CHAT)
     assert not (wolts / "pal").exists()
 
