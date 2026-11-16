@@ -1234,7 +1234,9 @@ def get_default_harness() -> str:
         return DEFAULT_HARNESS
 
 
-def get_default_level(harness: str | None, isolation: str) -> str | None:
+def get_default_level(
+    harness: str | None, isolation: str, *, warn_unsupported: bool = False
+) -> str | None:
     """woltspace.json "sessions.default_execution_policy" if this engine offers that
     level here, else None (the built-in default applies)."""
     try:
@@ -1244,7 +1246,11 @@ def get_default_level(harness: str | None, isolation: str) -> str | None:
         return None
     if not isinstance(level, str):  # a malformed value must not break every spawn
         return None
-    return level if level in levels(isolation).get(resolve_harness(harness), {}) else None
+    if level in levels(isolation).get(resolve_harness(harness), {}):
+        return level
+    if warn_unsupported and level in ("prompt", "auto", "bypass"):
+        logger.warning("Unsupported inherited execution policy: requested=%s", level)
+    return None
 
 
 def _load_lodge_settings_for_write() -> tuple[Path, dict]:
