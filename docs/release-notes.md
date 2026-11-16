@@ -1,11 +1,38 @@
-# Woltspace 0.6.0rc3
+# Woltspace 0.6.0rc4
 
-Python **0.6.0rc3** is a release candidate. The TUI stays at
+Python **0.6.0rc4** is a release candidate. The TUI stays at
 **@woltspace/tui 0.5.4**.
 
 A plain `woltspace update` never installs a release candidate: install this
-one by naming it with `--version 0.6.0rc3`. Try it on a lodge you can
+one by naming it with `--version 0.6.0rc4`. Try it on a lodge you can
 restore.
+
+## Since 0.6.0rc3
+
+- **A wolt sees what its other sessions are doing.** A wolt often runs
+  several sessions at once: one per chat, a spawned helper, a scheduled run.
+  A new session now starts with a short board of its wolt's other live and
+  recent sessions: status, last activity, where each listens, and the title
+  and line each wrote with `woltspace session describe`. `woltspace session
+  board` prints it at any time. A wolt only ever sees its own sessions, the
+  board is left out when boot memory needs the room, and a session that never
+  described itself is only counted (#677).
+- **The lodge reports its real permission default.** `/runtime/capabilities`
+  answered Ask on the host even when the lodge default was Auto, so a client
+  that copies that value into its request (older TUI versions did) started
+  sessions in Ask. It now answers with the same default a new session gets.
+  Each session start also logs the level that was asked for and the level
+  used, and warns when the lodge default is one the engine does not offer
+  (#678).
+- **Slack is a chat connector, like Telegram.** One DM with an active wolt:
+  `/wolt` and `/new` switch, a reply under a wolt's message goes to that
+  wolt, and voice notes, images, files, the dog and the inbox work as on
+  Telegram. See "Changes to know about" before upgrading a lodge that uses
+  Slack (#670).
+- **Your first message waits while you pick a wolt.** On every chat
+  connector, a message sent with no wolt chosen is held for up to 10 minutes
+  and delivered once to the wolt you pick, instead of "pick a wolt, then send
+  it again" (#671).
 
 ## Since 0.6.0rc2
 
@@ -75,6 +102,12 @@ Everything below describes 0.6 as a whole, compared with 0.5.25.
   "auto" becomes "bypass"), and from then on 0.5.x refuses to open the lodge.
   Installing 0.5.25 again does not undo it: going back means restoring the
   backup you took before upgrading.
+- **Slack changes shape, and its app needs one reinstall.** Slack is now one
+  flat DM instead of one thread per session, and the "Agent View" status is
+  gone. Slack keeps `/apps` for itself, so the apps list is `/wapps`; inside a
+  thread type `!wolt`, `!new` or `!help`. The `channels.slack` settings are
+  unchanged, but the Slack app gains the `commands` and `files:read` scopes
+  and drops `assistant:write`: update its scopes and reinstall it once (#670).
 - **Pre-releases never become the Latest release** on GitHub (#654).
 - **The container's `version-check` helper is gone**; the update notice and
   `woltspace update --check` cover it (#654).
@@ -96,12 +129,12 @@ are sure you are staying on 0.6:
 
 ```sh
 woltspace backup --tag pre-0.6
-woltspace update --version 0.6.0rc3
+woltspace update --version 0.6.0rc4
 ```
 
 Native upgrades stop and restart the control plane while preserving tmux
 sessions. A container lodge rebuilds from the host with
-`woltspace rebuild --version 0.6.0rc3`.
+`woltspace rebuild --version 0.6.0rc4`.
 
 To go back to 0.5.25, stop the lodge, reinstall 0.5.25 and start it from
 the backup. `woltspace restore` unpacks into a new folder and prints the exact
