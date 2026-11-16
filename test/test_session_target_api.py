@@ -377,3 +377,24 @@ def test_create_wolt_refuses_a_level_its_engine_does_not_offer_before_scaffoldin
     assert response.status_code == 400
     assert response.json()["detail"].startswith("codex does not offer Ask on external")
     assert created == []
+
+
+@pytest.mark.parametrize("level,engine,isolation,want", [
+    ("auto", "claude", "host", "auto"),
+    ("bypass", "claude", "host", "prompt"),
+    ("auto", "pi", "host", "prompt"),
+    ("auto", "codex", "external", "bypass"),
+    ({"private": "sentinel"}, "claude", "host", "prompt"),
+])
+def test_capability_default_respects_engine_and_consent(
+    tmp_path, monkeypatch, caplog, level, engine, isolation, want
+):
+    monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
+    monkeypatch.setenv("WOLTSPACE_ISOLATION", isolation)
+    (tmp_path / "woltspace.json").write_text(json.dumps({
+        "harness": {"default": engine},
+        "sessions": {"default_execution_policy": level},
+    }))
+    caps = asyncio.run(_request("GET", "/runtime/capabilities")).json()
+    assert caps["default_execution_policy"] == want
+    assert not caplog.records  # capability reads never warn

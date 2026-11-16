@@ -727,8 +727,9 @@ def main():
     sp.add_argument("--auto", action="store_true",
                     help="request the engine's Auto level, same as --policy auto")
     sp.add_argument("--policy", choices=("prompt", "auto", "bypass"),
-                    help="Ask, Auto or Bypass (on the host, Auto and Bypass need an"
-                         " exact-path grant); default: the lodge decides")
+                    help="Ask, Auto or Bypass (on the host, Auto and Bypass need an exact-path"
+                         " grant unless the lodge default is Auto, which covers Auto only);"
+                         " default: the lodge decides")
     sp.set_defaults(func=cmd_session_spawn)
 
     sd = ssub.add_parser("describe", help="set this session's title and one-line summary")

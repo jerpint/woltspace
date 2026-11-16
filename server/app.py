@@ -2310,16 +2310,18 @@ async def delete_archived_wolt(name: str):
 @app.get("/runtime/capabilities")
 async def runtime_capabilities():
     context = RuntimeContext.from_env()
+    default_harness = get_default_harness()
     return {
         "isolation": context.isolation,
         "supports_host_workdirs": context.isolation == "host",
         "default_execution_policy": (
-            "prompt" if context.isolation == "host" else "bypass"
+            default_mode(context.isolation, False,
+                         get_default_level(default_harness, context.isolation))
         ),
         "policy_version": POLICY_VERSION,  # the host grant's
         "record_version": RECORD_VERSION,
         "levels": levels(context.isolation),
-        "default_harness": get_default_harness(),  # what a new wolt runs on
+        "default_harness": default_harness,  # what a new wolt runs on
     }
 
 

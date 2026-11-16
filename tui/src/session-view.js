@@ -31,7 +31,7 @@ export const sessionPolicy = (session) => {
 
 // The levels a spawn can ask for; '' leaves the choice to the server.
 export const LEVELS = [
-  ['', 'server default: Bypass, or Ask on a host without a grant'],
+  ['', 'Use lodge default; engine and exact-target consent apply'],
   ['prompt', 'Ask: you approve its actions'],
   ['auto', 'Auto: the engine approves routine actions and asks for the rest'],
   ['bypass', 'Bypass: no checks at all'],

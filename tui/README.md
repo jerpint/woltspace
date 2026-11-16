@@ -34,9 +34,10 @@ node src/main.js       # node >= 22 or bun, host or in-container
 | `q` | quit |
 
 New sessions start in the wolt's home and use the server's permission default.
-On a native lodge, an existing Auto grant for that exact wolt and directory
-selects Auto; without a matching grant, the session uses Prompt. The confirmation
-shows "server default" because the lodge resolves the grant when it spawns.
+The lodge resolves its configured default for the selected engine. Host Bypass
+requires consent for the exact wolt and directory; supported lodge Auto can run
+without that grant. The default selection omits the policy from the request,
+so engine support and exact-target consent apply when the session starts.
 
 ## Design
 
