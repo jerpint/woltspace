@@ -338,6 +338,13 @@ class SessionRegistry:
                   if visible.setdefault(row["wolt"], self._visible(row["wolt"])))
         return [data for data in loaded if data is not None]
 
+    def stored(self, wolt: str) -> list[dict]:
+        """A wolt's session records as stored: no process calls, so a "running" one may
+        have lost its agent since. For readers that must stay cheap (the session board
+        in a new session's opening message); list() is the accurate one."""
+        with self._reader() as conn:
+            return self._rows(conn, wolt)
+
     def _put(self, conn, data: dict) -> None:
         normalized = normalize_session_target(
             data, wolts_dir=self.wolts_dir, fallback_wolt=data.get("wolt", "")
@@ -519,12 +526,16 @@ class SessionRegistry:
         return data
 
     def describe(self, name: str, title: str, summary: str, *, wolt: str = None) -> dict | None:
-        """Set the short, human-facing description for a session."""
+        """Set the short, human-facing description for a session.
+
+        described_at lets the session board (session_board.py) tell an old line
+        from a current one: update() stamps last_activity too, so the two start equal."""
         return self.update(
             name,
             wolt=wolt,
             title=title,
             summary=summary,
+            described_at=int(time.time()),
         )
 
     def update(self, name: str, *, wolt: str = None, **fields) -> dict | None:
@@ -1557,6 +1568,26 @@ def _wolt_boot_context(data: dict, over: int = 0) -> str:
     )
 
 
+def _boot_board(data: dict, room: int) -> str:
+    """What the wolt's other sessions are doing (session_board.py), for a new session's
+    opening message; "" when there is nothing to show or it does not fit in `room` bytes.
+
+    Read from stored records, without process checks: a launch stays as fast as it was,
+    and a "running" row may have lost its agent (its age is shown beside it).
+    Never raises: a board is a convenience, and a launch must not fail for it."""
+    name, wolt = data.get("name") or "", data.get("wolt_id") or data.get("wolt") or ""
+    if not name or not wolt:
+        return ""
+    try:
+        import session_board
+        now = time.time()
+        text = session_board.render(session_board.build(SessionRegistry().stored(wolt), name, now), now)
+        return text if len(text.encode()) <= room else ""
+    except Exception as exc:
+        print(f"[sessions] no session board for {name}: {exc}", file=sys.stderr)
+        return ""
+
+
 # A platform-skill invocation, in either delivered spelling: a sigil at the
 # start of a word, then the woltspace namespace (`woltspace:`) or the
 # copy-sync prefix (`woltspace-`), then a name. Anchored on the sigil so a
@@ -1618,6 +1649,10 @@ def _assemble_spawn_prompt(data: dict, prompt: str, harness: str) -> str:
     over = len(f"{boot_context}\n\n{rest}".encode()) - BOOT_PROMPT_MAX_BYTES
     if over > 0:
         boot_context = _wolt_boot_context(data, over=over)
+    else:  # the board gives way first: it is there only when the memory is whole and it fits
+        board = _boot_board(data, -over - 2)
+        if board:  # after the memory, before the request
+            rest = f"{board}\n\n{rest}"
     return f"{boot_context}\n\n{rest}"
 
 

@@ -1047,6 +1047,30 @@ async def session_describe(session_id: str, request: Request):
     return described
 
 
+@app.get("/sessions/{session_id}/board")
+async def session_board_view(session_id: str):
+    """What the other sessions of this session's wolt are doing (session_board.py).
+
+    The wolt is the session's own, read from its record: a caller names a session,
+    never a wolt, so a board holds one wolt's sessions only."""
+    import session_board
+    from sessions import SessionRegistry
+
+    safe = sanitize_session(session_id)
+    if not safe or safe != session_id:
+        return JSONResponse({"error": "invalid session id"}, status_code=400)
+    registry = SessionRegistry(WOLTS_DIR)
+    me = await asyncio.to_thread(registry.get, safe, check_alive=False)
+    if me is None or not me.get("wolt"):
+        return JSONResponse({"error": "session not found"}, status_code=404)
+    records = await asyncio.to_thread(registry.list, wolt=me["wolt"])
+    now = time.time()
+    board = session_board.build(records, safe, now)
+    return {"session": safe, "wolt": me["wolt"], **board, "text": session_board.render(board, now),
+            "own": {"title": me.get("title") or "", "summary": me.get("summary") or "",
+                    "stale": session_board.stale(me)}}
+
+
 _HOLD_REASON_MAX = 200
 
 

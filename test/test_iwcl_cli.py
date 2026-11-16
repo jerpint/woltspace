@@ -309,6 +309,37 @@ def test_session_describe_requires_session_context(monkeypatch, capsys):
     assert "session id required" in capsys.readouterr().err
 
 
+def test_session_board_prints_the_board_and_says_when_the_own_line_is_missing(monkeypatch, capsys):
+    client = _load_client()
+    asked = []
+    monkeypatch.setenv("WOLTSPACE_WOLT_SESSION", "n00b-maple-a1b2c3")
+
+    def fake_req(method, path, body=None):
+        asked.append((method, path))
+        return 200, {"wolt": "n00b", "rows": [{}], "more": 0, "text": "[the board]",
+                     "own": {"title": "", "summary": "", "stale": True}}
+
+    client["cmd_session_board"].__globals__["_req"] = fake_req
+    client["cmd_session_board"](argparse.Namespace(session="", json=False))
+
+    assert asked == [("GET", "/sessions/n00b-maple-a1b2c3/board")]
+    assert capsys.readouterr().out == (
+        '[the board]\nyour own line is missing: woltspace session describe "Short title" "One line"\n')
+
+
+def test_session_board_with_no_other_session_says_so(monkeypatch, capsys):
+    client = _load_client()
+    client["cmd_session_board"].__globals__["_req"] = lambda *a, **k: (200, {
+        "wolt": "n00b", "rows": [], "untitled": 2, "more": 4, "text": "",
+        "own": {"title": "T", "summary": "s", "stale": False}})
+
+    client["cmd_session_board"](argparse.Namespace(session="n00b-maple-a1b2c3", json=False))
+
+    assert capsys.readouterr().out == (
+        "no other session of n00b has said what it is doing "
+        "(2 live or recent with no title, 4 older or finished)\n")
+
+
 def test_native_cli_delegates_whole_session_noun(tmp_path, monkeypatch):
     from woltspace import cli
 
