@@ -7,6 +7,7 @@ import json
 import os
 import re
 import sys
+from pathlib import Path
 
 from . import __version__, lore
 from .envvars import get_env, warn_legacy_once
@@ -468,11 +469,31 @@ def _db_show(args) -> int:
     return 0
 
 
+def _archive_sessions(layout: RuntimeLayout, wolts_dir) -> int:
+    """Refresh the session archive and say what it did; 1 when a file was skipped."""
+    from . import session_archive
+
+    _graft_runtime_lib()
+    from harnesses import HARNESSES
+
+    report = session_archive.refresh(
+        Path(wolts_dir), HARNESSES, home=layout.home if layout.isolation == "host" else None)
+    lore.plain(f"session archive: {len(report.stored)} new part(s), {len(report.skipped)} skipped")
+    for line in report.skipped + report.not_archived:
+        lore.plain(f"  {line}")
+    return 1 if report.skipped else 0
+
+
 def _backup(args) -> int:
+    from . import session_archive
     from .backup import create_backup, summary_lines
 
     layout = RuntimeLayout.from_env()
     wolts_dir = args.wolts_dir or layout.wolts_dir
+    if args.what == "sessions":
+        return _archive_sessions(layout, wolts_dir)
+    if session_archive.enabled(Path(wolts_dir)) and not args.json:
+        _archive_sessions(layout, wolts_dir)  # first; a skipped file does not stop the snapshot
     try:
         result = create_backup(
             wolts_dir, out_dir=args.out or None, tag=args.tag or None, full=args.full,
@@ -494,6 +515,20 @@ def _backup(args) -> int:
             lore.plain(line, _report_line_style(line))
         lore.blank()
     return 0
+
+
+def _restore_sessions(args) -> int:
+    from .session_archive import restore
+
+    try:
+        restored, refused = restore(Path(args.archive), Path(args.to))
+    except (FileExistsError, OSError) as exc:
+        lore.failure(f"restore-sessions failed: {exc}")
+        return 1
+    lore.plain(f"restored {len(restored)} session file(s) into {args.to}; nothing is resumed")
+    for line in refused:
+        lore.failure(f"not restored: {line}")
+    return 1 if refused else 0
 
 
 def _restore(args) -> int:
@@ -1441,7 +1476,15 @@ def build_parser() -> argparse.ArgumentParser:
     backup.add_argument("--out", default="", help="where to write it (default: beside the wolts dir)")
     backup.add_argument("--wolts-dir", default="", help=argparse.SUPPRESS)
     backup.add_argument("--json", action="store_true")
+    backup.add_argument("what", nargs="?", choices=["sessions"],
+                        help="sessions: refresh the session archive only")
     backup.set_defaults(func=_backup)
+
+    restore_sessions = sub.add_parser(
+        "restore-sessions", help="rebuild session files from a session archive into a new directory")
+    restore_sessions.add_argument("archive", help="the session archive (<data root>/.space/session-archive)")
+    restore_sessions.add_argument("--to", required=True, help="target directory (must be new or empty)")
+    restore_sessions.set_defaults(func=_restore_sessions)
 
     restore = sub.add_parser("restore", help="extract a backup archive into a new directory")
     restore.add_argument("archive")

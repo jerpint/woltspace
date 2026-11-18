@@ -143,6 +143,8 @@ SLIM_TRANSCRIPT_PREFIXES = (
 #: included (it is the lodge, not an app's database). Logs are not context.
 SLIM_ROOT_CONTEXT = (".space/", ".state/", "woltspace.json")
 SLIM_ROOT_SKIPPED = (".space/logs/",)
+#: The session archive is kept on its own (woltspace backup sessions), never in a snapshot.
+SESSION_ARCHIVE = ".space/session-archive"
 
 #: Slim: anything else is kept only when it is text or code of at most
 #: SLIM_TEXT_MAX bytes. A file with no suffix (Dockerfile, LICENSE, a git ref)
@@ -515,6 +517,10 @@ def scan_tree(wolts_dir: Path, *, full: bool = True) -> Scan:
         for name in sorted(dirnames):
             child = here / name
             rel = _rel(wolts_dir, child)
+            if rel == SESSION_ARCHIVE:
+                dirnames.remove(name)
+                drop_dir(rel, child)
+                continue
             if child.is_symlink():
                 # A symlinked directory is a link, not a subtree: archive the
                 # link itself and never descend through it.

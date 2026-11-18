@@ -619,7 +619,7 @@ OPENROUTER_MODEL_CATALOG = [
 ]
 
 
-HARNESSES = {
+HARNESSES: dict[str, dict] = {
     "claude": {
         "wrapper": WCLAUDE,
         "command": _claude_command,
@@ -662,6 +662,8 @@ HARNESSES = {
         # paths (2+ paths, each on its own line). Measured 2026-10-17 on
         # 2.1.302: a 0.5s settle submitted 3 of 3 with 4 and with 8 screenshots.
         "paste_settle": 0.5,
+        # where its session files live, under a wolt (or natively the owner's home)
+        "session_files": (".claude/projects", ".claude-state/projects"),
     },
     "codex": {
         "wrapper": WCODEX,
@@ -707,6 +709,7 @@ HARNESSES = {
         # paste (message stays in the composer). Verified live: 0.5s settle
         # before the Enter keystroke submits reliably.
         "paste_settle": 0.5,
+        "session_files": (".codex/sessions", ".codex/archived_sessions"),
     },
     "opencode": {
         "wrapper": WOPENCODE,
@@ -790,6 +793,7 @@ HARNESSES = {
         # codex's proven 0.5s settle for the resume-delivery paste path; can drop
         # to 0.0 if live IWCL delivery proves it submits cleanly.
         "paste_settle": 0.5,
+        "session_store": "database",  # not in the session archive: snapshots only
     },
     "pi": {
         "wrapper": WPI,
@@ -821,6 +825,7 @@ HARNESSES = {
         # Benched on Pi 1.1.0: a bracketed multi-line paste arrives as one
         # message; the settle is kept as a margin.
         "paste_settle": 0.5,
+        "session_files": (".pi/agent/sessions",),
     },
     "hermes": {
         "wrapper": WHERMES,
@@ -861,6 +866,7 @@ HARNESSES = {
         # Benched on 0.19.0: a bracketed paste arrives as one message (an
         # unbracketed one submits at the first newline). Settle kept as margin.
         "paste_settle": 0.5,
+        "session_store": "database",  # state.db: not in the session archive, snapshots only
     },
 }
 

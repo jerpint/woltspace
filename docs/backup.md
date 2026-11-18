@@ -477,6 +477,34 @@ Back up inside it too and copy the archive out: `docker exec -u node
 the mount, so `docker cp <container>:/workspace/woltspace-backup-<tag>.tar.gz .`;
 for an encrypted one the container needs `-e WOLTSPACE_BACKUP_AGE_RECIPIENT`.
 
+## The session archive
+
+A lodge whose `woltspace.json` sets `"sessions": {"keep_days": ...}` also keeps
+every engine session file for good, in `.space/session-archive/` (owner-only:
+folders 0700, files 0600). Each `woltspace backup` refreshes it first;
+`woltspace backup sessions` refreshes it on its own. Snapshots leave the folder
+out, so they do not grow with it. Unset, nothing changes.
+
+```bash
+woltspace backup sessions                     # store what is new
+woltspace restore-sessions <data root>/.space/session-archive --to ~/sessions-back
+```
+
+- **What:** the session files each engine's harness entry names (Claude Code,
+  Codex, Pi) under every wolt. opencode and Hermes keep sessions in a database:
+  they are listed as "snapshots only". Natively, from your own `~/.claude`,
+  `~/.codex` and `~/.pi`, a file is taken only when the working folder recorded
+  inside it is in the lodge; one that does not say is skipped and reported.
+- **Only the new part:** a JSONL session that grew stores just the complete lines
+  added since last time (a half-written last line waits for the next run); a
+  rewritten file is stored as a whole new version, and old versions stay.
+- **Names from content** (`<file mtime UTC>-<sha256>`): every file is read
+  and hashed each run, so a re-run never stores anything twice.
+- **Restore** writes each file's newest version under `--to/root/<path>` (or
+  `home/<path>`), byte for byte, with its original time. Each part names the
+  digest of what it continues; a missing or damaged part stops that one file
+  with a message, never a shorter file. Nothing is resumed.
+
 ## Off the machine: a bucket (Cloudflare R2)
 
 `woltspace backup` writes files; getting them off the machine is `rclone`'s
