@@ -27,15 +27,18 @@ import gzip
 import hashlib
 import json
 import os
+import re
+import shutil
 import stat
+import subprocess
 import time
 import zlib
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 
+from .backup import AGE_RECIPIENT_ENV, _encryption, sealed_file, secret_rule
 from .backup import SESSION_ARCHIVE as ARCHIVE
-from .backup import secret_rule
 
 FORMAT = "v1"
 
@@ -292,3 +295,75 @@ def restore(archive: Path, to: Path) -> tuple[list[str], list[str]]:
             os.utime(version, ns=(time.time_ns(), head["source_mtime_ns"]))
             restored.append(f"versions/{meta['origin']}:{meta['path']}.v{number}")
     return restored, refused
+
+
+SENT = "sent.txt"  # parts already confirmed uploaded (see mark_sent)
+
+
+def _sent(archive: Path) -> set[str]:
+    try:
+        return set((archive / SENT).read_text().split())
+    except OSError:
+        return set()
+
+
+def write_out(wolts_dir: Path, out: Path) -> list[str]:
+    """Every archived part not yet sent, gzipped then age-encrypted to the
+    snapshot key, as <format>/<source id>/<part>.gz.age plus its .json.gz.age.
+    The names hold no path (inside the encrypted metadata only) and stay under
+    200 bytes. Files already in out are left alone; nothing counts as sent until
+    mark_sent says the upload worked."""
+    encryption = _encryption()
+    if encryption is None:
+        raise ValueError(f"{AGE_RECIPIENT_ENV} is not set: session parts are never written out in plaintext")
+    archive, written = Path(wolts_dir) / ARCHIVE, []
+    sent = _sent(archive)
+    for meta in sorted((archive / FORMAT).glob("*/*.json")):
+        part = f"{meta.parent.name}/{meta.stem}"
+        if part in sent:
+            continue
+        for source, suffix in ((meta.with_suffix(""), ".gz.age"), (meta, ".json.gz.age")):
+            target = Path(out) / FORMAT / meta.parent.name / f"{meta.stem}{suffix}"
+            if target.exists():
+                continue
+            target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            with sealed_file(target, encryption) as sink, gzip.GzipFile(fileobj=sink, mode="wb", mtime=0) as packed:
+                packed.write(source.read_bytes())
+        written.append(part)
+    return written
+
+
+def mark_sent(wolts_dir: Path, out: Path) -> int:
+    """Run only after the upload of out worked: its parts are not written out again."""
+    archive = Path(wolts_dir) / ARCHIVE
+    done = {f"{p.parent.name}/{p.name.removesuffix('.json.gz.age')}"
+            for p in (Path(out) / FORMAT).glob("*/*.json.gz.age")}
+    with open(archive / ".lock", "a") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        _write(archive / SENT, "".join(f"{part}\n" for part in sorted(_sent(archive) | done)).encode())
+    return len(done)
+
+
+LOCK_PROBE = "sessions/lock-probe"  # one fixed tiny object, so checks never pile up locked files
+_LOCKED = re.compile(r"object ?lock|locked", re.IGNORECASE)
+
+
+def check_lock(remote: str) -> tuple[str, str]:
+    """Try to delete the probe with the lodge's own token: ("on", ...) only for
+    the storage's object-lock refusal, ("off", ...) when it went, and ("unknown",
+    ...) for anything else (no rclone, no probe, a network or token error)."""
+    rclone, target = shutil.which("rclone"), f"{remote.rstrip('/')}/{LOCK_PROBE}"
+    if not rclone:
+        return "unknown", "rclone is not on PATH"
+    try:
+        seen = subprocess.run([rclone, "lsf", target], capture_output=True, text=True, timeout=120, check=False)
+        if seen.returncode != 0 or not seen.stdout.strip():
+            return "unknown", f"cannot see {target}: {seen.stderr.strip()[-300:] or 'missing'}"
+        tried = subprocess.run([rclone, "deletefile", target], capture_output=True, text=True, timeout=120, check=False)
+    except subprocess.TimeoutExpired:
+        return "unknown", "rclone timed out"
+    if tried.returncode == 0:
+        return "off", f"the lodge's own token deleted {target}: the lock is OFF (put the probe back)"
+    if _LOCKED.search(tried.stderr):
+        return "on", "the storage refused the delete: the object is locked"
+    return "unknown", tried.stderr.strip()[-300:] or f"rclone exit {tried.returncode}"

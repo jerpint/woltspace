@@ -634,6 +634,44 @@ lock stops overwrites, not new objects). Before you boot, check that the
 manifest's `tag`, `created_at` and `woltspace_version` are the snapshot you
 meant: a date far older than the tag, or a version you never ran, means stop.
 
+### Sessions to the bucket
+
+The session archive (above) goes to its own prefix, `lodges/<lodge>/sessions/`,
+locked with **no time limit** and with no lifecycle (delete) rule on it. Once,
+before the lock goes on, put the lock probe there (a tiny fixed object):
+
+```bash
+echo probe | rclone rcat "r2:<bucket>/lodges/<lodge>/sessions/lock-probe"
+npx wrangler r2 bucket lock add <bucket> keep-sessions lodges/<lodge>/sessions/ --retention-indefinite
+```
+
+Then three lines at the end of the daily script. Only parts not yet sent are
+written out, gzipped then encrypted to the same age key; object names are an
+opaque source id and a content digest, never a path or a wolt name. `copy`,
+never `sync`, and the folder goes only when the upload worked:
+
+```bash
+sessions=~/.woltspace/session-out
+woltspace backup sessions --out "$sessions"
+rclone copy --ignore-existing "$sessions" "$dest/sessions/" && woltspace backup sessions --sent "$sessions" && rm -rf "$sessions"
+```
+
+`woltspace backup sessions check-lock --remote "$dest"` tries to delete the
+probe with the lodge's own token: **ON** only when the storage refuses because
+the object is locked; **OFF** (it was deleted: put it back) or **UNKNOWN** (no
+probe, a token or network error) exit non-zero. While the rule is off, the
+whole `sessions/` prefix is unprotected; your admin key never lives on the lodge.
+
+To restore, on your own machine with the read-only token and the age key:
+
+```bash
+rclone copy "r2:<bucket>/lodges/<lodge>/sessions/" r2-sessions/
+cd r2-sessions && find v1 -name '*.gz.age' | while read -r f; do
+  mkdir -p "../plain/$(dirname "$f")"; age -d -i key.txt "$f" | gunzip > "../plain/${f%.gz.age}"
+done
+woltspace restore-sessions ../plain --to ~/sessions-back
+```
+
 ### The restore checks
 
 A backup nobody has restored is a rumour too. The lodge cannot restore its own

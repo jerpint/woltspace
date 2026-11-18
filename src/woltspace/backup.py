@@ -845,6 +845,46 @@ def keep_secrets(wolts_dir: Path, scan: Scan) -> None:
         scan.entries.append(Entry(wolts_dir / item["path"], f"{ARCHIVE_ROOT}/{item['path']}", "file"))
 
 
+@contextmanager
+def sealed_file(path: Path, encryption: tuple[str, str] | None):
+    """A new 0600 file to write into, through `age` when encrypting, so no
+    plaintext reaches the disk. On any failure the file goes, with age's own
+    error when it has one."""
+    fd = _owner_only(path)
+    age = None
+    try:
+        if encryption:
+            try:
+                age = subprocess.Popen(
+                    [encryption[0], "-r", encryption[1]],
+                    stdin=subprocess.PIPE, stdout=fd, stderr=subprocess.PIPE,
+                )
+            finally:
+                os.close(fd)
+            assert age.stdin is not None and age.stderr is not None  # both piped above
+            sink = age.stdin
+        else:
+            sink = os.fdopen(fd, "wb")
+        with sink:
+            yield sink
+        if age:
+            error = (age.stderr.read() if age.stderr else b"").decode(errors="replace").strip()
+            if age.wait() != 0:
+                raise OSError(f"age could not encrypt the archive: {error}")
+    except BaseException as exc:
+        path.unlink(missing_ok=True)
+        if age is None:
+            raise
+        if age.poll() is None:
+            age.kill()
+        error = (age.stderr.read() if age.stderr else b"").decode(errors="replace").strip()
+        age.wait()
+        if isinstance(exc, OSError) and error:
+            # A broken pipe means age gave up first; its stderr says why.
+            raise OSError(f"age could not encrypt the archive: {error}") from exc
+        raise
+
+
 def create_backup(
     wolts_dir: Path | str, *, out_dir: Path | str | None = None, tag: str | None = None,
     full: bool = False,
@@ -876,38 +916,8 @@ def create_backup(
     manifest = build_manifest(wolts_dir, tag, scan)
     manifest["secrets"] = secrets
 
-    fd = _owner_only(archive)
-    age = None
-    try:
-        if encryption:
-            try:
-                age = subprocess.Popen(
-                    [encryption[0], "-r", encryption[1]],
-                    stdin=subprocess.PIPE, stdout=fd, stderr=subprocess.PIPE,
-                )
-            finally:
-                os.close(fd)
-            sink = age.stdin
-        else:
-            sink = os.fdopen(fd, "wb")
-        with sink, tarfile.open(fileobj=sink, mode="w|gz") as tar:
-            _write_members(tar, scan, manifest)
-        if age:
-            error = age.stderr.read().decode(errors="replace").strip()
-            if age.wait() != 0:
-                raise OSError(f"age could not encrypt the archive: {error}")
-    except BaseException as exc:
-        archive.unlink(missing_ok=True)
-        if age is None:
-            raise
-        if age.poll() is None:
-            age.kill()
-        error = age.stderr.read().decode(errors="replace").strip()
-        age.wait()
-        if isinstance(exc, OSError) and error:
-            # A broken pipe means age gave up first; its stderr says why.
-            raise OSError(f"age could not encrypt the archive: {error}") from exc
-        raise
+    with sealed_file(archive, encryption) as sink, tarfile.open(fileobj=sink, mode="w|gz") as tar:
+        _write_members(tar, scan, manifest)
 
     if encryption:
         with archive.open("rb") as sealed:

@@ -486,6 +486,31 @@ def _archive_sessions(layout: RuntimeLayout, wolts_dir, *, quiet: bool = False) 
     return 1 if report.skipped else 0
 
 
+def _sessions_command(args, layout: RuntimeLayout, wolts_dir) -> int:
+    """woltspace backup sessions [--out DIR | --sent DIR] | check-lock --remote R"""
+    from . import session_archive
+
+    if args.action == "check-lock":
+        if not args.remote:
+            lore.failure("check-lock needs --remote <rclone remote>:<bucket>/lodges/<lodge>")
+            return 2
+        state, why = session_archive.check_lock(args.remote)
+        (lore.plain if state == "on" else lore.failure)(f"session lock: {state.upper()}: {why}")
+        return 0 if state == "on" else 1
+    if args.sent:
+        lore.plain(f"{session_archive.mark_sent(Path(wolts_dir), Path(args.sent))} part(s) marked sent")
+        return 0
+    failed = _archive_sessions(layout, wolts_dir)
+    if args.out:
+        try:
+            written = session_archive.write_out(Path(wolts_dir), Path(args.out))
+        except (OSError, ValueError) as exc:
+            lore.failure(f"sessions not written out: {exc}")
+            return 1
+        lore.plain(f"{len(written)} part(s) written out to {args.out}, encrypted")
+    return failed
+
+
 def _backup(args) -> int:
     from . import session_archive
     from .backup import create_backup, summary_lines
@@ -496,7 +521,7 @@ def _backup(args) -> int:
         lore.failure('the session archive is off: set "sessions": {"keep_days": null} in woltspace.json')
         return 2
     if args.what == "sessions":
-        return _archive_sessions(layout, wolts_dir)
+        return _sessions_command(args, layout, wolts_dir)
     archive_failed = False
     if session_archive.enabled(Path(wolts_dir)):
         try:  # first; neither a skipped file nor an error here may cost the night's snapshot
@@ -1487,7 +1512,11 @@ def build_parser() -> argparse.ArgumentParser:
     backup.add_argument("--wolts-dir", default="", help=argparse.SUPPRESS)
     backup.add_argument("--json", action="store_true")
     backup.add_argument("what", nargs="?", choices=["sessions"],
-                        help="sessions: refresh the session archive only")
+                        help="sessions: refresh the session archive only (--out DIR: also encrypt new parts there)")
+    backup.add_argument("action", nargs="?", choices=["check-lock"],
+                        help="check-lock: is the bucket's sessions/ lock on (needs --remote)")
+    backup.add_argument("--sent", default="", help="sessions: DIR was uploaded; do not write its parts out again")
+    backup.add_argument("--remote", default="", help="check-lock: <rclone remote>:<bucket>/lodges/<lodge>")
     backup.set_defaults(func=_backup)
 
     restore_sessions = sub.add_parser(
