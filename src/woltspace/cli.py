@@ -486,10 +486,59 @@ def _archive_sessions(layout: RuntimeLayout, wolts_dir, *, quiet: bool = False) 
     return 1 if report.skipped else 0
 
 
+def _delete_sessions(args, layout: RuntimeLayout, wolts_dir) -> int:
+    """woltspace backup sessions delete --session ID | --before YYYY-MM-DD [--yes]"""
+    from datetime import UTC, datetime
+
+    from . import session_archive
+
+    if bool(args.session) == bool(args.before):
+        lore.failure("delete needs exactly one of --session ID or --before YYYY-MM-DD")
+        return 2
+    try:
+        before = datetime.strptime(args.before, "%Y-%m-%d").replace(tzinfo=UTC) if args.before else None
+    except ValueError:
+        lore.failure(f"--before wants YYYY-MM-DD, not {args.before!r}")
+        return 2
+    home = layout.home if layout.isolation == "host" else None
+    _graft_runtime_lib()
+    from harnesses import HARNESSES
+    from sessions import SessionRegistry, stored_resume_id
+
+    session_archive.refresh(Path(wolts_dir), HARNESSES, home=home)  # so the engine files are known
+    plan = session_archive.plan_delete(Path(wolts_dir), session=args.session, before=before, home=home)
+    running = {stored_resume_id(r) for r in SessionRegistry(wolts_dir).records()
+               if r.get("status") in ("running", "stopping") or r.get("launching")} - {""}
+    if busy := sorted(s for s in plan.sources if any(rid in s for rid in running)):
+        lore.failure(f"refused: running session(s): {', '.join(busy)}; stop them first")
+        return 1
+    for label, items in (("sessions", plan.sources), ("engine files", plan.engine_files),
+                         ("archive parts", plan.parts), ("bucket keys (under sessions/)", plan.keys)):
+        lore.plain(f"{label}: {len(items)}")
+        for item in items:
+            lore.plain(f"  {item}")
+    if not plan.sources:
+        lore.plain("nothing matches")
+        return 0
+    if not args.yes:
+        lore.plain("nothing deleted: run again with --yes to delete exactly this")
+        return 0
+    listing = session_archive.delete(Path(wolts_dir), plan)
+    lore.plain(f"deleted from this lodge; bucket keys listed in {listing}")
+    lore.plain("For the bucket, on your own machine with your admin access (never on the lodge):")
+    lore.plain("  1. turn the sessions/ lock rule off (the whole prefix is unprotected until step 3)")
+    lore.plain(f"  2. rclone delete --files-from {listing.name} r2:<bucket>/lodges/<lodge>/sessions/")
+    lore.plain("  3. turn the rule back on, then: woltspace backup sessions check-lock --remote r2:<bucket>/lodges/<lodge>")
+    lore.plain("Snapshots that already hold these files are locked: they keep them until they expire.")
+    return 0
+
+
 def _sessions_command(args, layout: RuntimeLayout, wolts_dir) -> int:
     """woltspace backup sessions [--out DIR | --sent DIR] | check-lock --remote R"""
     from . import session_archive
 
+    if args.action == "delete":
+        return _delete_sessions(args, layout, wolts_dir)
     if args.action == "check-lock":
         if not args.remote:
             lore.failure("check-lock needs --remote <rclone remote>:<bucket>/lodges/<lodge>")
@@ -1513,8 +1562,12 @@ def build_parser() -> argparse.ArgumentParser:
     backup.add_argument("--json", action="store_true")
     backup.add_argument("what", nargs="?", choices=["sessions"],
                         help="sessions: refresh the session archive only (--out DIR: also encrypt new parts there)")
-    backup.add_argument("action", nargs="?", choices=["check-lock"],
-                        help="check-lock: is the bucket's sessions/ lock on (needs --remote)")
+    backup.add_argument("action", nargs="?", choices=["check-lock", "delete"],
+                        help="check-lock: is the bucket's sessions/ lock on (needs --remote); "
+                             "delete: one session or everything before a date, everywhere")
+    backup.add_argument("--session", default="", help="delete: the session id")
+    backup.add_argument("--before", default="", help="delete: sessions last written before YYYY-MM-DD (UTC)")
+    backup.add_argument("--yes", action="store_true", help="delete: do it (without, only list)")
     backup.add_argument("--sent", default="", help="sessions: DIR was uploaded; do not write its parts out again")
     backup.add_argument("--remote", default="", help="check-lock: <rclone remote>:<bucket>/lodges/<lodge>")
     backup.set_defaults(func=_backup)

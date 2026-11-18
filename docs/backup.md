@@ -674,6 +674,22 @@ done
 woltspace restore-sessions ../archive --to ~/sessions-back
 ```
 
+### Deleting a session on purpose
+
+```bash
+woltspace backup sessions delete --session <id>          # lists what it would delete
+woltspace backup sessions delete --before 2026-01-01 --yes
+```
+
+It lists every copy first (the sessions, the engine's own files, the archive
+parts, the bucket keys) and deletes only with `--yes`; it refuses a session
+that is running. It removes the engine files and the archive parts at once and
+writes the bucket keys to `.space/session-archive/deletes/<time>.txt`. The
+lodge cannot delete from the locked prefix, by design: the command prints your
+steps (rule off, `rclone delete --files-from <list>` with your own access, rule
+back on, `check-lock`). Snapshots that already hold the files are locked too:
+they keep them until they expire. For a leaked secret, rotate the secret first.
+
 ### The restore checks
 
 A backup nobody has restored is a rumour too. The lodge cannot restore its own

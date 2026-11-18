@@ -372,3 +372,50 @@ def check_lock(remote: str) -> tuple[str, str]:
     if _LOCKED.search(tried.stderr):
         return "on", "the storage refused the delete: the object is locked"
     return "unknown", tried.stderr.strip()[-300:] or f"rclone exit {tried.returncode}"
+
+
+@dataclass
+class DeletePlan:
+    sources: list[str] = field(default_factory=list)
+    engine_files: list[Path] = field(default_factory=list)
+    parts: list[Path] = field(default_factory=list)
+    keys: list[str] = field(default_factory=list)  # bucket keys under sessions/
+
+
+def plan_delete(wolts_dir: Path, *, session: str = "", before: datetime | None = None,
+                home: Path | None = None) -> DeletePlan:
+    """Every archived source of one session (its id in the path), or whose
+    newest version is older than `before`: its engine file, its parts, and the
+    bucket keys they were sent under. Each source's parts are its own, so no
+    other session is touched."""
+    plan, archive = DeletePlan(), Path(wolts_dir) / ARCHIVE / FORMAT
+    for folder in sorted(p for p in archive.iterdir() if p.is_dir()) if archive.is_dir() else []:
+        parts = _parts(folder)
+        if not parts:
+            continue
+        last = parts[-1]
+        if not ((session and session in last["path"])
+                or (before and last["source_mtime_ns"] < before.timestamp() * 1e9)):
+            continue
+        plan.sources.append(f"{last['origin']}:{last['path']}")
+        base = Path(wolts_dir) if last["origin"] == "root" else home
+        if base is not None and (base / last["path"]).is_file():
+            plan.engine_files.append(base / last["path"])
+        for meta in parts:
+            plan.parts += [folder / meta["name"], folder / f"{meta['name']}.json"]
+            plan.keys += [f"{FORMAT}/{folder.name}/{meta['name']}{suffix}" for suffix in (".gz.age", ".json.gz.age")]
+    return plan
+
+
+def delete(wolts_dir: Path, plan: DeletePlan) -> Path:
+    """Remove the engine files and archive parts now; write the bucket keys for
+    the owner's own delete there. Returns the key list's path."""
+    for path in plan.engine_files + plan.parts:
+        path.unlink(missing_ok=True)
+    for folder in {path.parent for path in plan.parts}:
+        if folder.is_dir() and not any(folder.iterdir()):
+            folder.rmdir()
+    listing = Path(wolts_dir) / ARCHIVE / "deletes" / f"{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}.txt"
+    listing.parent.mkdir(mode=0o700, exist_ok=True)
+    _write(listing, "".join(f"{key}\n" for key in plan.keys).encode())
+    return listing
