@@ -181,14 +181,11 @@ class BrokenChain(ValueError):
     pass
 
 
-def _join(folder: Path) -> tuple[dict, bytes]:
-    """The newest version of one source, from its last part back to a whole
-    one; a missing or damaged part stops it: never a shorter file."""
-    parts = _parts(folder)
-    if not parts:
-        raise BrokenChain(f"{folder.name}: no readable part")
+def _join(folder: Path, parts: list[dict], head: dict) -> bytes:
+    """One version of a source, from its last part (head) back to a whole one;
+    a missing or damaged part stops it: never a shorter file."""
     by_total = {meta["total_sha256"]: meta for meta in parts}
-    chain = [parts[-1]]
+    chain = [head]
     while chain[-1]["continues"]:
         if chain[-1]["continues"] not in by_total:
             raise BrokenChain(f"{chain[-1]['path']}: the part before {chain[-1]['name']} is missing")
@@ -203,19 +200,26 @@ def _join(folder: Path) -> tuple[dict, bytes]:
                 meta["continues"] and _sha(data) != meta["continues"]):
             raise BrokenChain(f"{meta['path']}: part {meta['name']} is damaged")
         data += part
-    return chain[0], data
+    return data
 
 
 def restore(archive: Path, to: Path) -> tuple[list[str], list[str]]:
     """Every source's newest version as a plain file under to/<origin>/<path>,
-    with its original mtime; inert: nothing is resumed. (restored, refused)."""
+    with its original mtime, and each earlier version that a rewrite left
+    (a chain nothing continues) beside it as <path>.v1, .v2, ... oldest first.
+    Inert: nothing is resumed. (restored, refused)."""
     to = Path(to)
     if to.exists() and any(to.iterdir()):
         raise FileExistsError(f"{to} is not empty")
     restored, refused = [], []
     for folder in sorted(p for p in (Path(archive) / FORMAT).iterdir() if p.is_dir()):
+        parts = _parts(folder)
+        if not parts:
+            refused.append(f"{folder.name}: no readable part")
+            continue
+        meta, continued = parts[-1], {m["continues"] for m in parts if m["continues"]}
         try:
-            meta, data = _join(folder)
+            data = _join(folder, parts, meta)
         except BrokenChain as exc:
             refused.append(str(exc))
             continue
@@ -228,4 +232,14 @@ def restore(archive: Path, to: Path) -> tuple[list[str], list[str]]:
         _write(target, data)
         os.utime(target, ns=(time.time_ns(), meta["source_mtime_ns"]))
         restored.append(f"{meta['origin']}:{meta['path']}")
+        older = [m for m in parts[:-1] if m["total_sha256"] not in continued]
+        for number, head in enumerate(older, 1):
+            try:
+                earlier = _join(folder, parts, head)
+            except BrokenChain as exc:
+                refused.append(f"{exc} (earlier version {number})")
+                continue
+            _write(target.with_name(f"{target.name}.v{number}"), earlier)
+            os.utime(target.with_name(f"{target.name}.v{number}"), ns=(time.time_ns(), head["source_mtime_ns"]))
+            restored.append(f"{meta['origin']}:{meta['path']}.v{number}")
     return restored, refused

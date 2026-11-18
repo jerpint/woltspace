@@ -90,8 +90,11 @@ def test_a_rewritten_file_is_a_whole_new_version_and_the_old_one_stays(tmp_path)
     metas = sorted((json.loads(p.read_text()) for p in (root / sa.ARCHIVE / sa.FORMAT).rglob("*.json")),
                    key=lambda m: m["captured_at"])
     assert [m["offset"] for m in metas] == [0, 0] and metas[1]["continues"] is None
-    sa.restore(root / sa.ARCHIVE, tmp_path / "back")
-    assert (tmp_path / "back" / "root" / CLAUDE).read_bytes() == path.read_bytes()
+    restored, _ = sa.restore(root / sa.ARCHIVE, tmp_path / "back")
+    back = tmp_path / "back" / "root" / CLAUDE
+    assert back.read_bytes() == path.read_bytes()
+    assert back.with_name(back.name + ".v1").read_text() == '{"a": 1}\n{"b": 2}\n'  # nothing kept is hidden
+    assert restored == [f"root:{CLAUDE}", f"root:{CLAUDE}.v1"]
 
 
 @pytest.mark.parametrize("damage", ["drop_middle", "corrupt"])
