@@ -29,6 +29,7 @@ import json
 import os
 import stat
 import time
+import zlib
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
@@ -208,10 +209,8 @@ def _join(folder: Path, parts: list[dict], head: dict) -> bytes:
     for meta in reversed(chain):
         try:
             part = gzip.decompress((folder / f"{meta['name']}.gz").read_bytes())
-        except OSError:  # gzip.BadGzipFile is one
+        except (OSError, EOFError, zlib.error):  # missing, not gzip, cut short, bad deflate
             raise BrokenChain(f"{meta['path']}: part {meta['name']} is missing or damaged") from None
-        except EOFError:
-            raise BrokenChain(f"{meta['path']}: part {meta['name']} is cut short") from None
         if _sha(part) != meta["sha256"] or len(data) != meta["offset"] or (
                 meta["continues"] and _sha(data) != meta["continues"]):
             raise BrokenChain(f"{meta['path']}: part {meta['name']} is damaged")
@@ -222,7 +221,8 @@ def _join(folder: Path, parts: list[dict], head: dict) -> bytes:
 def restore(archive: Path, to: Path) -> tuple[list[str], list[str]]:
     """Every source's newest version as a plain file under to/<origin>/<path>,
     with its original mtime, and each earlier version that a rewrite left
-    (a chain nothing continues) beside it as <path>.v1, .v2, ... oldest first.
+    (a chain nothing continues) in a tree of its own, to/versions/<origin>/
+    <path>.v1, .v2, ... oldest first, so it never meets a real file.
     Inert: nothing is resumed. (restored, refused)."""
     to = Path(to)
     if to.exists() and any(to.iterdir()):
@@ -259,7 +259,9 @@ def restore(archive: Path, to: Path) -> tuple[list[str], list[str]]:
             except BrokenChain as exc:
                 refused.append(f"{exc} (earlier version {number})")
                 continue
-            _write(target.with_name(f"{target.name}.v{number}"), earlier)
-            os.utime(target.with_name(f"{target.name}.v{number}"), ns=(time.time_ns(), head["source_mtime_ns"]))
-            restored.append(f"{meta['origin']}:{meta['path']}.v{number}")
+            version = to / "versions" / meta["origin"] / f"{rel}.v{number}"
+            version.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            _write(version, earlier)
+            os.utime(version, ns=(time.time_ns(), head["source_mtime_ns"]))
+            restored.append(f"versions/{meta['origin']}:{meta['path']}.v{number}")
     return restored, refused

@@ -76,3 +76,32 @@ def test_json_backup_still_refreshes_the_opted_in_archive(tmp_path, monkeypatch)
     monkeypatch.setenv('WOLTSPACE_WOLTS_DIR', str(root))
     assert main(['backup', '--json', '--tag', 'review', '--out', str(tmp_path / 'out')]) == 0
     assert (root / sa.ARCHIVE / sa.FORMAT).is_dir()
+
+
+def test_invalid_deflate_refuses_only_the_damaged_source(tmp_path):
+    root = lodge(tmp_path)
+    source(root)
+    sa.refresh(root, HARNESSES)
+    part, = (root / sa.ARCHIVE / sa.FORMAT).rglob('*.gz')
+    # Valid gzip header, invalid DEFLATE block type, plus trailer.
+    part.write_bytes(bytes.fromhex('1f8b0800000000000203') + b'\x07' + b'\x00' * 8)
+    source(root, 'wolt-a/.claude/projects/-w/other.jsonl', b'{"turn":2}\n')
+    sa.refresh(root, HARNESSES)
+    restored, refused = sa.restore(root / sa.ARCHIVE, tmp_path / 'back')
+    assert len(refused) == 1 and len(restored) == 1
+    assert (tmp_path / 'back/root/wolt-a/.claude/projects/-w/other.jsonl').is_file()
+
+
+def test_earlier_version_does_not_overwrite_a_real_dot_v1_source(tmp_path):
+    root = lodge(tmp_path)
+    rel = 'wolt-a/.claude/projects/-w/s1/tool-results/r.txt'
+    source(root, rel, b'old bytes')
+    source(root, rel + '.v1', b'independent named file')
+    sa.refresh(root, HARNESSES)
+    source(root, rel, b'new bytes')
+    sa.refresh(root, HARNESSES)
+    restored, refused = sa.restore(root / sa.ARCHIVE, tmp_path / 'back')
+    assert not refused and len(restored) == 3
+    # Three independent retained values must survive in three files.
+    files = [p.read_bytes() for p in (tmp_path / 'back').rglob('*') if p.is_file()]
+    assert sorted(files) == sorted([b'old bytes', b'new bytes', b'independent named file'])

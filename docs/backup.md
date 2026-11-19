@@ -503,7 +503,8 @@ woltspace restore-sessions <data root>/.space/session-archive --to ~/sessions-ba
   and hashed each run, so a re-run never stores anything twice.
 - **Restore** writes each file's newest version under `--to/root/<path>` (or
   `home/<path>`), byte for byte, with its original time, and any earlier
-  version a rewrite left beside it as `<path>.v1`, `.v2`, ... Each part names the
+  version a rewrite left under `--to/versions/` as `<path>.v1`, `.v2`, ...
+  (a tree of its own, so it never meets a real file). Each part names the
   digest of what it continues; a missing or damaged part stops that one file
   with a message, never a shorter file. Nothing is resumed.
 

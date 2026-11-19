@@ -96,8 +96,9 @@ def test_a_rewritten_file_is_a_whole_new_version_and_the_old_one_stays(tmp_path)
     restored, _ = sa.restore(root / sa.ARCHIVE, tmp_path / "back")
     back = tmp_path / "back" / "root" / CLAUDE
     assert back.read_bytes() == path.read_bytes()
-    assert back.with_name(back.name + ".v1").read_text() == '{"a": 1}\n{"b": 2}\n'  # nothing kept is hidden
-    assert restored == [f"root:{CLAUDE}", f"root:{CLAUDE}.v1"]
+    older = tmp_path / "back" / "versions" / "root" / f"{CLAUDE}.v1"
+    assert older.read_text() == '{"a": 1}\n{"b": 2}\n'  # nothing kept is hidden
+    assert restored == [f"root:{CLAUDE}", f"versions/root:{CLAUDE}.v1"]
 
 
 @pytest.mark.parametrize("damage", ["drop_middle", "corrupt"])
