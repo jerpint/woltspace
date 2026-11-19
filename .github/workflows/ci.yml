@@ -97,6 +97,11 @@ jobs:
           test/test_lodge_grants.py
           test/test_wolf_runs.py
           test/test_backup.py
+          test/test_session_keep.py
+          test/test_session_archive.py
+          test/test_session_upload.py
+          test/test_session_delete.py
+          test/test_review_archive_regressions.py
           test/test_native_doctor.py
           test/test_outbox.py
           test/test_notification_types.py
