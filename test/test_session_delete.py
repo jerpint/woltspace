@@ -86,3 +86,9 @@ def test_a_prefix_id_deletes_nothing(lodge):
     before = _engine(lodge)
     assert cli_main(["backup", "sessions", "delete", "--session", GONE[:8], "--yes"]) == 0
     assert _engine(lodge) == before
+
+
+def test_delete_rejects_a_suffix_of_the_real_id(lodge):
+    plan = sa.plan_delete(lodge, session=GONE.split("-")[-1])
+    assert plan.sources == [] and plan.engine_files == []
+    assert sa.belongs(f"2026/rollout-2026-01-01T00-00-00-{GONE}.jsonl", GONE.split("-", 1)[1]) is False

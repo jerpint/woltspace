@@ -382,6 +382,9 @@ class DeletePlan:
     keys: list[str] = field(default_factory=list)  # bucket keys under sessions/
 
 
+_ROLLOUT_ID = re.compile(r"^rollout-.+-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$")
+
+
 def belongs(path: str, session: str) -> bool:
     """Whether a session file belongs to one session id, exactly: a folder named
     for it (claude's <id>/ tool results), or a file named for it (<id>.jsonl,
@@ -389,8 +392,10 @@ def belongs(path: str, session: str) -> bool:
     substring, which could reach another session."""
     parts = PurePosixPath(path).parts
     stem = PurePosixPath(path).name.split(".", 1)[0]
-    return bool(session) and (session in parts[:-1] or stem == session
-                              or stem.endswith((f"-{session}", f"_{session}")))
+    ids = {*parts[:-1], stem, stem.rsplit("_", 1)[-1]}  # <id>/..., <id>.jsonl, <time>_<id>.jsonl
+    if rollout := _ROLLOUT_ID.search(stem):  # rollout-<time>-<uuid>.jsonl
+        ids.add(rollout.group(1))
+    return bool(session) and session in ids  # the whole id, compared with ==
 
 
 def plan_delete(wolts_dir: Path, *, session: str = "", before: datetime | None = None,
