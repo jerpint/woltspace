@@ -205,5 +205,16 @@ def test_the_clean_up_runs_even_when_the_refresh_raises(tmp_path, fake_age, monk
     def broken(*args, **kwargs):
         raise OSError(28, "No space left on device")
     monkeypatch.setattr(sa, "refresh", broken)
-    assert cli_main(["backup", "sessions", "--out", str(out)]) == 1
+    assert cli_main(["backup", "sessions", "--out", str(out)]) == 3  # a failure: the upload waits
     assert [p for p in out.rglob("*") if p.is_file()] == [] and "session archive failed" in capsys.readouterr().err
+
+
+def test_a_skipped_file_is_exit_1_and_the_rest_still_goes_out_cleaned(tmp_path, fake_age, monkeypatch):
+    root = _lodge(tmp_path)
+    out = _stale_out(root, tmp_path)  # a deleted session's files are still there
+    (root / "wolt-a/.claude/projects/-w/.env").write_text("x")  # skipped every night: looks like a credential
+    _grow(root, [1])
+    monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(root))
+    assert cli_main(["backup", "sessions", "--out", str(out)]) == 1  # only skipped: the upload goes on
+    folder, = (root / sa.ARCHIVE / sa.FORMAT).iterdir()
+    assert sorted(p.name for p in out.rglob("*") if p.is_file()) == sorted(f"{p.name}.age" for p in folder.iterdir())
