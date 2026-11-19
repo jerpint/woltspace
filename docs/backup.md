@@ -645,17 +645,18 @@ echo probe | rclone rcat "r2:<bucket>/lodges/<lodge>/sessions/lock-probe"
 npx wrangler r2 bucket lock add <bucket> keep-sessions lodges/<lodge>/sessions/ --retention-indefinite
 ```
 
-Then three lines at the end of the daily script. Only parts not yet sent are
+Then a few lines at the end of the daily script. Only parts not yet sent are
 written out, as kept (gzipped) and encrypted to the same age key; object names are an
 opaque source id and a content digest, never a path or a wolt name. `copy`,
-never `sync`, and the folder goes only when the upload worked. A file it had to
-skip (say a native session with no recorded working folder) makes `--out` exit 1
-every night while still writing the rest, so it is not left to `set -e`:
+never `sync`, and the folder goes only when the upload worked. rclone runs only
+when `--out` exited 0: a file it had to skip (an unreadable one, or a native one
+with no working folder and no owning session) or any error holds that night's
+upload, and the listed file says why:
 
 ```bash
 sessions=~/.woltspace/session-out
-woltspace backup sessions --out "$sessions" || echo "some session files were skipped (listed above)"
-rclone copy --ignore-existing --exclude '.*' "$sessions" "$dest/sessions/" && woltspace backup sessions --sent "$sessions" && rm -rf "$sessions"
+woltspace backup sessions --out "$sessions" &&
+  rclone copy --ignore-existing --exclude '.*' "$sessions" "$dest/sessions/" && woltspace backup sessions --sent "$sessions" && rm -rf "$sessions"
 ```
 
 `woltspace backup sessions check-lock --remote "$dest"` tries to delete the

@@ -500,7 +500,11 @@ def _sessions_command(args, layout: RuntimeLayout, wolts_dir) -> int:
     if args.sent:
         lore.plain(f"{session_archive.mark_sent(Path(wolts_dir), Path(args.sent))} part(s) marked sent")
         return 0
-    failed = _archive_sessions(layout, wolts_dir)
+    try:  # an error here must not skip the out folder's clean-up below
+        failed = _archive_sessions(layout, wolts_dir)
+    except Exception as exc:  # noqa: BLE001
+        print(f"session archive failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+        failed = 1
     if args.out:
         try:
             written = session_archive.write_out(Path(wolts_dir), Path(args.out))
