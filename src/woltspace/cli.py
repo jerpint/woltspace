@@ -509,7 +509,7 @@ def _delete_sessions(args, layout: RuntimeLayout, wolts_dir) -> int:
     plan = session_archive.plan_delete(Path(wolts_dir), session=args.session, before=before, home=home)
     running = {stored_resume_id(r) for r in SessionRegistry(wolts_dir).records()
                if r.get("status") in ("running", "stopping") or r.get("launching")} - {""}
-    if busy := sorted(s for s in plan.sources if any(rid in s for rid in running)):
+    if busy := sorted(s for s in plan.sources if any(session_archive.belongs(s.split(":", 1)[1], rid) for rid in running)):
         lore.failure(f"refused: running session(s): {', '.join(busy)}; stop them first")
         return 1
     for label, items in (("sessions", plan.sources), ("engine files", plan.engine_files),

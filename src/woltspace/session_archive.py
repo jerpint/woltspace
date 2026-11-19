@@ -382,9 +382,20 @@ class DeletePlan:
     keys: list[str] = field(default_factory=list)  # bucket keys under sessions/
 
 
+def belongs(path: str, session: str) -> bool:
+    """Whether a session file belongs to one session id, exactly: a folder named
+    for it (claude's <id>/ tool results), or a file named for it (<id>.jsonl,
+    codex's rollout-<time>-<id>.jsonl, pi's <time>_<id>.jsonl); never a mere
+    substring, which could reach another session."""
+    parts = PurePosixPath(path).parts
+    stem = PurePosixPath(path).name.split(".", 1)[0]
+    return bool(session) and (session in parts[:-1] or stem == session
+                              or stem.endswith((f"-{session}", f"_{session}")))
+
+
 def plan_delete(wolts_dir: Path, *, session: str = "", before: datetime | None = None,
                 home: Path | None = None) -> DeletePlan:
-    """Every archived source of one session (its id in the path), or whose
+    """Every archived source of one session (see belongs), or whose
     newest version is older than `before`: its engine file, its parts, and the
     bucket keys they were sent under. Each source's parts are its own, so no
     other session is touched."""
@@ -394,7 +405,7 @@ def plan_delete(wolts_dir: Path, *, session: str = "", before: datetime | None =
         if not parts:
             continue
         last = parts[-1]
-        if not ((session and session in last["path"])
+        if not ((session and belongs(last["path"], session))
                 or (before and last["source_mtime_ns"] < before.timestamp() * 1e9)):
             continue
         plan.sources.append(f"{last['origin']}:{last['path']}")

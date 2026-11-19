@@ -70,3 +70,19 @@ def test_exactly_one_selector_and_a_real_date(lodge):
     assert cli_main(["backup", "sessions", "delete"]) == 2
     assert cli_main(["backup", "sessions", "delete", "--session", GONE, "--before", "2025-01-01"]) == 2
     assert cli_main(["backup", "sessions", "delete", "--before", "last week"]) == 2
+
+
+@pytest.mark.parametrize("path, hit", [
+    (f"-w/{GONE}.jsonl", True), (f"-w/{GONE}/tool-results/r.txt", True),
+    (f"2026/rollout-2026-01-01T00-00-00-{GONE}.jsonl", True), (f"-w/1700000000_{GONE}.jsonl", True),
+    (f"-w/{GONE}x.jsonl", False), (f"-w/x{GONE}.jsonl", False), (f"-w/{GONE[:8]}.jsonl", False),
+])
+def test_a_session_id_matches_exactly_never_as_a_substring(path, hit):
+    assert sa.belongs(path, GONE) is hit
+    assert sa.belongs(f"-w/{GONE}.jsonl", GONE[:8]) is False  # a short id never reaches a longer one
+
+
+def test_a_prefix_id_deletes_nothing(lodge):
+    before = _engine(lodge)
+    assert cli_main(["backup", "sessions", "delete", "--session", GONE[:8], "--yes"]) == 0
+    assert _engine(lodge) == before
