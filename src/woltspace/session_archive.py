@@ -308,8 +308,9 @@ def _sent(archive: Path) -> set[str]:
 
 
 def write_out(wolts_dir: Path, out: Path) -> list[str]:
-    """Every archived part not yet sent, gzipped then age-encrypted to the
-    snapshot key, as <format>/<source id>/<part>.gz.age plus its .json.gz.age.
+    """Every archived part not yet sent, age-encrypted to the snapshot key as it
+    is kept (already gzipped): <format>/<source id>/<part>.gz.age plus its
+    .json.age, so decrypting each file gives back the archive's own layout.
     The names hold no path (inside the encrypted metadata only) and stay under
     200 bytes. Files already in out are left alone; nothing counts as sent until
     mark_sent says the upload worked."""
@@ -322,13 +323,13 @@ def write_out(wolts_dir: Path, out: Path) -> list[str]:
         part = f"{meta.parent.name}/{meta.stem}"
         if part in sent:
             continue
-        for source, suffix in ((meta.with_suffix(""), ".gz.age"), (meta, ".json.gz.age")):
-            target = Path(out) / FORMAT / meta.parent.name / f"{meta.stem}{suffix}"
+        for source in (meta.with_suffix(".gz"), meta):
+            target = Path(out) / FORMAT / meta.parent.name / f"{source.name}.age"
             if target.exists():
                 continue
             target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-            with sealed_file(target, encryption) as sink, gzip.GzipFile(fileobj=sink, mode="wb", mtime=0) as packed:
-                packed.write(source.read_bytes())
+            with sealed_file(target, encryption) as sink:
+                sink.write(source.read_bytes())
         written.append(part)
     return written
 
@@ -336,9 +337,9 @@ def write_out(wolts_dir: Path, out: Path) -> list[str]:
 def mark_sent(wolts_dir: Path, out: Path) -> int:
     """Run only after the upload of out worked: its parts are not written out again."""
     archive = Path(wolts_dir) / ARCHIVE
-    done = {f"{p.parent.name}/{p.name.removesuffix('.json.gz.age')}"
-            for p in (Path(out) / FORMAT).glob("*/*.json.gz.age")}
-    with open(archive / ".lock", "a") as lock:
+    done = {f"{p.parent.name}/{p.name.removesuffix('.json.age')}"
+            for p in (Path(out) / FORMAT).glob("*/*.json.age")}
+    with os.fdopen(os.open(archive / ".lock", os.O_WRONLY | os.O_CREAT, 0o600), "w") as lock:
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
         _write(archive / SENT, "".join(f"{part}\n" for part in sorted(_sent(archive) | done)).encode())
     return len(done)

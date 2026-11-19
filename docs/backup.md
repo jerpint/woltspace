@@ -646,7 +646,7 @@ npx wrangler r2 bucket lock add <bucket> keep-sessions lodges/<lodge>/sessions/ 
 ```
 
 Then three lines at the end of the daily script. Only parts not yet sent are
-written out, gzipped then encrypted to the same age key; object names are an
+written out, as kept (gzipped) and encrypted to the same age key; object names are an
 opaque source id and a content digest, never a path or a wolt name. `copy`,
 never `sync`, and the folder goes only when the upload worked:
 
@@ -666,10 +666,10 @@ To restore, on your own machine with the read-only token and the age key:
 
 ```bash
 rclone copy "r2:<bucket>/lodges/<lodge>/sessions/" r2-sessions/
-cd r2-sessions && find v1 -name '*.gz.age' | while read -r f; do
-  mkdir -p "../plain/$(dirname "$f")"; age -d -i key.txt "$f" | gunzip > "../plain/${f%.gz.age}"
+cd r2-sessions && find v1 -name '*.age' | while read -r f; do
+  mkdir -p "../archive/$(dirname "$f")"; age -d -i key.txt "$f" > "../archive/${f%.age}"
 done
-woltspace restore-sessions ../plain --to ~/sessions-back
+woltspace restore-sessions ../archive --to ~/sessions-back
 ```
 
 ### The restore checks

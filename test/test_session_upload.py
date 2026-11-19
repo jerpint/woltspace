@@ -1,8 +1,7 @@
-"""Session parts off the machine: gzip then age, opaque names, sent only once the
+"""Session parts off the machine: the kept (gzipped) files under age, opaque names, sent only once the
 upload is confirmed, a full round trip back, and the bucket lock check."""
 
 import base64
-import gzip
 import json
 import os
 import sys
@@ -55,7 +54,7 @@ def _grow(root, lines):
 def _open(path: Path) -> bytes:
     data = path.read_bytes()
     assert data.startswith(AGE_HEADER)  # never plaintext on disk
-    return gzip.decompress(base64.b64decode(data[len(AGE_HEADER):]))
+    return base64.b64decode(data[len(AGE_HEADER):])
 
 
 def test_without_a_recipient_nothing_is_written_out(tmp_path, monkeypatch):
@@ -76,8 +75,8 @@ def test_the_round_trip_archive_encrypt_decrypt_restore_is_byte_equal(tmp_path, 
     names = [p.relative_to(out).as_posix() for p in out.rglob("*") if p.is_file()]
     assert len(names) == 6 and all(len(n) < 200 and "wolt-a" not in n and "claude" not in n for n in names)
     plain = tmp_path / "plain"  # what the documented decrypt loop makes on the owner's machine
-    for sealed in out.rglob("*.gz.age"):
-        target = plain / sealed.relative_to(out).as_posix().removesuffix(".gz.age")
+    for sealed in out.rglob("*.age"):  # decrypting each file gives back the archive's own layout
+        target = plain / sealed.relative_to(out).as_posix().removesuffix(".age")
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(_open(sealed))
     _, refused = sa.restore(plain, tmp_path / "back")
