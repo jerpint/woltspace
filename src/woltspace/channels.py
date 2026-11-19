@@ -123,97 +123,6 @@ class ChannelConnector(Protocol):
         """Describe how to run this connector under the current configuration."""
 
 
-class SlackConnector:
-    """A fail-closed, owner-only Slack DM connector."""
-
-    name = "slack"
-
-    def plan(
-        self, layout: RuntimeLayout, env: Mapping[str, str] | None = None
-    ) -> ConnectorPlan:
-        values = dict(os.environ if env is None else env)
-        settings = channel_config(layout, self.name, values)
-        path = config_path(layout, values)
-        configured = bool(settings.get("enabled", False))
-        raw_enabled = values.get("ENABLE_SLACK_BOT")
-        from_env = _truthy(raw_enabled) if raw_enabled is not None else False
-        env_disables = raw_enabled is not None and not from_env
-        bot_token = (values.get("SLACK_BOT_TOKEN") or settings.get("bot_token") or "").strip()
-        app_token = (values.get("SLACK_APP_TOKEN") or settings.get("app_token") or "").strip()
-        owner_user = (values.get("SLACK_OWNER_USER") or settings.get("owner_user") or "").strip()
-        remedy = (
-            f'Set channels.slack = {{"enabled": true, "bot_token": "<xoxb token>", '
-            f'"app_token": "<xapp token>", "owner_user": "<Slack user ID>"}} in {path}.'
-        )
-        if env_disables or not (configured or from_env):
-            return ConnectorPlan(self.name, False, "disabled", remedy=remedy)
-        if not _truthy(values.get("WOLTSPACE_ENTRYPOINT", "")):
-            return ConnectorPlan(
-                self.name, False,
-                "not the platform entrypoint; a guest never opens Socket Mode",
-                remedy="Run the control plane through `woltspace start` to own Slack.",
-            )
-        missing = [
-            label for label, value in (
-                ("bot token", bot_token),
-                ("app token", app_token),
-                ("owner user ID", owner_user),
-            ) if not value
-        ]
-        if missing:
-            return ConnectorPlan(
-                self.name, False, f"enabled without {', '.join(missing)}", remedy=remedy
-            )
-        if re.fullmatch(r"[UW][A-Z0-9]{8,}", owner_user) is None:
-            return ConnectorPlan(
-                self.name, False, "enabled with a malformed owner user ID", remedy=remedy
-            )
-
-        bot_dir = str(layout.install_root / "container")
-        module = "bot.slack_adapter"
-        child_env = export_both({
-            "SLACK_BOT_TOKEN": bot_token,
-            "SLACK_APP_TOKEN": app_token,
-            "SLACK_OWNER_USER": owner_user,
-            "WOLTSPACE_WOLTS_DIR": str(layout.wolts_dir),
-            "WOLTSPACE_DIR": str(layout.install_root),
-            "WOLTSPACE_ISOLATION": layout.isolation,
-            "WOLTSPACE_HOST": layout.host,
-            "WOLTSPACE_PORT": str(layout.port),
-            "WOLTSPACE_API": layout.endpoint,
-            "PYTHONPATH": os.pathsep.join(
-                part for part in (
-                    bot_dir, str(layout.runtime_lib), values.get("PYTHONPATH", "")
-                ) if part
-            ),
-        })
-        interpreter = _interpreter(
-            bot_dir, layout.isolation, layout.install_root, "slack_bolt"
-        )
-        if interpreter == (sys.executable,) and not _module_available("slack_bolt"):
-            return ConnectorPlan(
-                self.name, False, "enabled but slack-bolt is not installed",
-                remedy=(
-                    "Reinstall woltspace to restore its dependencies: "
-                    "`uv tool install --force woltspace` "
-                    "(from a checkout: `uv tool install --force .`), then `woltspace start`."
-                ),
-            )
-        detail = f"owner-only DMs · {module} from {bot_dir}"
-        if _truthy(values.get("DEV_MODE", "")) and _module_available("watchfiles"):
-            command = (
-                *interpreter, "-m", "watchfiles", "--filter", "python",
-                f"{' '.join(interpreter)} -m {module}", "bot/",
-            )
-            detail += " (dev reload)"
-        else:
-            command = (*interpreter, "-m", module)
-        return ConnectorPlan(
-            self.name, True, detail, command, bot_dir, child_env, remedy,
-            ("-m", module),
-        )
-
-
 TOKEN_BUSY_DETAIL = "another process is already polling this bot token"
 TOKEN_BUSY_REMEDY = (
     "One bot token can only be polled by one process. Stop the other poller, or "
@@ -488,6 +397,10 @@ class FolderConnector:
             command = (*interpreter, "-m", "watchfiles", "--filter", "python", inner, folder)
             dev = " (dev reload)"
         owners = self._owners(values, settings)
+        if spec.owner_pattern and not (owners and all(re.fullmatch(spec.owner_pattern, o) for o in owners)):
+            key = spec.owners_config or "owners"
+            return ConnectorPlan(self.name, False, "enabled without a usable owner ID",
+                                 remedy=f'Set channels.{self.name}.{key} to the owner\'s ID in {path}.')
         socket_dir = Path(layout.wolts_dir) / ".space" / "run" / "connectors"
         child_env = export_both({
             **secrets,
@@ -528,7 +441,7 @@ def _registry(layout: RuntimeLayout | None = None):
 
 
 CONNECTORS: tuple[ChannelConnector, ...] = (
-    SlackConnector(), WolfConnector(), VultureConnector(),
+    WolfConnector(), VultureConnector(),
 )
 
 
@@ -582,7 +495,6 @@ def connector_secrets(plans: list[ConnectorPlan]) -> dict[str, str]:
             continue
         for key in (
             "TELEGRAM_BOT_TOKEN", "TELEGRAM_ALLOWED_USERS",
-            "SLACK_BOT_TOKEN", "SLACK_APP_TOKEN", "SLACK_OWNER_USER",
             *_declared_secrets(plan.name),
         ):
             value = plan.env.get(key)

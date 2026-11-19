@@ -97,7 +97,9 @@ def test_every_builtin_connector_has_a_way_out():
     import connector_registry
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from server import notify
-    # Classes in the lodge (Slack) have an outbound entry; folder connectors
-    # (Telegram) send through their socket, from the sender the lodge registers.
-    assert set(connector_registry.SPECS) <= set(notify.OUTBOUND) <= set(notify.SENDERS)
+    # Folder connectors send through their socket: Telegram from the sender the lodge
+    # registers for it, every other one (Slack) from the generic socket sender.
+    assert set(notify.OUTBOUND) <= set(notify.SENDERS)
     assert "telegram" in notify.OUTBOUND and "telegram" in notify.SENDERS
+    slack = connector_registry.spec("slack")
+    assert slack is not None and slack.launchable and "slack" not in notify.OUTBOUND

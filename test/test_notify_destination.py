@@ -63,17 +63,17 @@ def lodge(monkeypatch, tmp_path):
     # Telegram sends through its connector: here it is connected while the
     # lodge has a bot token, so the old "no token" cases are "not connected".
     monkeypatch.setattr(notify, "_connector_up",
-                        lambda name: name != "telegram" or bool(env.get("TELEGRAM_BOT_TOKEN")))
+                        lambda name: bool(env.get(f"{name.upper()}_BOT_TOKEN")))
     monkeypatch.setattr(notify, "read_session_registry", lambda name: state.routing)
     monkeypatch.setattr(notify, "append_chat_history", state.history)
     monkeypatch.setattr(notify, "SessionRegistry", lambda root: Mock())
     monkeypatch.setattr(notify, "synthesize", synthesize)
     for adapter, secret, route_state, speech_format in (
         ("telegram", "TELEGRAM_BOT_TOKEN", (), "opus"),
-        ("slack", "SLACK_BOT_TOKEN", ("slack_progress_mode", "slack_progress_ts"), "mp3"),
+        ("slack", None, (), "mp3"),  # a folder connector: its token stays in its own process
     ):
         monkeypatch.setitem(notify.SENDERS, adapter, Plugin(
-            adapter, _recorder(state.sent, adapter), secrets=(secret,),
+            adapter, _recorder(state.sent, adapter), secrets=(secret,) if secret else (),
             route_state=route_state, max_attachment_bytes=50 * 1024 * 1024,
             speech_format=speech_format,
         ))
@@ -93,8 +93,8 @@ def _telegram(chat) -> dict:
     return {"adapter": "telegram", "chat_id": chat}
 
 
-def _slack(channel, thread="1.2") -> dict:
-    return {"adapter": "slack", "channel": channel, "thread_ts": thread}
+def _slack(channel) -> dict:
+    return {"adapter": "slack", "route": channel}
 
 
 def _left_in_the_outbox(lodge) -> list:
@@ -215,47 +215,26 @@ def test_a_lodge_with_no_chats_yet_has_no_routed_chats(tmp_path):
     assert not (tmp_path / ".space" / "lodge.db").exists()
 
 
-# --- Slack: the channels a file may go to --------------------------------------
+# --- Slack: the chats a file may go to -------------------------------------------
 
 @pytest.mark.parametrize("channel", [NOTIFY_CHANNEL, ""])
 @pytest.mark.asyncio
 async def test_a_file_goes_to_the_notify_channel_named_or_by_default(lodge, channel):
     await notify.send_notification("test-session", "hi\n", _slack(channel), _file(lodge))
 
-    assert lodge.sent[0].destination == {"channel": NOTIFY_CHANNEL, "thread_ts": "1.2"}
+    assert lodge.sent[0].destination == {"chat_id": NOTIFY_CHANNEL}
 
 
 @pytest.mark.parametrize("notify_channel", [NOTIFY_CHANNEL, ""])
-@pytest.mark.parametrize("thread, exact", [("1.2", True), ("9.9", False)])
 @pytest.mark.asyncio
-async def test_a_file_goes_to_the_session_s_own_slack_chat_in_any_thread(
-    lodge, notify_channel, thread, exact,
-):
+async def test_a_file_goes_to_the_session_s_own_slack_dm_from_an_old_threaded_record(lodge, notify_channel):
     lodge.env["SLACK_NOTIFY_CHANNEL"] = notify_channel
-    lodge.routing = {
-        "adapter": "slack", "chat_id": "D0SESSION01", "thread_ts": "1.2",
-        "slack_progress_mode": "agent",
-    }
-
-    await notify.send_notification(
-        "test-session", "hi\n", _slack("D0SESSION01", thread), _file(lodge),
-    )
-
-    (sent,) = lodge.sent
-    assert sent.destination == {"channel": "D0SESSION01", "thread_ts": thread}
-    # The session's record vouches for the chat in any thread, but its progress
-    # state still belongs to the one thread the record names.
-    assert sent.route_state == ({"slack_progress_mode": "agent"} if exact else {})
-
-
-@pytest.mark.asyncio
-async def test_the_slack_session_route_carries_a_file(lodge):
-    lodge.env["SLACK_NOTIFY_CHANNEL"] = ""
     lodge.routing = {"adapter": "slack", "chat_id": "D0SESSION01", "thread_ts": "1.2"}
 
+    await notify.send_notification("test-session", "hi\n", _slack("D0SESSION01"), _file(lodge))
     await notify.send_notification("test-session", "hi\n", None, _file(lodge))
 
-    assert lodge.sent[0].destination == {"channel": "D0SESSION01", "thread_ts": "1.2"}
+    assert [sent.destination for sent in lodge.sent] == [{"chat_id": "D0SESSION01"}] * 2
 
 
 @pytest.mark.parametrize("notify_channel, routing", [
@@ -316,7 +295,7 @@ async def test_a_spoken_message_to_one_of_the_lodge_s_chats_is_spoken(lodge, exp
 
 @pytest.mark.parametrize("explicit, destination", [
     (_telegram("999"), {"chat_id": "999"}),
-    (_slack("C0OTHER0001"), {"channel": "C0OTHER0001", "thread_ts": "1.2"}),
+    (_slack("C0OTHER0001"), {"chat_id": "C0OTHER0001"}),
 ])
 @pytest.mark.asyncio
 async def test_text_still_goes_to_a_chat_outside_every_list(lodge, explicit, destination):
@@ -339,8 +318,7 @@ async def test_text_still_goes_to_a_chat_outside_every_list(lodge, explicit, des
 async def test_a_missing_token_is_reported_before_the_destination(lodge, explicit, secret):
     lodge.env[secret] = ""
 
-    expected = ("telegram is not connected to the lodge" if secret.startswith("TELEGRAM")
-                else f"{secret} not set")
+    expected = f"{secret.split('_')[0].lower()} is not connected to the lodge"
     with pytest.raises(RuntimeError, match=f"^{expected}$"):
         await notify.send_notification("test-session", "hi\n", explicit, _file(lodge))
 

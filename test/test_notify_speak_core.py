@@ -119,20 +119,6 @@ async def test_the_words_are_spoken_and_sent_as_a_voice_attachment(lodge):
 
 
 @pytest.mark.asyncio
-async def test_slack_gets_mp3(lodge):
-    lodge.env["SLACK_NOTIFY_CHANNEL"] = "D0123456789"       # the lodge's own chat
-    explicit = {"adapter": "slack", "channel": "D0123456789", "thread_ts": "1.2"}
-
-    await notify.send_notification("test-session", "hi\n", explicit, (), WORDS)
-
-    assert lodge.spoken[0].speech_format == "mp3"
-    (attachment,) = lodge.sent[0].message.attachments
-    assert (attachment.filename, attachment.content_type, attachment.kind) == (
-        "voice-note.mp3", "audio/mpeg", "voice",
-    )
-
-
-@pytest.mark.asyncio
 async def test_model_and_voice_come_from_the_lodge_settings(lodge):
     lodge.env.update(OPENAI_TTS_MODEL="tts-1", OPENAI_TTS_VOICE="nova")
 
@@ -299,9 +285,9 @@ async def test_a_missing_token_is_reported_before_anything_is_spoken(lodge):
 
 @pytest.mark.asyncio
 async def test_a_slack_message_with_no_channel_is_reported_before_anything_is_spoken(lodge):
-    explicit = {"adapter": "slack", "channel": "", "thread_ts": None}
+    explicit = {"adapter": "slack", "route": ""}  # and no SLACK_NOTIFY_CHANNEL
 
-    with pytest.raises(RuntimeError, match="no slack channel provided"):
+    with pytest.raises(ValueError, match="slack route chat_id is not valid"):
         await notify.send_notification("test-session", "hi\n", explicit, (), WORDS)
 
     assert lodge.spoken == []
@@ -323,8 +309,7 @@ async def test_the_session_s_own_route_is_spoken_to_as_well(lodge):
 
     await notify.send_notification("test-session", "hi\n", None, (), WORDS)
 
-    assert lodge.spoken[0].speech_format == "mp3"
-    assert lodge.sent[0].destination == {"channel": "D0123456789", "thread_ts": "1.2"}
+    assert lodge.sent[0].destination == {"chat_id": "D0123456789"}
     assert lodge.sent[0].message.attachments[0].kind == "voice"
 
 

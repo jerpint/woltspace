@@ -7,7 +7,7 @@ import pytest
 
 import outbox
 from server import notify
-from server.notification_types import Attachment, OutboundMessage, Plugin
+from server.notification_types import Attachment, Plugin
 
 LINK = "https://lodge.test/tui?session=test-session"
 OGG = b"OggS" + b"\x00" * 23
@@ -167,7 +167,7 @@ async def test_a_voice_entry_sent_to_slack_is_still_answered_as_a_voice_note(lod
     # would report a Slack send as one an older lodge made.
     entry = _stage(lodge, "note.mp3", OGG)
     lodge.env["SLACK_NOTIFY_CHANNEL"] = "D0123456789"       # the lodge's own chat
-    explicit = {"adapter": "slack", "channel": "D0123456789", "thread_ts": "1.2"}
+    explicit = {"adapter": "slack", "route": "D0123456789"}
 
     result = await notify.send_notification(
         "test-session", "hi\n", explicit, _voice(entry, "note.mp3"),
@@ -179,7 +179,7 @@ async def test_a_voice_entry_sent_to_slack_is_still_answered_as_a_voice_note(lod
         Attachment(lodge.box / entry, "note.mp3", len(OGG), "audio/mpeg", "voice"),
     )
     assert result == {
-        "adapter": "slack", "channel": "D0123456789",
+        "adapter": "slack", "route": "D0123456789",
         "attachments": [
             {"name": "note.mp3", "content_type": "audio/mpeg", "size": len(OGG), "kind": "voice"},
         ],
@@ -188,27 +188,6 @@ async def test_a_voice_entry_sent_to_slack_is_still_answered_as_a_voice_note(lod
         "slack", "D0123456789",
         f"hi\n\n[voice note sent: note.mp3, audio/mpeg, {len(OGG)} bytes]",
     )
-
-
-@pytest.mark.asyncio
-async def test_slack_carries_a_voice_attachment_as_an_ordinary_upload(tmp_path):
-    from server.notification_senders import slack_sender
-    from server.notification_types import SendContext
-
-    path = tmp_path / ("b" * 32)
-    path.write_bytes(OGG)
-    voice = Attachment(path, "note.ogg", len(OGG), "audio/ogg", "voice")
-    text, set_status, upload = AsyncMock(), AsyncMock(), AsyncMock()
-    send = slack_sender(text, set_status, upload)
-
-    await send(
-        OutboundMessage("hi", None, (voice,)),
-        {"channel": "D0123456789", "thread_ts": "1.2"},
-        SendContext({"SLACK_BOT_TOKEN": "x"}, {}),
-    )
-
-    upload.assert_awaited_once_with("x", "D0123456789", "1.2", voice, "hi")
-    text.assert_not_awaited()
 
 
 # --- the whole path, through the registered Telegram sender -------------------

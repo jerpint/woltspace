@@ -40,4 +40,3 @@ def test_speech_limit_is_the_speech_service_limit():
 
 def test_registered_senders_declare_their_speech_format():
     assert notify.SENDERS["telegram"].speech_format == "opus"
-    assert notify.SENDERS["slack"].speech_format == "mp3"

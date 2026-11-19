@@ -339,3 +339,89 @@ def test_a_lodge_default_of_auto_spawns_and_resumes_an_ungranted_wolt_in_auto(
         assert "--permission-mode auto" in command
     with pytest.raises(PermissionError, match="not approved"):
         sessions.start_session(wolt="testwolt", workdir=repo, execution_policy="bypass")
+
+
+@pytest.mark.parametrize("configured,requested,resolved", [
+    ("auto", None, "auto"),
+    ("auto", "prompt", "prompt"),
+    ("auto", "auto", "auto"),
+    ("bypass", None, "prompt"),
+    ("private-sentinel", None, "prompt"),
+    ({"private-sentinel": []}, None, "prompt"),
+])
+def test_startup_diagnostics_only_contain_levels(
+    tmp_path, monkeypatch, fake_runtime, caplog, capsys, configured, requested, resolved
+):
+    import sessions
+    wolts = _host_wolt(tmp_path, monkeypatch)
+    monkeypatch.setenv("WOLTSPACE_ISOLATION", "host")
+    monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(wolts))
+    (wolts / "woltspace.json").write_text(json.dumps({
+        "sessions": {"default_execution_policy": configured}}))
+    started = sessions.start_session(wolt="testwolt", execution_policy=requested,
+                                     prompt="private-sentinel")
+    messages = [r.getMessage() for r in caplog.records if r.name == "harnesses"]
+    assert messages == []
+    assert capsys.readouterr().err == (
+        f"Execution policy: requested={requested or 'none'} resolved={resolved}\n")
+    record = sessions.SessionRegistry().get(started["name"])
+    assert record is not None
+    assert record["execution_policy"]["mode"] == resolved
+    if resolved == "auto":
+        from harnesses import build_command
+        assert "--permission-mode auto" in build_command(
+            "claude", "spawn", execution_policy=record["execution_policy"])
+
+
+def test_unsupported_inherited_level_warning_is_allowlisted(tmp_path, monkeypatch, caplog):
+    from harnesses import get_default_level
+    monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
+    config = tmp_path / "woltspace.json"
+    for raw in ("auto", "private-sentinel", {"private-sentinel": []}):
+        config.write_text(json.dumps({"sessions": {"default_execution_policy": raw}}))
+        caplog.clear()
+        assert get_default_level("pi", "host", warn_unsupported=True) is None
+        assert [r.getMessage() for r in caplog.records] == (
+            ["Unsupported inherited execution policy: requested=auto"] if raw == "auto" else [])
+
+
+def test_old_client_copying_capability_default_starts_in_auto(
+    tmp_path, monkeypatch, fake_runtime
+):
+    import asyncio
+
+    import sessions
+    from harnesses import build_command
+
+    from server import app as app_module
+    wolts = _host_wolt(tmp_path, monkeypatch)
+    monkeypatch.setenv("WOLTSPACE_ISOLATION", "host")
+    monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(wolts))
+    (wolts / "woltspace.json").write_text(json.dumps({
+        "sessions": {"default_execution_policy": "auto"}}))
+    caps = asyncio.run(app_module.runtime_capabilities())
+    started = sessions.start_session(
+        wolt="testwolt", execution_policy=caps["default_execution_policy"])
+    record = sessions.SessionRegistry().get(started["name"])
+    assert record is not None
+    assert record["execution_policy"]["mode"] == "auto"
+    assert record["auto_grant"] is None
+    assert "--permission-mode auto" in build_command(
+        "claude", "spawn", execution_policy=record["execution_policy"])
+
+
+def test_unsupported_default_warns_on_startup_after_validation(
+    tmp_path, monkeypatch, fake_runtime, caplog, capsys
+):
+    import sessions
+    wolts = _host_wolt(tmp_path, monkeypatch)
+    monkeypatch.setenv("WOLTSPACE_ISOLATION", "external")
+    monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(wolts))
+    (wolts / "woltspace.json").write_text(json.dumps({
+        "sessions": {"default_execution_policy": "auto"}}))
+    started = sessions.start_session(wolt="testwolt", harness="codex")
+    assert started["execution_policy"]["mode"] == "bypass"
+    assert [r.getMessage() for r in caplog.records if r.name == "harnesses"] == [
+        "Unsupported inherited execution policy: requested=auto",
+    ]
+    assert capsys.readouterr().err == "Execution policy: requested=none resolved=bypass\n"

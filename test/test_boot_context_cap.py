@@ -95,7 +95,7 @@ def test_small_memory_prompt_is_unchanged(wolts_dir, capsys):
     assert (f"## identity.md\n{identity}\n\n## context.md\n{context}\n\n"
             f"## learnings.md\n{learnings}\n[/Woltspace boot context]") in prompt
     assert "[Cut by the lodge" not in prompt
-    assert capsys.readouterr().err == ""
+    assert capsys.readouterr().err == "Execution policy: requested=none resolved=bypass\n"
 
 
 def test_oversized_memory_fits_under_the_limit(wolts_dir):
@@ -181,6 +181,7 @@ def test_cut_is_logged_once(wolts_dir, capsys):
     _opening_prompt(wolts_dir)
 
     lines = capsys.readouterr().err.splitlines()
+    assert lines.pop(0) == "Execution policy: requested=none resolved=bypass"
     assert len(lines) == 1
     found = re.search(r"boot memory of probe cut from 222060 to (\d+) bytes "
                       rf"\(limit {sessions.BOOT_PROMPT_MAX_BYTES}\); trim wolt/memory/",
@@ -204,3 +205,59 @@ def test_real_exec_with_oversized_memory(wolts_dir, tmp_path, harness):
                           str(script)], capture_output=True, text=True)
 
     assert run.returncode == 0, run.stderr
+
+
+# --- The session board in the opening message (session_board.py) ---
+
+def test_a_second_session_reads_what_the_first_is_doing(wolts_dir):
+    _memory(wolts_dir, "I am probe.", "Nothing yet.", "Learn.")
+    first = _opening_prompt(wolts_dir)
+    registry = sessions.SessionRegistry(wolts_dir)
+    earlier = registry.list(wolt=WOLT)[0]["name"]
+    registry.describe(earlier, "Counting logs", "half way through the north bank")
+
+    second = _opening_prompt(wolts_dir)
+
+    assert "[Your other sessions" not in first
+    board = second.split("[/Woltspace boot context]\n\n", 1)[1]
+    assert board.startswith("[Your other sessions")
+    assert f'{earlier} · "Counting logs": half way through the north bank' in board
+    assert board.index("[/Your other sessions]") < board.index(HELLO)
+
+
+def test_a_board_that_fails_never_stops_a_launch(wolts_dir, monkeypatch, capsys):
+    import session_board
+    _memory(wolts_dir, "I am probe.", "Nothing yet.", "Learn.")
+    _opening_prompt(wolts_dir)
+    monkeypatch.setattr(session_board, "build", lambda *a: 1 / 0)
+
+    prompt = _opening_prompt(wolts_dir)
+
+    assert "[Your other sessions" not in prompt and prompt.count(HELLO) == 1
+    assert "no session board for" in capsys.readouterr().err
+
+
+def test_the_board_gives_way_when_the_memory_is_over_the_limit(wolts_dir):
+    memory, identity, context, learnings = _oversized(wolts_dir)
+    _opening_prompt(wolts_dir)
+    registry = sessions.SessionRegistry(wolts_dir)
+    registry.describe(registry.list(wolt=WOLT)[0]["name"], "Counting logs", "north bank")
+
+    prompt = _opening_prompt(wolts_dir)
+
+    assert "[Your other sessions" not in prompt
+    assert len(prompt.encode()) > sessions.BOOT_PROMPT_MAX_BYTES - 1024  # the memory kept all its room
+
+
+def test_the_board_is_left_out_when_it_would_not_fit_beside_whole_memory(wolts_dir):
+    limit = sessions.BOOT_PROMPT_MAX_BYTES
+    _memory(wolts_dir, "I am probe.", "x", "Learn.")
+    around = len(_opening_prompt(wolts_dir).encode()) - 1
+    _memory(wolts_dir, "I am probe.", _text(limit - around - 200), "Learn.")  # 200 bytes of room left
+    registry = sessions.SessionRegistry(wolts_dir)
+    registry.describe(registry.list(wolt=WOLT)[0]["name"], "T" * 80, "s" * 240)
+
+    prompt = _opening_prompt(wolts_dir)
+
+    assert "[Your other sessions" not in prompt and "[Cut by the lodge" not in prompt
+    assert len(prompt.encode()) <= limit
