@@ -176,3 +176,34 @@ def test_a_part_deleted_since_is_cleared_from_the_out_folder(tmp_path, fake_age)
         kept.unlink()
     assert sa.write_out(root, out) == []
     assert [p for p in out.rglob("*") if p.is_file()] == []
+
+
+def _stale_out(root, tmp_path):
+    """An out folder left by a failed upload, holding a part deleted since."""
+    _grow(root, [0])
+    out = tmp_path / "out"
+    sa.write_out(root, out)
+    folder, = (root / sa.ARCHIVE / sa.FORMAT).iterdir()
+    for kept in folder.iterdir():
+        kept.unlink()
+    return out
+
+
+def test_the_clean_up_runs_even_without_a_recipient(tmp_path, fake_age, monkeypatch):  # Gate B N8
+    root = _lodge(tmp_path)
+    out = _stale_out(root, tmp_path)
+    monkeypatch.delenv("WOLTSPACE_BACKUP_AGE_RECIPIENT")
+    with pytest.raises(ValueError, match="plaintext"):
+        sa.write_out(root, out)
+    assert [p for p in out.rglob("*") if p.is_file()] == []
+
+
+def test_the_clean_up_runs_even_when_the_refresh_raises(tmp_path, fake_age, monkeypatch, capsys):  # Gate B N8
+    root = _lodge(tmp_path)
+    out = _stale_out(root, tmp_path)
+    monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(root))
+    def broken(*args, **kwargs):
+        raise OSError(28, "No space left on device")
+    monkeypatch.setattr(sa, "refresh", broken)
+    assert cli_main(["backup", "sessions", "--out", str(out)]) == 1
+    assert [p for p in out.rglob("*") if p.is_file()] == [] and "session archive failed" in capsys.readouterr().err
