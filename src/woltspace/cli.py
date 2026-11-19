@@ -487,7 +487,8 @@ def _archive_sessions(layout: RuntimeLayout, wolts_dir, *, quiet: bool = False) 
 
 
 def _sessions_command(args, layout: RuntimeLayout, wolts_dir) -> int:
-    """woltspace backup sessions [--out DIR | --sent DIR] | check-lock --remote R"""
+    """woltspace backup sessions [--out DIR | --sent DIR] | check-lock --remote R
+    Exit 0; 1 when only some files were skipped (listed); 3 when it failed."""
     from . import session_archive
 
     if args.action == "check-lock":
@@ -504,13 +505,13 @@ def _sessions_command(args, layout: RuntimeLayout, wolts_dir) -> int:
         failed = _archive_sessions(layout, wolts_dir)
     except Exception as exc:  # noqa: BLE001
         print(f"session archive failed: {type(exc).__name__}: {exc}", file=sys.stderr)
-        failed = 1
+        failed = 3
     if args.out:
         try:
             written = session_archive.write_out(Path(wolts_dir), Path(args.out))
         except (OSError, ValueError) as exc:
             lore.failure(f"sessions not written out: {exc}")
-            return 1
+            return 3
         lore.plain(f"{len(written)} part(s) written out to {args.out}, encrypted")
     return failed
 

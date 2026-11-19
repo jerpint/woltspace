@@ -648,14 +648,14 @@ npx wrangler r2 bucket lock add <bucket> keep-sessions lodges/<lodge>/sessions/ 
 Then a few lines at the end of the daily script. Only parts not yet sent are
 written out, as kept (gzipped) and encrypted to the same age key; object names are an
 opaque source id and a content digest, never a path or a wolt name. `copy`,
-never `sync`, and the folder goes only when the upload worked. rclone runs only
-when `--out` exited 0: a file it had to skip (an unreadable one, or a native one
-with no working folder and no owning session) or any error holds that night's
-upload, and the listed file says why:
+never `sync`, and the folder goes only when the upload worked. `--out` exits 1
+when it only skipped files (listed; the rest is written out) and 3 when it failed
+(no recipient, an archive error): only a failure holds that night's upload.
 
 ```bash
 sessions=~/.woltspace/session-out
-woltspace backup sessions --out "$sessions" &&
+rc=0; woltspace backup sessions --out "$sessions" || rc=$?
+[ "$rc" -le 1 ] &&
   rclone copy --ignore-existing --exclude '.*' "$sessions" "$dest/sessions/" && woltspace backup sessions --sent "$sessions" && rm -rf "$sessions"
 ```
 
