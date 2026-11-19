@@ -494,6 +494,36 @@ a value someone already set is kept, an unreadable file is left alone, and 0
 (which turns transcripts off) is never written. Natively the engines run on your
 own `~/.claude`, which woltspace never edits: `woltspace doctor` prints the line
 to add there. Codex keeps its sessions; opencode, Pi and Hermes are not measured.
+## The session archive
+
+A lodge whose `woltspace.json` sets `"sessions": {"keep_days": ...}` also keeps
+every engine session file for good, gzipped, in `.space/session-archive/`
+(owner-only: folders 0700, files 0600). Each `woltspace backup` refreshes it
+first; `woltspace backup sessions` refreshes it on its own. Snapshots leave the
+folder out, so they do not grow with it. Unset, nothing changes, and
+`woltspace backup sessions` refuses.
+
+```bash
+woltspace backup sessions                     # store what is new
+woltspace restore-sessions <data root>/.space/session-archive --to ~/sessions-back
+```
+
+- **What:** the session files each engine's harness entry names (Claude Code,
+  Codex, Pi) under every wolt. opencode and Hermes keep sessions in a database:
+  they are listed as "snapshots only". Natively, from your own `~/.claude`,
+  `~/.codex` and `~/.pi`, a file is taken only when the working folder recorded
+  inside it is in the lodge; one that does not say is skipped and reported.
+- **Only the new part:** a JSONL session that grew stores just the complete lines
+  added since last time (a half-written last line waits for the next run); a
+  rewritten file is stored as a whole new version, and old versions stay.
+- **Names from content** (`<file mtime UTC>-<sha256>`): every file is read
+  and hashed each run, so a re-run never stores anything twice.
+- **Restore** writes each file's newest version under `--to/root/<path>` (or
+  `home/<path>`), byte for byte, with its original time, and any earlier
+  version a rewrite left under `--to/versions/` as `<path>.v1`, `.v2`, ...
+  (a tree of its own, so it never meets a real file). Each part names the
+  digest of what it continues; a missing or damaged part stops that one file
+  with a message, never a shorter file. Nothing is resumed.
 
 ## Off the machine: a bucket (Cloudflare R2)
 
@@ -620,6 +650,62 @@ lock covers `snapshots/` only, so a lodge that went wrong can rewrite
 lock stops overwrites, not new objects). Before you boot, check that the
 manifest's `tag`, `created_at` and `woltspace_version` are the snapshot you
 meant: a date far older than the tag, or a version you never ran, means stop.
+
+### Sessions to the bucket
+
+The session archive (above) goes to its own prefix, `lodges/<lodge>/sessions/`,
+locked with **no time limit** and with no lifecycle (delete) rule on it. Once,
+before the lock goes on, put the lock probe there (a tiny fixed object):
+
+```bash
+echo probe | rclone rcat "r2:<bucket>/lodges/<lodge>/sessions/lock-probe"
+npx wrangler r2 bucket lock add <bucket> keep-sessions lodges/<lodge>/sessions/ --retention-indefinite
+```
+
+Then three lines at the end of the daily script. Only parts not yet sent are
+written out, as kept (gzipped) and encrypted to the same age key; object names are an
+opaque source id and a content digest, never a path or a wolt name. `copy`,
+never `sync`, and the folder goes only when the upload worked. A file it had to
+skip (say a native session with no recorded working folder) makes `--out` exit 1
+every night while still writing the rest, so it is not left to `set -e`:
+
+```bash
+sessions=~/.woltspace/session-out
+woltspace backup sessions --out "$sessions" || echo "some session files were skipped (listed above)"
+rclone copy --ignore-existing --exclude '.*' "$sessions" "$dest/sessions/" && woltspace backup sessions --sent "$sessions" && rm -rf "$sessions"
+```
+
+`woltspace backup sessions check-lock --remote "$dest"` tries to delete the
+probe with the lodge's own token: **ON** only when the storage's refusal names
+an object lock or retention (R2's exact wording is not measured yet); **OFF** (it was deleted: put it back) or **UNKNOWN** (no
+probe, a token or network error) exit non-zero. While the rule is off, the
+whole `sessions/` prefix is unprotected; your admin key never lives on the lodge.
+
+To restore, on your own machine with the read-only token and the age key:
+
+```bash
+rclone copy "r2:<bucket>/lodges/<lodge>/sessions/" r2-sessions/
+cd r2-sessions && find v1 -name '*.age' | while read -r f; do
+  mkdir -p "../archive/$(dirname "$f")"; age -d -i key.txt "$f" > "../archive/${f%.age}"
+done
+woltspace restore-sessions ../archive --to ~/sessions-back
+```
+
+### Deleting a session on purpose
+
+```bash
+woltspace backup sessions delete --session <id>          # lists what it would delete
+woltspace backup sessions delete --before 2026-01-01 --yes
+```
+
+It lists every copy first (the sessions, the engine's own files, the archive
+parts, the bucket keys) and deletes only with `--yes`; it refuses a session
+that is running. It removes the engine files and the archive parts at once and
+writes the bucket keys to `.space/session-archive/deletes/<time>.txt`. The
+lodge cannot delete from the locked prefix, by design: the command prints your
+steps (rule off, `rclone delete --files-from <list>` with your own access, rule
+back on, `check-lock`). Snapshots that already hold the files are locked too:
+they keep them until they expire. For a leaked secret, rotate the secret first.
 
 ### The restore checks
 
