@@ -118,6 +118,8 @@ if mode == "on":
     sys.exit("Failed to deletefile: AccessDenied: Object Lock: the object is under a retention rule")
 if mode == "account":
     sys.exit("Failed to deletefile: AccessDenied: account is locked; credentials rejected")
+if mode == "named":  # rclone quotes the target: its name is not the storage's answer
+    sys.exit(f"Failed to deletefile {{sys.argv[2]}}: AccessDenied: Access Denied")
 if mode == "denied":  # a token that may list but not delete: not proof of a lock
     sys.exit("Failed to deletefile: AccessDenied: Access Denied")
 if mode == "network":
@@ -259,3 +261,8 @@ def test_a_night_that_only_skipped_files_still_uploads(tmp_path, fake_age):
     _grow(root, [0])
     run, uploaded = _nightly(tmp_path, root, tmp_path / "out", age=fake_age)
     assert uploaded, (run.returncode, run.stdout[-800:], run.stderr[-800:])
+
+
+def test_a_remote_named_like_a_lock_is_not_read_as_on(fake_rclone):  # review 4
+    fake_rclone.write_text("named")
+    assert sa.check_lock("r2:retention-lock/lodges/object-lock")[0] == "unknown"

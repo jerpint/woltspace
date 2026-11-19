@@ -115,7 +115,7 @@ def test_a_refresh_that_raises_still_leaves_the_nights_snapshot(tmp_path, monkey
     def broken(*args, **kwargs):
         raise OSError(28, 'No space left on device')
     monkeypatch.setattr(sa, 'refresh', broken)
-    assert main(['backup', '--tag', 'night', '--out', str(tmp_path / 'out')]) == 1
+    assert main(['backup', '--tag', 'night', '--out', str(tmp_path / 'out')]) == 0  # the snapshot is fine
     assert (tmp_path / 'out' / 'woltspace-backup-night.tar.gz').is_file()
     assert 'session archive failed' in capsys.readouterr().err
 
@@ -144,3 +144,11 @@ def test_natively_a_tool_result_follows_its_session(tmp_path):  # Gate B N1
     assert sorted(line.split(' -> ')[0] for line in report.stored) == [
         f'home:.claude/projects/-a/{ours}.jsonl', f'home:.claude/projects/-a/{ours}/tool-results/r.txt']
     assert report.skipped == []  # the owner's own files are neither taken nor listed
+
+
+def test_natively_a_file_not_shown_to_be_the_lodges_is_passed_over_silently(tmp_path):  # review 2
+    root, home = lodge(tmp_path), tmp_path / 'home'
+    source(home, '.claude/projects/-a/memory/MEMORY.md', b'the owner\'s private notes')  # no cwd, no owning session
+    source(home, '.claude/projects/-a/x.jsonl', b'{"cwd": "."}\n')  # a relative folder: not shown either
+    report = sa.refresh(root, HARNESSES, home=home)
+    assert report.stored == [] and report.skipped == []

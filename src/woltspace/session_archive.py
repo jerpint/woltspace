@@ -198,28 +198,40 @@ def refresh(wolts_dir: Path, table: dict, *, home: Path | None = None) -> Report
         owners: dict = {}  # an owning session file's working folder, read once per run
         for origin, rel, path in _sources(wolts_dir, table, home, report):
             key = f"{origin}:{rel}"
-            if secret_rule(rel):
+            if origin == "root" and secret_rule(rel):
                 report.skipped.append(f"{key}: looks like a credential; not taken")
                 continue
             try:
                 data, info = _read(path)
             except OSError as exc:
-                report.skipped.append(f"{origin}:{rel}: {exc.strerror or exc}")
+                if origin == "root":  # natively not shown to be the lodge's: passed over silently
+                    report.skipped.append(f"{key}: {exc.strerror or exc}")
                 continue
-            if origin == "home":
+            if origin == "home":  # natively only what is shown to be the lodge's, and silently otherwise
                 cwd = _inner_cwd(data)
                 if cwd is None and home is not None:  # a tool result, say: its session decides
                     cwd = _owner_cwd(path, home, owners)
                 if cwd is None or not os.path.isabs(cwd):
-                    report.skipped.append(f"{origin}:{rel}: no absolute working folder recorded inside; not taken")
-                    continue
+                    continue  # memory notes, a relative folder: not shown to be the lodge's
                 inside = os.path.realpath(cwd)
                 if inside != str(wolts_dir) and not inside.startswith(str(wolts_dir) + os.sep):
                     continue  # the owner's own session, not the lodge's
+                if secret_rule(rel):
+                    report.skipped.append(f"{key}: looks like a credential; not taken")
+                    continue
             folder = archive / FORMAT / _sha(key.encode())
             if name := _capture(folder, origin, rel, data, info):
                 report.stored.append(f"{key} -> {name}")
     return report
+
+
+def _contained(origin, path) -> PurePosixPath | None:
+    """A part's recorded path when it stays inside its origin (no absolute path,
+    no ..), else None: restore and delete never act outside."""
+    rel = PurePosixPath(path) if isinstance(path, str) else None
+    if origin not in ("root", "home") or rel is None or rel.is_absolute() or ".." in rel.parts:
+        return None
+    return rel
 
 
 class BrokenChain(ValueError):
@@ -273,8 +285,8 @@ def restore(archive: Path, to: Path) -> tuple[list[str], list[str]]:
         except BrokenChain as exc:
             refused.append(str(exc))
             continue
-        rel = PurePosixPath(meta["path"])
-        if meta["origin"] not in ("root", "home") or rel.is_absolute() or ".." in rel.parts:
+        rel = _contained(meta["origin"], meta["path"])
+        if rel is None:
             refused.append(f"{folder.name}: names a path outside the restore ({meta['path']})")
             continue
         target = to / meta["origin"] / rel
@@ -369,7 +381,7 @@ def check_lock(remote: str) -> tuple[str, str]:
         return "unknown", "rclone timed out"
     if tried.returncode == 0:
         return "off", f"the lodge's own token deleted {target}: the lock is OFF (put the probe back)"
-    if _LOCKED.search(tried.stderr):
+    if _LOCKED.search(tried.stderr.replace(target, "").replace(remote, "")):  # names are not answers
         return "on", "the storage refused the delete: the object is locked"
     return "unknown", tried.stderr.strip()[-300:] or f"rclone exit {tried.returncode}"
 
@@ -426,8 +438,9 @@ def plan_delete(wolts_dir: Path, *, session: str = "", before: datetime | None =
             continue
         plan.sources.append(f"{last['origin']}:{last['path']}")
         base = Path(wolts_dir) if last["origin"] == "root" else home
-        if base is not None and (base / last["path"]).is_file():
-            plan.engine_files.append(base / last["path"])
+        rel = _contained(last["origin"], last["path"])
+        if base is not None and rel is not None and (base / rel).is_file():
+            plan.engine_files.append(base / rel)
         for meta in parts:
             kept = [folder / f"{meta['name']}.gz", folder / f"{meta['name']}.json"]
             plan.parts += kept

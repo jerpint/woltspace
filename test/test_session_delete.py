@@ -163,3 +163,18 @@ def test_delete_waits_for_a_running_refresh(lodge):  # Gate B N2: the archive's 
         assert not done.wait(0.5) and any(GONE in p for p in _engine(lodge))
     worker.join(10)
     assert done.is_set() and not any(GONE in p for p in _engine(lodge))
+
+
+@pytest.mark.parametrize("crafted", ["../outside/.claude/projects/-w/{sid}.jsonl", "{abs}/.claude/projects/-w/{sid}.jsonl"])
+def test_delete_never_reaches_outside_the_lodge(lodge, tmp_path, crafted):  # review 3
+    outside = tmp_path / "outside" / ".claude" / "projects" / "-w" / f"{GONE}.jsonl"
+    outside.parent.mkdir(parents=True)
+    outside.write_text("not the lodge's")
+    meta, = [m for m in (lodge / sa.ARCHIVE / sa.FORMAT).rglob("*.json")
+             if json.loads(m.read_text())["path"].endswith(f"{GONE}.jsonl")]
+    path = crafted.format(sid=GONE, abs=tmp_path / "outside")
+    meta.write_text(json.dumps({**json.loads(meta.read_text()), "path": path}))
+    plan = sa.plan_delete(lodge, session=GONE)
+    assert outside not in plan.engine_files
+    sa.delete(lodge, plan)
+    assert outside.read_text() == "not the lodge's"

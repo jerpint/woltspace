@@ -150,7 +150,7 @@ def test_natively_only_sessions_recorded_inside_the_lodge_are_taken(tmp_path):
     report = sa.refresh(root, HARNESSES, home=home)
     assert sorted(line.split(" -> ")[0] for line in report.stored) == [
         "home:.claude/projects/-a/ours.jsonl", "home:.codex/sessions/r.jsonl"]
-    assert report.skipped == ["home:.claude/projects/-c/unsure.jsonl: no absolute working folder recorded inside; not taken"]
+    assert report.skipped == []  # unsure natively: passed over silently, never listed
 
 
 def test_the_archive_is_owner_only_and_left_out_of_snapshots(tmp_path):

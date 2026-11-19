@@ -512,7 +512,10 @@ woltspace restore-sessions <data root>/.space/session-archive --to ~/sessions-ba
   Codex, Pi) under every wolt. opencode and Hermes keep sessions in a database:
   they are listed as "snapshots only". Natively, from your own `~/.claude`,
   `~/.codex` and `~/.pi`, a file is taken only when the working folder recorded
-  inside it is in the lodge; one that does not say is skipped and reported.
+  inside it (or in the session file that owns it) is in the lodge; anything not
+  shown to be the lodge's is passed over silently, never listed.
+- **What it holds:** whatever the session saw, tool output included, so a secret
+  that was ever printed is in the archive too: rotate a leaked secret.
 - **Only the new part:** a JSONL session that grew stores just the complete lines
   added since last time (a half-written last line waits for the next run); a
   rewritten file is stored as a whole new version, and old versions stay.
@@ -701,7 +704,8 @@ woltspace backup sessions delete --before 2026-01-01 --yes
 
 It lists every copy first (the sessions, the engine's own files, the archive
 parts, the bucket keys) and deletes only with `--yes`; it refuses a session
-that is running. It removes the engine files and the archive parts at once and
+that is running. It removes the engine files (natively that includes the
+lodge's sessions in your own `~/.claude`, `~/.codex` or `~/.pi`) and the archive parts at once and
 writes the bucket keys to `.space/session-archive/deletes/<time>.txt`. The
 lodge cannot delete from the locked prefix, by design: the command prints your
 steps (rule off, `rclone delete --files-from <list>` with your own access, rule

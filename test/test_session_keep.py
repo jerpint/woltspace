@@ -124,3 +124,18 @@ def test_doctor_shows_the_setting_and_natively_the_line_to_add(tmp_path, isolati
     assert check.status == status and check.detail.startswith("sessions.keep_days: ")
     assert check.remedy.startswith(remedy) and bool(check.remedy) == bool(remedy)
     assert (root / "woltspace.json").read_text() == json.dumps({"sessions": sessions})  # read only
+
+
+def test_the_merge_writes_under_the_settings_lock(tmp_path, monkeypatch):  # review 5b
+    from contextlib import contextmanager
+    held, writes = [], []
+
+    @contextmanager
+    def lock(path):
+        held.append(path)
+        yield
+        held.pop()
+    monkeypatch.setattr(session_keep, "settings_lock", lock)
+    monkeypatch.setattr(session_keep, "write_json_atomic", lambda path, data: writes.append(list(held)))
+    assert session_keep.merge_claude_settings(tmp_path / ".claude", 30) == "set"
+    assert writes == [[tmp_path / ".claude" / "settings.json"]]

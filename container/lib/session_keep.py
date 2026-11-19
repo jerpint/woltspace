@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from settings_files import write_json_atomic
+from settings_files import settings_lock, write_json_atomic
 
 FOREVER_DAYS = 3650
 _UNSET = object()
@@ -45,21 +45,23 @@ def setting(wolts_dir) -> str:
 
 def merge_claude_settings(claude_dir: Path, days: int) -> str:
     """Add cleanupPeriodDays unless one is there: "set", "kept", or "refused" (an
-    unreadable or non-object file is left as it is)."""
+    unreadable or non-object file is left as it is). Holds the file's settings
+    lock from the read to the write."""
     path = Path(claude_dir) / "settings.json"
-    settings = {}
-    if path.exists():
-        try:
-            settings = json.loads(path.read_text())
-        except (OSError, ValueError):
-            return "refused"
-        if not isinstance(settings, dict):
-            return "refused"
-    if "cleanupPeriodDays" in settings:
-        return "kept"
-    settings["cleanupPeriodDays"] = days
     path.parent.mkdir(parents=True, exist_ok=True)
-    write_json_atomic(path, settings)
+    with settings_lock(path):
+        settings = {}
+        if path.exists():
+            try:
+                settings = json.loads(path.read_text())
+            except (OSError, ValueError):
+                return "refused"
+            if not isinstance(settings, dict):
+                return "refused"
+        if "cleanupPeriodDays" in settings:
+            return "kept"
+        settings["cleanupPeriodDays"] = days
+        write_json_atomic(path, settings)
     return "set"
 
 
