@@ -469,9 +469,15 @@ def _db_show(args) -> int:
     return 0
 
 
+#: `backup sessions` finished but skipped some files (listed). Its own code, so
+#: that any other non-zero exit (3, a traceback's 1, a usage error's 2) means
+#: it failed and the nightly upload waits.
+SKIPPED_EXIT = 10
+
+
 def _archive_sessions(layout: RuntimeLayout, wolts_dir, *, quiet: bool = False) -> int:
     """Refresh the session archive and say what it did (on stderr when quiet,
-    so --json stays one document); 1 when a file was skipped."""
+    so --json stays one document); SKIPPED_EXIT when a file was skipped."""
     from . import session_archive
 
     _graft_runtime_lib()
@@ -483,7 +489,7 @@ def _archive_sessions(layout: RuntimeLayout, wolts_dir, *, quiet: bool = False) 
     say(f"session archive: {len(report.stored)} new part(s), {len(report.skipped)} skipped")
     for line in report.skipped + report.not_archived:
         say(f"  {line}")
-    return 1 if report.skipped else 0
+    return SKIPPED_EXIT if report.skipped else 0
 
 
 def _delete_sessions(args, layout: RuntimeLayout, wolts_dir) -> int:
@@ -539,7 +545,7 @@ def _delete_sessions(args, layout: RuntimeLayout, wolts_dir) -> int:
 
 def _sessions_command(args, layout: RuntimeLayout, wolts_dir) -> int:
     """woltspace backup sessions [--out DIR | --sent DIR] | check-lock --remote R
-    Exit 0; 1 when only some files were skipped (listed); 3 when it failed."""
+    Exit 0; SKIPPED_EXIT when it only skipped some files (listed); 3 when it failed."""
     from . import session_archive
 
     if args.action == "delete":
