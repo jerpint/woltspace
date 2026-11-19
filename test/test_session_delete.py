@@ -86,6 +86,13 @@ CL, CX, PI = "wolt-a/.claude/projects/-w", "wolt-a/.codex/sessions/2026/01/01", 
     (f"{CL}/x{GONE}.jsonl", None),
     (f"{CX}/{GONE}.jsonl", None),  # codex names only rollout-<time>-<id>
     (f"{CL}/WOLT-A.jsonl", None),
+    (f"wolt-a/.codex/archived_sessions/rollout-2026-01-01T00-00-00-{GONE}.jsonl", GONE),  # flat
+    (f"wolt-a/.codex/sessions/rollout-2026-01-01T00-00-00-{GONE}.jsonl", GONE),
+    (f".codex/sessions/rollout-2026-01-01T00-00-00-{GONE}.jsonl", GONE),  # native, from home
+    (f".claude/projects/-w/{GONE}.jsonl", GONE),
+    (f".claude/projects/{GONE}.jsonl", None),  # no <proj>: not a claude session file
+    (f".pi/agent/sessions/--w--/1700000000_{GONE}.jsonl", GONE),
+    (f".pi/agent/sessions/1700000000_{GONE}.jsonl", GONE),
 ])
 def test_a_session_id_comes_from_one_fixed_place_per_engine(path, sid):
     assert sa.session_id(path) == sid
@@ -129,3 +136,17 @@ def test_owner_name_is_not_a_session_id(tmp_path):  # the reviewer's round-3 reg
     sa.refresh(root, HARNESSES)
     plan = sa.plan_delete(root, session="wolt-a")
     assert plan.sources == [] and plan.engine_files == []
+
+
+def test_whole_uuid_selects_a_flat_codex_archived_rollout(tmp_path):  # the reviewer's round-4 regression
+    root = tmp_path / "wolts"
+    root.mkdir()
+    (root / "woltspace.json").write_text(json.dumps({"sessions": {"keep_days": None}}))
+    rel = f"wolt-a/.codex/archived_sessions/rollout-2026-01-01T00-00-00-{GONE}.jsonl"
+    path = root / rel
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b'{"turn":1}\n')
+    sa.refresh(root, HARNESSES)
+    plan = sa.plan_delete(root, session=GONE)
+    assert sa.session_id(rel) == GONE
+    assert plan.sources == [f"root:{rel}"] and plan.engine_files == [path]

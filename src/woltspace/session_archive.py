@@ -396,8 +396,10 @@ def session_id(path: str) -> str | None:
     UUID). None when that place holds no UUID: such a file is never selected."""
     parts = PurePosixPath(path).parts
     stem = parts[-1].split(".", 1)[0] if parts else ""
-    for i in range(1, len(parts) - 2):
+    for i in range(1, len(parts) - 1):  # the prefix may hold the file itself (flat codex, native)
         if parts[i] == "projects" and parts[i - 1] in (".claude", ".claude-state"):
+            if len(parts) < i + 3:  # claude always has a <proj> folder
+                return None
             here = stem if len(parts) == i + 3 else parts[i + 2]
             return here if SESSION_ID.match(here) else None
         if parts[i] in ("sessions", "archived_sessions") and parts[i - 1] == ".codex":
