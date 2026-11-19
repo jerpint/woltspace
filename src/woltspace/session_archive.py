@@ -436,13 +436,17 @@ def plan_delete(wolts_dir: Path, *, session: str = "", before: datetime | None =
 
 
 def delete(wolts_dir: Path, plan: DeletePlan) -> Path:
-    """Remove the engine files and archive parts now; write the bucket keys for
+    """Remove the engine files and archive parts now, under the archive's lock
+    so a refresh cannot store them again meanwhile; write the bucket keys for
     the owner's own delete there. Returns the key list's path."""
-    for path in plan.engine_files + plan.parts:
-        path.unlink(missing_ok=True)
-    for folder in {path.parent for path in plan.parts}:
-        if folder.is_dir() and not any(folder.iterdir()):
-            folder.rmdir()
+    archive = Path(wolts_dir) / ARCHIVE
+    with os.fdopen(os.open(archive / ".lock", os.O_WRONLY | os.O_CREAT, 0o600), "w") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        for path in plan.engine_files + plan.parts:
+            path.unlink(missing_ok=True)
+        for folder in {path.parent for path in plan.parts}:
+            if folder.is_dir() and not any(folder.iterdir()):
+                folder.rmdir()
     listing = Path(wolts_dir) / ARCHIVE / "deletes" / f"{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}.txt"
     listing.parent.mkdir(mode=0o700, exist_ok=True)
     _write(listing, "".join(f"{key}\n" for key in plan.keys).encode())

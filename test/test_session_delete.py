@@ -150,3 +150,16 @@ def test_whole_uuid_selects_a_flat_codex_archived_rollout(tmp_path):  # the revi
     plan = sa.plan_delete(root, session=GONE)
     assert sa.session_id(rel) == GONE
     assert plan.sources == [f"root:{rel}"] and plan.engine_files == [path]
+
+
+def test_delete_waits_for_a_running_refresh(lodge):  # Gate B N2: the archive's one lock
+    import fcntl
+    import threading
+    plan, done = sa.plan_delete(lodge, session=GONE), threading.Event()
+    with open(lodge / sa.ARCHIVE / ".lock", "a") as held:
+        fcntl.flock(held.fileno(), fcntl.LOCK_EX)  # what a refresh holds while it runs
+        worker = threading.Thread(target=lambda: (sa.delete(lodge, plan), done.set()))
+        worker.start()
+        assert not done.wait(0.5) and any(GONE in p for p in _engine(lodge))
+    worker.join(10)
+    assert done.is_set() and not any(GONE in p for p in _engine(lodge))
