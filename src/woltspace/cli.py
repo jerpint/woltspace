@@ -495,6 +495,10 @@ def _delete_sessions(args, layout: RuntimeLayout, wolts_dir) -> int:
     if bool(args.session) == bool(args.before):
         lore.failure("delete needs exactly one of --session ID or --before YYYY-MM-DD")
         return 2
+    args.session = args.session.lower()
+    if args.session and not session_archive.SESSION_ID.match(args.session):
+        lore.failure(f"--session wants a whole session id (a UUID), not {args.session!r}")
+        return 2
     try:
         before = datetime.strptime(args.before, "%Y-%m-%d").replace(tzinfo=UTC) if args.before else None
     except ValueError:
@@ -509,7 +513,7 @@ def _delete_sessions(args, layout: RuntimeLayout, wolts_dir) -> int:
     plan = session_archive.plan_delete(Path(wolts_dir), session=args.session, before=before, home=home)
     running = {stored_resume_id(r) for r in SessionRegistry(wolts_dir).records()
                if r.get("status") in ("running", "stopping") or r.get("launching")} - {""}
-    if busy := sorted(s for s in plan.sources if any(session_archive.belongs(s.split(":", 1)[1], rid) for rid in running)):
+    if busy := sorted(s for s in plan.sources if session_archive.session_id(s.split(":", 1)[1]) in running):
         lore.failure(f"refused: running session(s): {', '.join(busy)}; stop them first")
         return 1
     for label, items in (("sessions", plan.sources), ("engine files", plan.engine_files),

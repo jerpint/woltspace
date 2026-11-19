@@ -382,25 +382,34 @@ class DeletePlan:
     keys: list[str] = field(default_factory=list)  # bucket keys under sessions/
 
 
-_ROLLOUT_ID = re.compile(r"^rollout-.+-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$")
+_UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+SESSION_ID = re.compile(f"^{_UUID}$")  # the only shape --session accepts (lowercased first)
+_ROLLOUT = re.compile(f"^rollout-.+-({_UUID})$")
+_PI = re.compile(f"_({_UUID})$")
 
 
-def belongs(path: str, session: str) -> bool:
-    """Whether a session file belongs to one session id, exactly: a folder named
-    for it (claude's <id>/ tool results), or a file named for it (<id>.jsonl,
-    codex's rollout-<time>-<id>.jsonl, pi's <time>_<id>.jsonl); never a mere
-    substring, which could reach another session."""
+def session_id(path: str) -> str | None:
+    """The session a file belongs to, read from one fixed place per engine and
+    never from any other folder on its path: claude's <projects>/<proj>/<id>.jsonl
+    (the stem) or <projects>/<proj>/<id>/... (the folder right below <proj>);
+    codex's rollout-<time>-<id>.jsonl and pi's <time>_<id>.jsonl (the trailing
+    UUID). None when that place holds no UUID: such a file is never selected."""
     parts = PurePosixPath(path).parts
-    stem = PurePosixPath(path).name.split(".", 1)[0]
-    ids = {*parts[:-1], stem, stem.rsplit("_", 1)[-1]}  # <id>/..., <id>.jsonl, <time>_<id>.jsonl
-    if rollout := _ROLLOUT_ID.search(stem):  # rollout-<time>-<uuid>.jsonl
-        ids.add(rollout.group(1))
-    return bool(session) and session in ids  # the whole id, compared with ==
+    stem = parts[-1].split(".", 1)[0] if parts else ""
+    for i in range(1, len(parts) - 2):
+        if parts[i] == "projects" and parts[i - 1] in (".claude", ".claude-state"):
+            here = stem if len(parts) == i + 3 else parts[i + 2]
+            return here if SESSION_ID.match(here) else None
+        if parts[i] in ("sessions", "archived_sessions") and parts[i - 1] == ".codex":
+            return found.group(1) if (found := _ROLLOUT.match(stem)) else None
+        if parts[i] == "sessions" and parts[i - 2:i] == (".pi", "agent"):
+            return found.group(1) if (found := _PI.search(stem)) else None
+    return None
 
 
 def plan_delete(wolts_dir: Path, *, session: str = "", before: datetime | None = None,
                 home: Path | None = None) -> DeletePlan:
-    """Every archived source of one session (see belongs), or whose
+    """Every archived source of one session (see session_id), or whose
     newest version is older than `before`: its engine file, its parts, and the
     bucket keys they were sent under. Each source's parts are its own, so no
     other session is touched."""
@@ -410,7 +419,7 @@ def plan_delete(wolts_dir: Path, *, session: str = "", before: datetime | None =
         if not parts:
             continue
         last = parts[-1]
-        if not ((session and belongs(last["path"], session))
+        if not ((session and session_id(last["path"]) == session)
                 or (before and last["source_mtime_ns"] < before.timestamp() * 1e9)):
             continue
         plan.sources.append(f"{last['origin']}:{last['path']}")

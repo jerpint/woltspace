@@ -72,23 +72,60 @@ def test_exactly_one_selector_and_a_real_date(lodge):
     assert cli_main(["backup", "sessions", "delete", "--before", "last week"]) == 2
 
 
-@pytest.mark.parametrize("path, hit", [
-    (f"-w/{GONE}.jsonl", True), (f"-w/{GONE}/tool-results/r.txt", True),
-    (f"2026/rollout-2026-01-01T00-00-00-{GONE}.jsonl", True), (f"-w/1700000000_{GONE}.jsonl", True),
-    (f"-w/{GONE}x.jsonl", False), (f"-w/x{GONE}.jsonl", False), (f"-w/{GONE[:8]}.jsonl", False),
+CL, CX, PI = "wolt-a/.claude/projects/-w", "wolt-a/.codex/sessions/2026/01/01", "wolt-a/.pi/agent/sessions/--w--"
+
+
+@pytest.mark.parametrize("path, sid", [
+    (f"{CL}/{GONE}.jsonl", GONE),
+    (f"{CL}/{GONE}/subagents/agent-1.jsonl", GONE),  # the folder right below <proj>
+    (f"{CL}/{GONE}/tool-results/r.txt", GONE),
+    (f"{CX}/rollout-2026-01-01T00-00-00-{GONE}.jsonl", GONE),
+    (f"{PI}/1700000000_{GONE}.jsonl", GONE),
+    (f"wolt-a/.claude/projects/{GONE}/notes.jsonl", None),  # a UUID one level too high is not the id
+    (f"{GONE}/.claude/projects/-w/notes.jsonl", None),  # nor an owner folder
+    (f"{CL}/x{GONE}.jsonl", None),
+    (f"{CX}/{GONE}.jsonl", None),  # codex names only rollout-<time>-<id>
+    (f"{CL}/WOLT-A.jsonl", None),
 ])
-def test_a_session_id_matches_exactly_never_as_a_substring(path, hit):
-    assert sa.belongs(path, GONE) is hit
-    assert sa.belongs(f"-w/{GONE}.jsonl", GONE[:8]) is False  # a short id never reaches a longer one
+def test_a_session_id_comes_from_one_fixed_place_per_engine(path, sid):
+    assert sa.session_id(path) == sid
 
 
-def test_a_prefix_id_deletes_nothing(lodge):
+@pytest.mark.parametrize("given", ["wolt-a", GONE[:8], GONE.split("-")[-1], GONE + "0", "WOLT-A"])
+def test_only_a_whole_uuid_is_accepted(lodge, capsys, given):
     before = _engine(lodge)
-    assert cli_main(["backup", "sessions", "delete", "--session", GONE[:8], "--yes"]) == 0
-    assert _engine(lodge) == before
+    assert cli_main(["backup", "sessions", "delete", "--session", given, "--yes"]) == 2
+    assert _engine(lodge) == before and "sessions:" not in capsys.readouterr().out  # nothing listed
+    assert sa.plan_delete(lodge, session=given).sources == []
 
 
-def test_delete_rejects_a_suffix_of_the_real_id(lodge):
-    plan = sa.plan_delete(lodge, session=GONE.split("-")[-1])
+def test_an_upper_case_id_is_the_same_id(lodge):
+    assert cli_main(["backup", "sessions", "delete", "--session", GONE.upper(), "--yes"]) == 0
+    assert not any(GONE in p for p in _engine(lodge)) and any(KEPT in p for p in _engine(lodge))
+
+
+def test_a_subagent_folder_goes_with_its_session_and_a_sibling_stays(lodge):
+    for sid in (GONE, KEPT):
+        path = lodge / CL / sid / "subagents" / "agent-1.jsonl"
+        path.parent.mkdir(parents=True)
+        path.write_text('{"turn": 0}\n')
+    sa.refresh(lodge, HARNESSES)
+    plan = sa.plan_delete(lodge, session=GONE)
+    assert sorted(plan.sources) == sorted(f"root:{CL}/{rel}" for rel in (
+        f"{GONE}.jsonl", f"{GONE}/subagents/agent-1.jsonl", f"{GONE}/tool-results/r.txt"))
+    assert cli_main(["backup", "sessions", "delete", "--session", GONE, "--yes"]) == 0
+    assert _engine(lodge) == sorted(f"{CL}/{KEPT}{rest}" for rest in (
+        ".jsonl", "/subagents/agent-1.jsonl", "/tool-results/r.txt"))
+
+
+def test_owner_name_is_not_a_session_id(tmp_path):  # the reviewer's round-3 regression
+    root = tmp_path / "wolts"
+    (root / "wolt-a").mkdir(parents=True)
+    (root / "woltspace.json").write_text(json.dumps({"sessions": {"keep_days": None}}))
+    for sid in [GONE, KEPT]:
+        path = root / CL / (sid + ".jsonl")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b'{"turn":1}\n')
+    sa.refresh(root, HARNESSES)
+    plan = sa.plan_delete(root, session="wolt-a")
     assert plan.sources == [] and plan.engine_files == []
-    assert sa.belongs(f"2026/rollout-2026-01-01T00-00-00-{GONE}.jsonl", GONE.split("-", 1)[1]) is False
