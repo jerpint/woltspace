@@ -10,7 +10,7 @@ a file that does not say is skipped and reported, never guessed.
 
 Each source (its origin, "root" or "home", and its relative path) gets an opaque
 folder, the sha256 of that pair. In it every part is <source mtime UTC>-<sha256
-of its bytes>, beside a .json naming the original path, capture time, digest and
+of the whole content up to it>, beside a .json naming the original path, capture time, digest and
 length, and the digest of the whole content it continues. A JSONL file that only
 grew stores just the complete lines added since its last part; anything else is
 a whole new version, so an old version is never lost. Names come from content,
@@ -99,20 +99,32 @@ def _sources(wolts_dir: Path, table: dict, home: Path | None, report: Report):
         for origin, base, owners in bases:
             for owner in owners:
                 for prefix in entry.get("session_files", ()):
-                    for dirpath, dirnames, filenames in os.walk(owner / prefix):
+                    top = owner / prefix
+                    if top.exists() and os.path.realpath(top) != os.path.join(
+                            os.path.realpath(base), top.relative_to(base)):
+                        report.skipped.append(f"{origin}:{top.relative_to(base).as_posix()}: reached through a link; not followed")
+                        continue
+                    for dirpath, dirnames, filenames in os.walk(top):
                         dirnames.sort()
                         for filename in sorted(filenames):
                             path = Path(dirpath) / filename
                             yield origin, path.relative_to(base).as_posix(), path
 
 
-def _parts(folder: Path) -> list[dict]:
+def _parts(folder: Path, *, strict: bool = False) -> list[dict]:
+    """The parts' metadata, oldest first. Capture skips a damaged one (it then
+    stores a new version); restore (strict) refuses the source instead, as it
+    does a part whose metadata is missing: never an older prefix as complete."""
     metas = []
     for meta in folder.glob("*.json"):
         try:
             metas.append({**json.loads(meta.read_text()), "name": meta.stem})
         except (OSError, ValueError):
-            continue  # a damaged part: restore says so; capture just stores a new version
+            if strict:
+                raise BrokenChain(f"{folder.name}: metadata {meta.name} is damaged") from None
+    if strict and (unpaired := sorted(p.name for p in folder.iterdir() if not p.name.startswith(".")
+                                       and p.suffix != ".json" and not (folder / f"{p.name}.json").exists())):
+        raise BrokenChain(f"{folder.name}: part {unpaired[0]} has no metadata")
     return sorted(metas, key=lambda m: (m.get("captured_at", ""), m["name"]))
 
 
@@ -130,7 +142,7 @@ def _capture(folder: Path, origin: str, rel: str, data: bytes, info: os.stat_res
         start, continues = last["total_length"], last["total_sha256"]
     part = body[start:]
     mtime = datetime.fromtimestamp(info.st_mtime, UTC).strftime("%Y%m%dT%H%M%SZ")
-    name = f"{mtime}-{_sha(part)}"
+    name = f"{mtime}-{total}"  # the whole content so far: two equal appends never share a name
     if (folder / f"{name}.json").exists():
         return None
     folder.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -165,8 +177,8 @@ def refresh(wolts_dir: Path, table: dict, *, home: Path | None = None) -> Report
                 continue
             if origin == "home":
                 cwd = _inner_cwd(data)
-                if cwd is None:
-                    report.skipped.append(f"{origin}:{rel}: no working folder recorded inside; not taken")
+                if cwd is None or not os.path.isabs(cwd):
+                    report.skipped.append(f"{origin}:{rel}: no absolute working folder recorded inside; not taken")
                     continue
                 inside = os.path.realpath(cwd)
                 if inside != str(wolts_dir) and not inside.startswith(str(wolts_dir) + os.sep):
@@ -213,7 +225,11 @@ def restore(archive: Path, to: Path) -> tuple[list[str], list[str]]:
         raise FileExistsError(f"{to} is not empty")
     restored, refused = [], []
     for folder in sorted(p for p in (Path(archive) / FORMAT).iterdir() if p.is_dir()):
-        parts = _parts(folder)
+        try:
+            parts = _parts(folder, strict=True)
+        except BrokenChain as exc:
+            refused.append(str(exc))
+            continue
         if not parts:
             refused.append(f"{folder.name}: no readable part")
             continue

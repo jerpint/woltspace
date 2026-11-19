@@ -469,8 +469,9 @@ def _db_show(args) -> int:
     return 0
 
 
-def _archive_sessions(layout: RuntimeLayout, wolts_dir) -> int:
-    """Refresh the session archive and say what it did; 1 when a file was skipped."""
+def _archive_sessions(layout: RuntimeLayout, wolts_dir, *, quiet: bool = False) -> int:
+    """Refresh the session archive and say what it did (on stderr when quiet,
+    so --json stays one document); 1 when a file was skipped."""
     from . import session_archive
 
     _graft_runtime_lib()
@@ -478,9 +479,10 @@ def _archive_sessions(layout: RuntimeLayout, wolts_dir) -> int:
 
     report = session_archive.refresh(
         Path(wolts_dir), HARNESSES, home=layout.home if layout.isolation == "host" else None)
-    lore.plain(f"session archive: {len(report.stored)} new part(s), {len(report.skipped)} skipped")
+    say = (lambda text: print(text, file=sys.stderr)) if quiet else lore.plain
+    say(f"session archive: {len(report.stored)} new part(s), {len(report.skipped)} skipped")
     for line in report.skipped + report.not_archived:
-        lore.plain(f"  {line}")
+        say(f"  {line}")
     return 1 if report.skipped else 0
 
 
@@ -492,8 +494,8 @@ def _backup(args) -> int:
     wolts_dir = args.wolts_dir or layout.wolts_dir
     if args.what == "sessions":
         return _archive_sessions(layout, wolts_dir)
-    if session_archive.enabled(Path(wolts_dir)) and not args.json:
-        _archive_sessions(layout, wolts_dir)  # first; a skipped file does not stop the snapshot
+    if session_archive.enabled(Path(wolts_dir)):
+        _archive_sessions(layout, wolts_dir, quiet=args.json)  # first; a skipped file does not stop the snapshot
     try:
         result = create_backup(
             wolts_dir, out_dir=args.out or None, tag=args.tag or None, full=args.full,
