@@ -114,7 +114,9 @@ if verb == "lsf":
     print("lock-probe")
     sys.exit(0)
 if mode == "on":
-    sys.exit("Failed to deletefile: AccessDenied: object is locked by a bucket lock rule")
+    sys.exit("Failed to deletefile: AccessDenied: Object Lock: the object is under a retention rule")
+if mode == "account":
+    sys.exit("Failed to deletefile: AccessDenied: account is locked; credentials rejected")
 if mode == "denied":  # a token that may list but not delete: not proof of a lock
     sys.exit("Failed to deletefile: AccessDenied: Access Denied")
 if mode == "network":
@@ -127,7 +129,7 @@ sys.exit(0)
 
 
 @pytest.mark.parametrize("mode, state, code", [
-    ("on", "on", 0), ("off", "off", 1), ("missing", "unknown", 1), ("token", "unknown", 1), ("denied", "unknown", 1),
+    ("on", "on", 0), ("off", "off", 1), ("missing", "unknown", 1), ("token", "unknown", 1), ("denied", "unknown", 1), ("account", "unknown", 1),
     ("network", "unknown", 1),
 ])
 def test_check_lock_is_on_only_for_a_locked_refusal(tmp_path, fake_rclone, monkeypatch, mode, state, code):

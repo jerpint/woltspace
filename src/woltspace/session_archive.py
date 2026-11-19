@@ -346,7 +346,8 @@ def mark_sent(wolts_dir: Path, out: Path) -> int:
 
 
 LOCK_PROBE = "sessions/lock-probe"  # one fixed tiny object, so checks never pile up locked files
-_LOCKED = re.compile(r"object ?lock|locked", re.IGNORECASE)
+# only an object-lock refusal proves the lock; "locked" alone may be an account or a token
+_LOCKED = re.compile(r"object[ _-]?lock|retention", re.IGNORECASE)
 
 
 def check_lock(remote: str) -> tuple[str, str]:

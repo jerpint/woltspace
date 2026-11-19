@@ -648,17 +648,19 @@ npx wrangler r2 bucket lock add <bucket> keep-sessions lodges/<lodge>/sessions/ 
 Then three lines at the end of the daily script. Only parts not yet sent are
 written out, as kept (gzipped) and encrypted to the same age key; object names are an
 opaque source id and a content digest, never a path or a wolt name. `copy`,
-never `sync`, and the folder goes only when the upload worked:
+never `sync`, and the folder goes only when the upload worked. A file it had to
+skip (say a native session with no recorded working folder) makes `--out` exit 1
+every night while still writing the rest, so it is not left to `set -e`:
 
 ```bash
 sessions=~/.woltspace/session-out
-woltspace backup sessions --out "$sessions"
+woltspace backup sessions --out "$sessions" || echo "some session files were skipped (listed above)"
 rclone copy --ignore-existing "$sessions" "$dest/sessions/" && woltspace backup sessions --sent "$sessions" && rm -rf "$sessions"
 ```
 
 `woltspace backup sessions check-lock --remote "$dest"` tries to delete the
-probe with the lodge's own token: **ON** only when the storage refuses because
-the object is locked; **OFF** (it was deleted: put it back) or **UNKNOWN** (no
+probe with the lodge's own token: **ON** only when the storage's refusal names
+an object lock or retention (R2's exact wording is not measured yet); **OFF** (it was deleted: put it back) or **UNKNOWN** (no
 probe, a token or network error) exit non-zero. While the rule is off, the
 whole `sessions/` prefix is unprotected; your admin key never lives on the lodge.
 
