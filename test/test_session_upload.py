@@ -215,6 +215,47 @@ def test_a_skipped_file_is_exit_1_and_the_rest_still_goes_out_cleaned(tmp_path, 
     (root / "wolt-a/.claude/projects/-w/.env").write_text("x")  # skipped every night: looks like a credential
     _grow(root, [1])
     monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(root))
-    assert cli_main(["backup", "sessions", "--out", str(out)]) == 1  # only skipped: the upload goes on
+    assert cli_main(["backup", "sessions", "--out", str(out)]) == 10  # only skipped: the upload goes on
     folder, = (root / sa.ARCHIVE / sa.FORMAT).iterdir()
     assert sorted(p.name for p in out.rglob("*") if p.is_file()) == sorted(f"{p.name}.age" for p in folder.iterdir())
+
+
+def _nightly(tmp_path, root, out, age=None, **env):
+    """Run the nightly lines exactly as docs/backup.md has them, under bash -lc and
+    set -e, with the real CLI and an rclone that only records that it ran."""
+    import shlex
+    import subprocess
+    lines = (Path(__file__).resolve().parents[1] / "docs" / "backup.md").read_text().splitlines()
+    start = next(i for i, line in enumerate(lines) if line.startswith("rc=0; woltspace backup sessions --out"))
+    gate = "\n".join(lines[start:lines.index("```", start)])
+    bindir = tmp_path / "bin"
+    bindir.mkdir(exist_ok=True)
+    (bindir / "woltspace").write_text(f"#!/bin/sh\nexec {shlex.quote(sys.executable)} -m woltspace \"$@\"\n")
+    (bindir / "rclone").write_text(f"#!/bin/sh\nprintf upload > {shlex.quote(str(tmp_path / 'uploaded'))}\n")
+    if age is not None:  # a login shell resets PATH: the fake age goes beside the others
+        (bindir / "age").write_bytes((age / "age").read_bytes())
+    for tool in bindir.iterdir():
+        tool.chmod(0o755)
+    script = f"set -e\nexport PATH={shlex.quote(str(bindir))}:$PATH\nsessions={shlex.quote(str(out))}\ndest=local:dummy\n{gate}\n"
+    run = subprocess.run(["bash", "-lc", script], env={**os.environ, "WOLTSPACE_WOLTS_DIR": str(root), **env},
+                         capture_output=True, text=True, timeout=60, check=False)
+    return run, (tmp_path / "uploaded").exists()
+
+
+def test_a_crash_before_the_clean_up_never_uploads(tmp_path):  # the reviewer's N8-R1 case
+    root = _lodge(tmp_path)
+    out = tmp_path / "out"
+    stale = out / sa.FORMAT / "source" / "deleted.gz.age"
+    stale.parent.mkdir(parents=True)
+    stale.write_bytes(b"synthetic stale ciphertext")
+    run, uploaded = _nightly(tmp_path, root, out, WOLTSPACE_PORT="invalid-port")
+    assert "invalid-port" in run.stderr and not uploaded
+
+
+def test_a_night_that_only_skipped_files_still_uploads(tmp_path, fake_age):
+    root = _lodge(tmp_path)
+    (root / "wolt-a/.claude/projects/-w/.env").parent.mkdir(parents=True)
+    (root / "wolt-a/.claude/projects/-w/.env").write_text("x")  # skipped: exit 10
+    _grow(root, [0])
+    run, uploaded = _nightly(tmp_path, root, tmp_path / "out", age=fake_age)
+    assert uploaded, (run.returncode, run.stdout[-800:], run.stderr[-800:])
