@@ -413,8 +413,9 @@ def plan_delete(wolts_dir: Path, *, session: str = "", before: datetime | None =
         if base is not None and (base / last["path"]).is_file():
             plan.engine_files.append(base / last["path"])
         for meta in parts:
-            plan.parts += [folder / meta["name"], folder / f"{meta['name']}.json"]
-            plan.keys += [f"{FORMAT}/{folder.name}/{meta['name']}{suffix}" for suffix in (".gz.age", ".json.gz.age")]
+            kept = [folder / f"{meta['name']}.gz", folder / f"{meta['name']}.json"]
+            plan.parts += kept
+            plan.keys += [f"{FORMAT}/{folder.name}/{path.name}.age" for path in kept]  # as write_out names them
     return plan
 
 

@@ -53,7 +53,7 @@ def test_it_lists_first_and_only_yes_deletes_and_only_that_session(lodge, tmp_pa
     listing, = (lodge / sa.ARCHIVE / "deletes").iterdir()
     removed = [p for p in names if not p.exists()]  # 2 sources, one part each: data + metadata
     assert len(removed) == 4 and sorted(listing.read_text().split()) == sorted(  # the names write_out gave them
-        f"{sa.FORMAT}/{p.parent.name}/{p.name}.gz.age" for p in removed)
+        f"{sa.FORMAT}/{p.parent.name}/{p.name}.age" for p in removed)
 
 
 def test_a_running_session_is_refused(lodge):
