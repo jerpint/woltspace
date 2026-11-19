@@ -178,3 +178,35 @@ def test_delete_never_reaches_outside_the_lodge(lodge, tmp_path, crafted):  # re
     assert outside not in plan.engine_files
     sa.delete(lodge, plan)
     assert outside.read_text() == "not the lodge's"
+
+
+def test_delete_never_unlinks_through_a_linked_folder(tmp_path):  # reviewer's S2
+    root = tmp_path / "wolts"
+    (root / "wolt-a").mkdir(parents=True)
+    (root / "woltspace.json").write_text(json.dumps({"sessions": {"keep_days": None}}))
+    project = root / "wolt-a" / ".claude" / "projects" / "-w"
+    project.mkdir(parents=True)
+    (project / f"{GONE}.jsonl").write_bytes(b'{"turn":1}\n')
+    sa.refresh(root, HARNESSES)
+    (project / f"{GONE}.jsonl").unlink()
+    project.rmdir()
+    outside = tmp_path / "external-project" / f"{GONE}.jsonl"
+    outside.parent.mkdir()
+    outside.write_bytes(b"outside data root, keep me")
+    project.symlink_to(outside.parent, target_is_directory=True)
+    plan = sa.plan_delete(root, session=GONE)
+    assert plan.engine_files == []
+    sa.delete(root, plan)
+    assert outside.read_bytes() == b"outside data root, keep me"
+
+
+def test_a_session_file_that_is_a_link_is_removed_as_the_link(lodge, tmp_path):
+    target = tmp_path / "elsewhere.jsonl"
+    target.write_text("keep me")
+    engine = lodge / CL / f"{GONE}.jsonl"
+    engine.unlink()
+    engine.symlink_to(target)
+    plan = sa.plan_delete(lodge, session=GONE)
+    assert engine in plan.engine_files
+    sa.delete(lodge, plan)
+    assert not engine.is_symlink() and target.read_text() == "keep me"

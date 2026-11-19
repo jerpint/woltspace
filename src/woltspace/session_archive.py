@@ -138,6 +138,14 @@ def _owner_cwd(path: Path, home: Path, seen: dict) -> str | None:
     return None
 
 
+def _in_lodge(cwd: str | None, wolts_dir: Path) -> bool:
+    """A recorded working folder that is absolute and inside the data root."""
+    if cwd is None or not os.path.isabs(cwd):
+        return False
+    inside = os.path.realpath(cwd)
+    return inside == str(wolts_dir) or inside.startswith(str(wolts_dir) + os.sep)
+
+
 def _parts(folder: Path, *, strict: bool = False) -> list[dict]:
     """The parts' metadata, oldest first. Capture skips a damaged one (it then
     stores a new version); restore (strict) refuses the source instead, as it
@@ -203,19 +211,16 @@ def refresh(wolts_dir: Path, table: dict, *, home: Path | None = None) -> Report
                 continue
             try:
                 data, info = _read(path)
-            except OSError as exc:
-                if origin == "root":  # natively not shown to be the lodge's: passed over silently
+            except OSError as exc:  # natively reported only once its session shows it is the lodge's
+                if origin == "root" or (home is not None and _in_lodge(_owner_cwd(path, home, owners), wolts_dir)):
                     report.skipped.append(f"{key}: {exc.strerror or exc}")
                 continue
             if origin == "home":  # natively only what is shown to be the lodge's, and silently otherwise
                 cwd = _inner_cwd(data)
                 if cwd is None and home is not None:  # a tool result, say: its session decides
                     cwd = _owner_cwd(path, home, owners)
-                if cwd is None or not os.path.isabs(cwd):
-                    continue  # memory notes, a relative folder: not shown to be the lodge's
-                inside = os.path.realpath(cwd)
-                if inside != str(wolts_dir) and not inside.startswith(str(wolts_dir) + os.sep):
-                    continue  # the owner's own session, not the lodge's
+                if not _in_lodge(cwd, wolts_dir):
+                    continue  # memory notes, a relative folder, the owner's own session
                 if secret_rule(rel):
                     report.skipped.append(f"{key}: looks like a credential; not taken")
                     continue
@@ -225,11 +230,17 @@ def refresh(wolts_dir: Path, table: dict, *, home: Path | None = None) -> Report
     return report
 
 
-def _contained(origin, path) -> PurePosixPath | None:
+def _contained(origin, path, base: Path | None = None) -> PurePosixPath | None:
     """A part's recorded path when it stays inside its origin (no absolute path,
-    no ..), else None: restore and delete never act outside."""
+    no ..) and, given the folder it lives under, when no folder on the way is a
+    link (the real parent is the real base joined with the same path), else
+    None: restore and delete never act outside. A file that is itself a link is
+    acted on as the link, never followed."""
     rel = PurePosixPath(path) if isinstance(path, str) else None
     if origin not in ("root", "home") or rel is None or rel.is_absolute() or ".." in rel.parts:
+        return None
+    if base is not None and os.path.realpath(base / rel.parent) != os.path.normpath(
+            os.path.join(os.path.realpath(base), str(rel.parent))):
         return None
     return rel
 
@@ -285,8 +296,8 @@ def restore(archive: Path, to: Path) -> tuple[list[str], list[str]]:
         except BrokenChain as exc:
             refused.append(str(exc))
             continue
-        rel = _contained(meta["origin"], meta["path"])
-        if rel is None:
+        rel = _contained(meta["origin"], meta["path"], to / meta["origin"])
+        if rel is None or _contained(meta["origin"], meta["path"], to / "versions" / meta["origin"]) is None:
             refused.append(f"{folder.name}: names a path outside the restore ({meta['path']})")
             continue
         target = to / meta["origin"] / rel
@@ -438,9 +449,10 @@ def plan_delete(wolts_dir: Path, *, session: str = "", before: datetime | None =
             continue
         plan.sources.append(f"{last['origin']}:{last['path']}")
         base = Path(wolts_dir) if last["origin"] == "root" else home
-        rel = _contained(last["origin"], last["path"])
-        if base is not None and rel is not None and (base / rel).is_file():
-            plan.engine_files.append(base / rel)
+        rel = _contained(last["origin"], last["path"], base) if base is not None else None
+        engine = base / rel if base is not None and rel is not None else None
+        if engine is not None and (engine.is_symlink() or engine.is_file()):
+            plan.engine_files.append(engine)
         for meta in parts:
             kept = [folder / f"{meta['name']}.gz", folder / f"{meta['name']}.json"]
             plan.parts += kept

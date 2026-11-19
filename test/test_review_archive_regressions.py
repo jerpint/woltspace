@@ -152,3 +152,21 @@ def test_natively_a_file_not_shown_to_be_the_lodges_is_passed_over_silently(tmp_
     source(home, '.claude/projects/-a/x.jsonl', b'{"cwd": "."}\n')  # a relative folder: not shown either
     report = sa.refresh(root, HARNESSES, home=home)
     assert report.stored == [] and report.skipped == []
+
+
+def test_owned_unreadable_tool_result_is_reported(tmp_path, monkeypatch):  # reviewer's S1
+    root, home = lodge(tmp_path), tmp_path / 'home'
+    sid = 'aaaa1111-2222-3333-4444-555566667777'
+    project = home / '.claude/projects/-w'
+    source(home, f'.claude/projects/-w/{sid}.jsonl', (json.dumps({'cwd': str(root / 'wolt-a')}) + '\n').encode())
+    result = source(home, f'.claude/projects/-w/{sid}/tool-results/result.txt', b'synthetic tool output')
+    source(home, '.claude/projects/-b/memory/MEMORY.md', b'the owner\'s notes')  # not shown: stays silent
+    real_read = sa._read
+    def read(path):
+        if path in (result, home / '.claude/projects/-b/memory/MEMORY.md'):
+            raise PermissionError(13, 'Permission denied')
+        return real_read(path)
+    monkeypatch.setattr(sa, '_read', read)
+    report = sa.refresh(root, HARNESSES, home=home)
+    assert len(report.skipped) == 1 and 'result.txt' in report.skipped[0] and 'Permission denied' in report.skipped[0]
+    assert project.is_dir()
