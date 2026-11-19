@@ -118,6 +118,8 @@ if mode == "on":
     sys.exit("Failed to deletefile: AccessDenied: Object Lock: the object is under a retention rule")
 if mode == "account":
     sys.exit("Failed to deletefile: AccessDenied: account is locked; credentials rejected")
+if mode == "bucket":  # the bucket's name in another form than the remote string
+    sys.exit("Failed to deletefile: bucket retention-x: AccessDenied: Access Denied")
 if mode == "named":  # rclone quotes the target: its name is not the storage's answer
     sys.exit(f"Failed to deletefile {{sys.argv[2]}}: AccessDenied: Access Denied")
 if mode == "denied":  # a token that may list but not delete: not proof of a lock
@@ -266,3 +268,9 @@ def test_a_night_that_only_skipped_files_still_uploads(tmp_path, fake_age):
 def test_a_remote_named_like_a_lock_is_not_read_as_on(fake_rclone):  # review 4
     fake_rclone.write_text("named")
     assert sa.check_lock("r2:retention-lock/lodges/object-lock")[0] == "unknown"
+
+
+@pytest.mark.parametrize("mode, state", [("bucket", "unknown"), ("on", "on")])
+def test_no_part_of_the_remote_name_reads_as_a_lock(fake_rclone, mode, state):  # review (a)
+    fake_rclone.write_text(mode)
+    assert sa.check_lock("r2:retention-x/lodges/pal")[0] == state

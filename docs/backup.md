@@ -513,7 +513,9 @@ woltspace restore-sessions <data root>/.space/session-archive --to ~/sessions-ba
   they are listed as "snapshots only". Natively, from your own `~/.claude`,
   `~/.codex` and `~/.pi`, a file is taken only when the working folder recorded
   inside it (or in the session file that owns it) is in the lodge; anything not
-  shown to be the lodge's is passed over silently, never listed.
+  shown to be the lodge's is passed over silently, never listed. A session whose
+  own `.jsonl` cannot be read cannot be shown to be the lodge's, so it is passed
+  over too: not archived, not reported.
 - **What it holds:** whatever the session saw, tool output included, so a secret
   that was ever printed is in the archive too: rotate a leaked secret.
 - **Only the new part:** a JSONL session that grew stores just the complete lines

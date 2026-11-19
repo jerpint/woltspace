@@ -392,7 +392,10 @@ def check_lock(remote: str) -> tuple[str, str]:
         return "unknown", "rclone timed out"
     if tried.returncode == 0:
         return "off", f"the lodge's own token deleted {target}: the lock is OFF (put the probe back)"
-    if _LOCKED.search(tried.stderr.replace(target, "").replace(remote, "")):  # names are not answers
+    answer = tried.stderr
+    for name in sorted({part for part in re.split(r"[:/]", target) if part}, key=len, reverse=True):
+        answer = answer.replace(name, "")  # no part of a name we chose is the storage's answer
+    if _LOCKED.search(answer):
         return "on", "the storage refused the delete: the object is locked"
     return "unknown", tried.stderr.strip()[-300:] or f"rclone exit {tried.returncode}"
 
