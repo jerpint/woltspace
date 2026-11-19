@@ -114,6 +114,27 @@ def _sources(wolts_dir: Path, table: dict, home: Path | None, report: Report):
                             yield origin, path.relative_to(base).as_posix(), path
 
 
+_KEYS = ("origin", "path", "sha256", "length", "offset", "continues", "total_sha256", "total_length",
+         "source_mtime_ns")
+
+
+def _owner_cwd(path: Path, home: Path, seen: dict) -> str | None:
+    """The working folder of the session file that owns a file recording none
+    (claude's <id>/tool-results/... belongs to the <id>.jsonl beside <id>/)."""
+    for folder in path.parents:
+        if folder == home or home not in folder.parents:
+            return None
+        owner = folder.parent / f"{folder.name}.jsonl"
+        if owner.is_file():
+            if owner not in seen:
+                try:
+                    seen[owner] = _inner_cwd(_read(owner)[0])
+                except OSError:
+                    seen[owner] = None
+            return seen[owner]
+    return None
+
+
 def _parts(folder: Path, *, strict: bool = False) -> list[dict]:
     """The parts' metadata, oldest first. Capture skips a damaged one (it then
     stores a new version); restore (strict) refuses the source instead, as it
@@ -121,7 +142,10 @@ def _parts(folder: Path, *, strict: bool = False) -> list[dict]:
     metas = []
     for meta in folder.glob("*.json"):
         try:
-            metas.append({**json.loads(meta.read_text()), "name": meta.stem})
+            record = json.loads(meta.read_text())
+            if not isinstance(record, dict) or any(key not in record for key in _KEYS):
+                raise ValueError("not a part's metadata")
+            metas.append({**record, "name": meta.stem})
         except (OSError, ValueError):
             if strict:
                 raise BrokenChain(f"{folder.name}: metadata {meta.name} is damaged") from None
@@ -146,8 +170,8 @@ def _capture(folder: Path, origin: str, rel: str, data: bytes, info: os.stat_res
     part = body[start:]
     mtime = datetime.fromtimestamp(info.st_mtime, UTC).strftime("%Y%m%dT%H%M%SZ")
     name = f"{mtime}-{total}"  # the whole content so far: two equal appends never share a name
-    if (folder / f"{name}.json").exists():
-        return None
+    if any(meta["name"] == name for meta in parts):
+        return None  # already kept, whole; a damaged copy of it is written again below
     folder.mkdir(mode=0o700, parents=True, exist_ok=True)
     _write(folder / f"{name}.gz", gzip.compress(part, mtime=0))  # kept compressed; digests are of the plain bytes
     _write(folder / f"{name}.json", json.dumps({  # written last: a part without it does not count
@@ -168,6 +192,7 @@ def refresh(wolts_dir: Path, table: dict, *, home: Path | None = None) -> Report
     os.chmod(archive, 0o700)
     with os.fdopen(os.open(archive / ".lock", os.O_WRONLY | os.O_CREAT, 0o600), "w") as lock:  # one refresh at a time
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        owners: dict = {}  # an owning session file's working folder, read once per run
         for origin, rel, path in _sources(wolts_dir, table, home, report):
             key = f"{origin}:{rel}"
             if secret_rule(rel):
@@ -180,6 +205,8 @@ def refresh(wolts_dir: Path, table: dict, *, home: Path | None = None) -> Report
                 continue
             if origin == "home":
                 cwd = _inner_cwd(data)
+                if cwd is None and home is not None:  # a tool result, say: its session decides
+                    cwd = _owner_cwd(path, home, owners)
                 if cwd is None or not os.path.isabs(cwd):
                     report.skipped.append(f"{origin}:{rel}: no absolute working folder recorded inside; not taken")
                     continue

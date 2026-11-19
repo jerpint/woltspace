@@ -105,3 +105,42 @@ def test_earlier_version_does_not_overwrite_a_real_dot_v1_source(tmp_path):
     # Three independent retained values must survive in three files.
     files = [p.read_bytes() for p in (tmp_path / 'back').rglob('*') if p.is_file()]
     assert sorted(files) == sorted([b'old bytes', b'new bytes', b'independent named file'])
+
+
+def test_a_refresh_that_raises_still_leaves_the_nights_snapshot(tmp_path, monkeypatch, capsys):  # Gate B I1
+    from woltspace.cli import main
+    root = lodge(tmp_path)
+    source(root)
+    monkeypatch.setenv('WOLTSPACE_WOLTS_DIR', str(root))
+    def broken(*args, **kwargs):
+        raise OSError(28, 'No space left on device')
+    monkeypatch.setattr(sa, 'refresh', broken)
+    assert main(['backup', '--tag', 'night', '--out', str(tmp_path / 'out')]) == 1
+    assert (tmp_path / 'out' / 'woltspace-backup-night.tar.gz').is_file()
+    assert 'session archive failed' in capsys.readouterr().err
+
+
+def test_metadata_without_its_keys_is_refused_not_a_traceback(tmp_path):  # Gate B N5
+    root = lodge(tmp_path)
+    source(root)
+    sa.refresh(root, HARNESSES)
+    meta, = (root / sa.ARCHIVE / sa.FORMAT).rglob('*.json')
+    meta.write_text(json.dumps({'origin': 'root'}))
+    restored, refused = sa.restore(root / sa.ARCHIVE, tmp_path / 'back')
+    assert restored == [] and len(refused) == 1
+    assert sa.refresh(root, HARNESSES).stored  # the next capture writes that part again
+    restored, refused = sa.restore(root / sa.ARCHIVE, tmp_path / 'again')
+    assert refused == [] and len(restored) == 1
+
+
+def test_natively_a_tool_result_follows_its_session(tmp_path):  # Gate B N1
+    root, home = lodge(tmp_path), tmp_path / 'home'
+    ours, mine = 'aaaa1111-2222-3333-4444-555566667777', 'bbbb1111-2222-3333-4444-555566667777'
+    source(home, f'.claude/projects/-a/{ours}.jsonl', json.dumps({'cwd': str(root / 'wolt-a')}).encode() + b'\n')
+    source(home, f'.claude/projects/-a/{ours}/tool-results/r.txt', b'a tool result')
+    source(home, f'.claude/projects/-b/{mine}.jsonl', json.dumps({'cwd': str(tmp_path / 'elsewhere')}).encode() + b'\n')
+    source(home, f'.claude/projects/-b/{mine}/tool-results/r.txt', b'the owner\'s own')
+    report = sa.refresh(root, HARNESSES, home=home)
+    assert sorted(line.split(' -> ')[0] for line in report.stored) == [
+        f'home:.claude/projects/-a/{ours}.jsonl', f'home:.claude/projects/-a/{ours}/tool-results/r.txt']
+    assert report.skipped == []  # the owner's own files are neither taken nor listed

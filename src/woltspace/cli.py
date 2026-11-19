@@ -497,8 +497,13 @@ def _backup(args) -> int:
         return 2
     if args.what == "sessions":
         return _archive_sessions(layout, wolts_dir)
+    archive_failed = False
     if session_archive.enabled(Path(wolts_dir)):
-        _archive_sessions(layout, wolts_dir, quiet=args.json)  # first; a skipped file does not stop the snapshot
+        try:  # first; neither a skipped file nor an error here may cost the night's snapshot
+            _archive_sessions(layout, wolts_dir, quiet=args.json)
+        except Exception as exc:  # noqa: BLE001 — an opt-in extra never removes the safety net
+            print(f"session archive failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+            archive_failed = True
     try:
         result = create_backup(
             wolts_dir, out_dir=args.out or None, tag=args.tag or None, full=args.full,
@@ -519,7 +524,7 @@ def _backup(args) -> int:
         for line in summary_lines(result):
             lore.plain(line, _report_line_style(line))
         lore.blank()
-    return 0
+    return 1 if archive_failed else 0
 
 
 def _restore_sessions(args) -> int:
