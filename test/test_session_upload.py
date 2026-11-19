@@ -31,6 +31,7 @@ sys.stdout.buffer.write({AGE_HEADER!r} + base64.b64encode(sys.stdin.buffer.read(
     (bin_dir / "age").chmod(0o755)
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
     monkeypatch.setenv("WOLTSPACE_BACKUP_AGE_RECIPIENT", "age1pal")
+    return bin_dir
 
 
 def _lodge(tmp_path):
@@ -142,3 +143,36 @@ def test_check_lock_is_on_only_for_a_locked_refusal(tmp_path, fake_rclone, monke
 def test_check_lock_without_rclone_is_unknown(monkeypatch, tmp_path):
     monkeypatch.setenv("PATH", str(tmp_path))
     assert sa.check_lock("r2:bucket/lodges/pal")[0] == "unknown"
+
+
+def test_a_failed_age_leaves_no_final_named_file(tmp_path, fake_age):  # Gate B I2
+    root = _lodge(tmp_path)
+    _grow(root, [0])
+    (fake_age / "age").write_text(f"#!{sys.executable}\nimport sys\nsys.stdin.buffer.read(10)\nsys.exit('age: error')\n")
+    with pytest.raises(OSError, match="age"):
+        sa.write_out(root, tmp_path / "out")
+    assert [p.name for p in (tmp_path / "out").rglob("*") if p.is_file()] == []
+
+
+def test_a_torn_file_from_a_killed_run_is_never_sent_as_is(tmp_path, fake_age):  # Gate B I2
+    root = _lodge(tmp_path)
+    _grow(root, [0])
+    out = tmp_path / "out"
+    meta, = (root / sa.ARCHIVE / sa.FORMAT).rglob("*.json")
+    torn = out / sa.FORMAT / meta.parent.name / f".{meta.stem}.gz.age.part"
+    torn.parent.mkdir(parents=True)
+    torn.write_bytes(AGE_HEADER[:5])  # what a kill -9 mid-write leaves
+    assert len(sa.write_out(root, out)) == 1
+    assert not torn.exists() and _open(out / sa.FORMAT / meta.parent.name / f"{meta.stem}.gz.age")[:2] == b"\x1f\x8b"
+
+
+def test_a_part_deleted_since_is_cleared_from_the_out_folder(tmp_path, fake_age):  # Gate B I3
+    root = _lodge(tmp_path)
+    _grow(root, [0])
+    out = tmp_path / "out"
+    assert len(sa.write_out(root, out)) == 1  # the upload then fails: out stays
+    folder, = (root / sa.ARCHIVE / sa.FORMAT).iterdir()
+    for kept in folder.iterdir():  # the session is deleted on purpose (what delete removes)
+        kept.unlink()
+    assert sa.write_out(root, out) == []
+    assert [p for p in out.rglob("*") if p.is_file()] == []

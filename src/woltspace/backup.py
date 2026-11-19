@@ -848,9 +848,12 @@ def keep_secrets(wolts_dir: Path, scan: Scan) -> None:
 @contextmanager
 def sealed_file(path: Path, encryption: tuple[str, str] | None):
     """A new 0600 file to write into, through `age` when encrypting, so no
-    plaintext reaches the disk. On any failure the file goes, with age's own
+    plaintext reaches the disk. It is written under a hidden temporary name and
+    renamed only once age has finished well, so a killed run never leaves a
+    torn file under the real name. On any failure the file goes, with age's own
     error when it has one."""
-    fd = _owner_only(path)
+    tmp = path.with_name(f".{path.name}.part")
+    fd = _owner_only(tmp)
     age = None
     try:
         if encryption:
@@ -871,8 +874,9 @@ def sealed_file(path: Path, encryption: tuple[str, str] | None):
             error = (age.stderr.read() if age.stderr else b"").decode(errors="replace").strip()
             if age.wait() != 0:
                 raise OSError(f"age could not encrypt the archive: {error}")
+        os.replace(tmp, path)
     except BaseException as exc:
-        path.unlink(missing_ok=True)
+        tmp.unlink(missing_ok=True)
         if age is None:
             raise
         if age.poll() is None:

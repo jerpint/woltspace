@@ -319,6 +319,9 @@ def write_out(wolts_dir: Path, out: Path) -> list[str]:
         raise ValueError(f"{AGE_RECIPIENT_ENV} is not set: session parts are never written out in plaintext")
     archive, written = Path(wolts_dir) / ARCHIVE, []
     sent = _sent(archive)
+    for left in sorted((Path(out) / FORMAT).glob("*/*")):  # out is ours: nothing stale may be uploaded
+        if left.name.startswith(".") or not (archive / FORMAT / left.parent.name / left.name.removesuffix(".age")).is_file():
+            left.unlink()  # a run killed mid-write, or a part since deleted on purpose
     for meta in sorted((archive / FORMAT).glob("*/*.json")):
         part = f"{meta.parent.name}/{meta.stem}"
         if part in sent:

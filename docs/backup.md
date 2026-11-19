@@ -655,7 +655,7 @@ every night while still writing the rest, so it is not left to `set -e`:
 ```bash
 sessions=~/.woltspace/session-out
 woltspace backup sessions --out "$sessions" || echo "some session files were skipped (listed above)"
-rclone copy --ignore-existing "$sessions" "$dest/sessions/" && woltspace backup sessions --sent "$sessions" && rm -rf "$sessions"
+rclone copy --ignore-existing --exclude '.*' "$sessions" "$dest/sessions/" && woltspace backup sessions --sent "$sessions" && rm -rf "$sessions"
 ```
 
 `woltspace backup sessions check-lock --remote "$dest"` tries to delete the
