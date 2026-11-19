@@ -240,13 +240,18 @@ def write_trust_config(wolts_dir: Path):
     (HOME / ".claude.json").write_text(json.dumps(config, indent=2) + "\n")
 
 
-def write_settings_json():
+def write_settings_json(wolts_dir: Path | None = None):
     claude_dir = HOME / ".claude"
     claude_dir.mkdir(parents=True, exist_ok=True)
     settings = {
         "skipDangerousModePermissionPrompt": True,
     }
     (claude_dir / "settings.json").write_text(json.dumps(settings, indent=2) + "\n")
+    if wolts_dir is not None:  # the lodge's sessions.keep_days, as for every wolt
+        runtime_lib_on_path(resolve_install_root(os.environ.get("WOLTSPACE_DIR")))
+        import session_keep
+        if (days := session_keep.keep_days(wolts_dir)) is not None:
+            session_keep.merge_claude_settings(claude_dir, days)
 
 
 def configure_git(wolt_name: str):
@@ -550,7 +555,7 @@ def run_node_phase() -> int:
     # Always configure git — new wolts created later via the lodge need it
     configure_git(wolt_name or "wolt")
     write_trust_config(wolts_dir)
-    write_settings_json()
+    write_settings_json(wolts_dir)
 
     os.environ.update(build_environment(
         wolt_name=wolt_name, wolt_dir=wolt_dir, wolts_dir=wolts_dir,

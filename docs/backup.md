@@ -477,6 +477,24 @@ Back up inside it too and copy the archive out: `docker exec -u node
 the mount, so `docker cp <container>:/workspace/woltspace-backup-<tag>.tar.gz .`;
 for an encrypted one the container needs `-e WOLTSPACE_BACKUP_AGE_RECIPIENT`.
 
+## How long engines keep their sessions
+
+A backup holds whatever session files exist when it runs. Claude Code deletes
+its own transcripts after 30 days unless told otherwise, so a lodge that wants
+them longer says so once, in `woltspace.json`:
+
+```json
+{"sessions": {"keep_days": null}}
+```
+
+`null` means forever (written as 3650 days for Claude), a whole number means that
+many days. Unset, nothing changes. In the container, every wolt's
+`.claude/settings.json` gets `cleanupPeriodDays` at boot and at birth, merged:
+a value someone already set is kept, an unreadable file is left alone, and 0
+(which turns transcripts off) is never written. Natively the engines run on your
+own `~/.claude`, which woltspace never edits: `woltspace doctor` prints the line
+to add there. Codex keeps its sessions; opencode, Pi and Hermes are not measured.
+
 ## Off the machine: a bucket (Cloudflare R2)
 
 `woltspace backup` writes files; getting them off the machine is `rclone`'s

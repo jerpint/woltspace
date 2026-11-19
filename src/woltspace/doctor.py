@@ -506,6 +506,21 @@ def run_doctor(
     if sharing is not None:
         checks.append(sharing)
 
+    try:
+        import session_keep
+    except ImportError:
+        session_keep = None
+    if session_keep is not None:
+        days = session_keep.keep_days(layout.wolts_dir)
+        native = layout.isolation == "host" and days is not None
+        checks.append(DoctorCheck(
+            "session-keep",
+            "warn" if session_keep.setting(layout.wolts_dir).startswith("invalid") else "pass",
+            f"sessions.keep_days: {session_keep.setting(layout.wolts_dir)}",
+            f'Add "cleanupPeriodDays": {days} to ~/.claude/settings.json (woltspace never edits it).'
+            if native else "",
+        ))
+
     if check_port:
         available = _port_available(layout.host, layout.port)
         checks.append(DoctorCheck(
