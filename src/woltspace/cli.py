@@ -492,6 +492,9 @@ def _backup(args) -> int:
 
     layout = RuntimeLayout.from_env()
     wolts_dir = args.wolts_dir or layout.wolts_dir
+    if args.what == "sessions" and not session_archive.enabled(Path(wolts_dir)):
+        lore.failure('the session archive is off: set "sessions": {"keep_days": null} in woltspace.json')
+        return 2
     if args.what == "sessions":
         return _archive_sessions(layout, wolts_dir)
     if session_archive.enabled(Path(wolts_dir)):

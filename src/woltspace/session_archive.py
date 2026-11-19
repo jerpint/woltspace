@@ -10,7 +10,8 @@ a file that does not say is skipped and reported, never guessed.
 
 Each source (its origin, "root" or "home", and its relative path) gets an opaque
 folder, the sha256 of that pair. In it every part is <source mtime UTC>-<sha256
-of the whole content up to it>, beside a .json naming the original path, capture time, digest and
+of the whole content up to it>.gz (gzip, so the archive is kept compressed),
+beside a .json naming the original path, capture time, digest and
 length, and the digest of the whole content it continues. A JSONL file that only
 grew stores just the complete lines added since its last part; anything else is
 a whole new version, so an old version is never lost. Names come from content,
@@ -22,6 +23,7 @@ deleted here.
 from __future__ import annotations
 
 import fcntl
+import gzip
 import hashlib
 import json
 import os
@@ -123,7 +125,7 @@ def _parts(folder: Path, *, strict: bool = False) -> list[dict]:
             if strict:
                 raise BrokenChain(f"{folder.name}: metadata {meta.name} is damaged") from None
     if strict and (unpaired := sorted(p.name for p in folder.iterdir() if not p.name.startswith(".")
-                                       and p.suffix != ".json" and not (folder / f"{p.name}.json").exists())):
+                                       and p.suffix == ".gz" and not (folder / f"{p.stem}.json").exists())):
         raise BrokenChain(f"{folder.name}: part {unpaired[0]} has no metadata")
     return sorted(metas, key=lambda m: (m.get("captured_at", ""), m["name"]))
 
@@ -146,7 +148,7 @@ def _capture(folder: Path, origin: str, rel: str, data: bytes, info: os.stat_res
     if (folder / f"{name}.json").exists():
         return None
     folder.mkdir(mode=0o700, parents=True, exist_ok=True)
-    _write(folder / name, part)
+    _write(folder / f"{name}.gz", gzip.compress(part, mtime=0))  # kept compressed; digests are of the plain bytes
     _write(folder / f"{name}.json", json.dumps({  # written last: a part without it does not count
         "format": FORMAT, "origin": origin, "path": rel, "content": "jsonl" if jsonl else "file",
         "captured_at": datetime.now(UTC).isoformat(timespec="microseconds"),
@@ -163,7 +165,7 @@ def refresh(wolts_dir: Path, table: dict, *, home: Path | None = None) -> Report
     archive, report = wolts_dir / ARCHIVE, Report()
     (archive / FORMAT).mkdir(mode=0o700, parents=True, exist_ok=True)
     os.chmod(archive, 0o700)
-    with open(archive / ".lock", "a") as lock:  # one refresh at a time
+    with os.fdopen(os.open(archive / ".lock", os.O_WRONLY | os.O_CREAT, 0o600), "w") as lock:  # one refresh at a time
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
         for origin, rel, path in _sources(wolts_dir, table, home, report):
             key = f"{origin}:{rel}"
@@ -205,9 +207,11 @@ def _join(folder: Path, parts: list[dict], head: dict) -> bytes:
     data = b""
     for meta in reversed(chain):
         try:
-            part = (folder / meta["name"]).read_bytes()
-        except OSError:
-            raise BrokenChain(f"{meta['path']}: part {meta['name']} is missing") from None
+            part = gzip.decompress((folder / f"{meta['name']}.gz").read_bytes())
+        except OSError:  # gzip.BadGzipFile is one
+            raise BrokenChain(f"{meta['path']}: part {meta['name']} is missing or damaged") from None
+        except EOFError:
+            raise BrokenChain(f"{meta['path']}: part {meta['name']} is cut short") from None
         if _sha(part) != meta["sha256"] or len(data) != meta["offset"] or (
                 meta["continues"] and _sha(data) != meta["continues"]):
             raise BrokenChain(f"{meta['path']}: part {meta['name']} is damaged")

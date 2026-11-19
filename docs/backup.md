@@ -480,10 +480,11 @@ for an encrypted one the container needs `-e WOLTSPACE_BACKUP_AGE_RECIPIENT`.
 ## The session archive
 
 A lodge whose `woltspace.json` sets `"sessions": {"keep_days": ...}` also keeps
-every engine session file for good, in `.space/session-archive/` (owner-only:
-folders 0700, files 0600). Each `woltspace backup` refreshes it first;
-`woltspace backup sessions` refreshes it on its own. Snapshots leave the folder
-out, so they do not grow with it. Unset, nothing changes.
+every engine session file for good, gzipped, in `.space/session-archive/`
+(owner-only: folders 0700, files 0600). Each `woltspace backup` refreshes it
+first; `woltspace backup sessions` refreshes it on its own. Snapshots leave the
+folder out, so they do not grow with it. Unset, nothing changes, and
+`woltspace backup sessions` refuses.
 
 ```bash
 woltspace backup sessions                     # store what is new

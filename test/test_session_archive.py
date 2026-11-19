@@ -1,6 +1,7 @@
 """The session archive: new parts only, content names, a hash chain that restore
 checks, natively only the lodge's own sessions, and off unless the lodge asks."""
 
+import gzip
 import hashlib
 import json
 import os
@@ -58,7 +59,9 @@ def test_only_complete_lines_are_stored_and_the_digest_names_those_bytes(tmp_pat
     _session(root, CLAUDE, '{"a": 1}\n{"half": ')  # caught mid-write
     sa.refresh(root, HARNESSES)
     meta_path, = (root / sa.ARCHIVE / sa.FORMAT).rglob("*.json")
-    meta, part = json.loads(meta_path.read_text()), meta_path.with_suffix("").read_bytes()
+    stored = meta_path.with_suffix(".gz").read_bytes()
+    assert stored[:2] == b"\x1f\x8b"  # kept compressed
+    meta, part = json.loads(meta_path.read_text()), gzip.decompress(stored)
     assert part == b'{"a": 1}\n' and meta["sha256"] == hashlib.sha256(part).hexdigest()
     assert meta_path.stem.endswith(meta["sha256"]) and meta["path"] == CLAUDE
 
@@ -110,12 +113,12 @@ def test_a_missing_or_damaged_part_stops_that_session_never_a_shorter_file(tmp_p
     sa.refresh(root, HARNESSES)
     folder = root / sa.ARCHIVE / sa.FORMAT / hashlib.sha256(f"root:{CLAUDE}".encode()).hexdigest()
     middle = sorted(json.loads(p.read_text())["captured_at"] + "|" + p.stem for p in folder.glob("*.json"))[1]
-    middle = folder / middle.split("|")[1]
+    middle = folder / f"{middle.split('|')[1]}.gz"
     if damage == "drop_middle":
         middle.unlink()
         middle.with_suffix(".json").unlink()
     else:
-        middle.write_bytes(b'{"turn": 9}\n')
+        middle.write_bytes(gzip.compress(b'{"turn": 9}\n'))
     restored, refused = sa.restore(root / sa.ARCHIVE, tmp_path / "back")
     assert restored == ["root:wolt-a/.claude/projects/-w/other.jsonl"]  # other sessions stay whole
     assert len(refused) == 1 and CLAUDE in refused[0]
@@ -155,8 +158,7 @@ def test_the_archive_is_owner_only_and_left_out_of_snapshots(tmp_path):
     sa.refresh(root, HARNESSES)
     archive = root / sa.ARCHIVE
     assert stat.S_IMODE(archive.stat().st_mode) == 0o700
-    assert {stat.S_IMODE(p.stat().st_mode) for p in archive.rglob("*") if p.is_file() and p.name != ".lock"} \
-        == {0o600}
+    assert {stat.S_IMODE(p.stat().st_mode) for p in archive.rglob("*") if p.is_file()} == {0o600}
     result = create_backup(root, out_dir=tmp_path / "out", tag="t")
     with tarfile.open(result.archive, "r:gz") as tar:
         names = tar.getnames()
@@ -171,8 +173,8 @@ def test_with_the_setting_unset_a_backup_makes_no_archive(tmp_path, monkeypatch)
     monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(root))
     assert cli_main(["backup", "--tag", "off", "--out", str(tmp_path / "out")]) == 0
     assert not (root / sa.ARCHIVE).exists()
-    assert cli_main(["backup", "sessions"]) == 0  # asked for by name: it runs
-    assert (root / sa.ARCHIVE).is_dir()
+    assert cli_main(["backup", "sessions"]) == 2  # asked for by name: refused, still nothing written
+    assert not (root / sa.ARCHIVE).exists()
 
 
 def test_restore_refuses_a_part_that_names_a_path_outside(tmp_path):
