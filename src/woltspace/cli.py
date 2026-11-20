@@ -7,6 +7,7 @@ import json
 import os
 import re
 import sys
+from pathlib import Path
 
 from . import __version__, lore
 from .envvars import get_env, warn_legacy_once
@@ -468,11 +469,144 @@ def _db_show(args) -> int:
     return 0
 
 
+#: `backup sessions` finished but skipped some files (listed). Its own code, so
+#: that any other non-zero exit (3, a traceback's 1, a usage error's 2) means
+#: it failed and the nightly upload waits.
+SKIPPED_EXIT = 10
+
+
+def _archive_sessions(layout: RuntimeLayout, wolts_dir, *, quiet: bool = False) -> int:
+    """Refresh the session archive and say what it did (on stderr when quiet,
+    so --json stays one document); SKIPPED_EXIT when a file was skipped."""
+    from . import session_archive
+
+    _graft_runtime_lib()
+    from harnesses import HARNESSES
+
+    report = session_archive.refresh(
+        Path(wolts_dir), HARNESSES, home=layout.home if layout.isolation == "host" else None)
+    say = (lambda text: print(text, file=sys.stderr)) if quiet else lore.plain
+    say(f"session archive: {len(report.stored)} new part(s), {len(report.skipped)} skipped")
+    for line in report.skipped + report.not_archived:
+        say(f"  {line}")
+    return SKIPPED_EXIT if report.skipped else 0
+
+
+def _delete_sessions(args, layout: RuntimeLayout, wolts_dir) -> int:
+    """woltspace backup sessions delete --session ID | --before YYYY-MM-DD [--yes]"""
+    from datetime import UTC, datetime
+
+    from . import session_archive
+
+    if bool(args.session) == bool(args.before):
+        lore.failure("delete needs exactly one of --session ID or --before YYYY-MM-DD")
+        return 2
+    args.session = args.session.lower()
+    if args.session and not session_archive.SESSION_ID.match(args.session):
+        lore.failure(f"--session wants a whole session id (a UUID), not {args.session!r}")
+        return 2
+    try:
+        before = datetime.strptime(args.before, "%Y-%m-%d").replace(tzinfo=UTC) if args.before else None
+    except ValueError:
+        lore.failure(f"--before wants YYYY-MM-DD, not {args.before!r}")
+        return 2
+    home = layout.home if layout.isolation == "host" else None
+    _graft_runtime_lib()
+    from harnesses import HARNESSES
+    from sessions import SessionRegistry, stored_resume_id
+
+    if session_archive.enabled(Path(wolts_dir)):  # so the engine files are known; never when switched off
+        session_archive.refresh(Path(wolts_dir), HARNESSES, home=home)
+    plan = session_archive.plan_delete(Path(wolts_dir), session=args.session, before=before, home=home)
+    running = {stored_resume_id(r) for r in SessionRegistry(wolts_dir).records()
+               if r.get("status") in ("running", "stopping") or r.get("launching")} - {""}
+    if busy := sorted(s for s in plan.sources if session_archive.session_id(s.split(":", 1)[1]) in running):
+        lore.failure(f"refused: running session(s): {', '.join(busy)}; stop them first")
+        return 1
+    for label, items in (("sessions", plan.sources), ("engine files", plan.engine_files),
+                         ("archive parts", plan.parts), ("bucket keys (under sessions/)", plan.keys)):
+        lore.plain(f"{label}: {len(items)}")
+        for item in items:
+            lore.plain(f"  {item}")
+    if not plan.sources:
+        lore.plain("nothing matches")
+        return 0
+    if not args.yes:
+        lore.plain("nothing deleted: run again with --yes to delete exactly this")
+        return 0
+    listing = session_archive.delete(Path(wolts_dir), plan)
+    lore.plain(f"deleted from this lodge; bucket keys listed in {listing}")
+    lore.plain("For the bucket, on your own machine with your admin access (never on the lodge):")
+    lore.plain("  1. turn the sessions/ lock rule off (the whole prefix is unprotected until step 3)")
+    lore.plain(f"  2. rclone delete --files-from {listing.name} r2:<bucket>/lodges/<lodge>/sessions/")
+    lore.plain("  3. turn the rule back on, then: woltspace backup sessions check-lock --remote r2:<bucket>/lodges/<lodge>")
+    lore.plain("Snapshots that already hold these files are locked: they keep them until they expire.")
+    return 0
+
+
+def _sessions_command(args, layout: RuntimeLayout, wolts_dir) -> int:
+    """woltspace backup sessions [--out DIR | --sent DIR] | check-lock --remote R
+    Exit 0; SKIPPED_EXIT when it only skipped some files (listed); 3 when it failed."""
+    from . import session_archive
+
+    if args.action == "delete":
+        return _delete_sessions(args, layout, wolts_dir)
+    if args.action == "list":
+        rows = session_archive.listing(Path(wolts_dir), home=layout.home)
+        if args.json:
+            print(json.dumps(rows, indent=2))
+            return 0
+        lore.plain(f"{'session':36}  {'files':>5}  {'size':>10}  {'last copied (UTC)':19}  path")
+        for row in rows:
+            lore.plain(f"{row['session'] or '-':36}  {row['files']:>5}  {row['bytes']:>10}  "
+                       f"{(row['last_copied'] or '-')[:19]:19}  {row['path']}")
+        return 0
+    if args.action == "check-lock":
+        if not args.remote:
+            lore.failure("check-lock needs --remote <rclone remote>:<bucket>/lodges/<lodge>")
+            return 2
+        state, why = session_archive.check_lock(args.remote)
+        (lore.plain if state == "on" else lore.failure)(f"session lock: {state.upper()}: {why}")
+        return 0 if state == "on" else 1
+    if args.sent:
+        lore.plain(f"{session_archive.mark_sent(Path(wolts_dir), Path(args.sent))} part(s) marked sent")
+        return 0
+    try:  # an error here must not skip the out folder's clean-up below
+        failed = _archive_sessions(layout, wolts_dir)
+    except Exception as exc:  # noqa: BLE001
+        print(f"session archive failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+        failed = 3
+    if args.out:
+        try:
+            written = session_archive.write_out(Path(wolts_dir), Path(args.out))
+        except (OSError, ValueError) as exc:
+            lore.failure(f"sessions not written out: {exc}")
+            return 3
+        lore.plain(f"{len(written)} part(s) written out to {args.out}, encrypted")
+    return failed
+
+
 def _backup(args) -> int:
+    from . import session_archive
     from .backup import create_backup, summary_lines
 
     layout = RuntimeLayout.from_env()
     wolts_dir = args.wolts_dir or layout.wolts_dir
+    if notice := session_archive.keep_days_notice(Path(wolts_dir)):
+        print(f"notice: {notice}", file=sys.stderr)
+    archive_on = session_archive.enabled(Path(wolts_dir))
+    kept = (Path(wolts_dir) / session_archive.ARCHIVE).is_dir()
+    if args.what == "sessions" and not archive_on and not (kept and args.action in ("list", "delete", "check-lock")):
+        lore.failure('the session archive is off: set "sessions": {"archive": true} in woltspace.json')
+        return 2  # switched off: nothing new is stored or sent; what is kept can still be seen and removed
+    if args.what == "sessions":
+        return _sessions_command(args, layout, wolts_dir)
+    if session_archive.enabled(Path(wolts_dir)):
+        try:  # first; neither a skipped file nor an error here may cost the night's snapshot,
+            _archive_sessions(layout, wolts_dir, quiet=args.json)  # nor fail its command
+        except Exception as exc:  # noqa: BLE001 — an opt-in extra never removes the safety net
+            print(f"warning: session archive failed ({type(exc).__name__}: {exc}); the snapshot "
+                  "goes on; `woltspace backup sessions` reports the archive's own state", file=sys.stderr)
     try:
         result = create_backup(
             wolts_dir, out_dir=args.out or None, tag=args.tag or None, full=args.full,
@@ -494,6 +628,20 @@ def _backup(args) -> int:
             lore.plain(line, _report_line_style(line))
         lore.blank()
     return 0
+
+
+def _restore_sessions(args) -> int:
+    from .session_archive import restore
+
+    try:
+        restored, refused = restore(Path(args.archive), Path(args.to))
+    except (FileExistsError, OSError) as exc:
+        lore.failure(f"restore-sessions failed: {exc}")
+        return 1
+    lore.plain(f"restored {len(restored)} session file(s) into {args.to}; nothing is resumed")
+    for line in refused:
+        lore.failure(f"not restored: {line}")
+    return 1 if refused else 0
 
 
 def _restore(args) -> int:
@@ -1441,7 +1589,23 @@ def build_parser() -> argparse.ArgumentParser:
     backup.add_argument("--out", default="", help="where to write it (default: beside the wolts dir)")
     backup.add_argument("--wolts-dir", default="", help=argparse.SUPPRESS)
     backup.add_argument("--json", action="store_true")
+    backup.add_argument("what", nargs="?", choices=["sessions"],
+                        help="sessions: refresh the session archive only (--out DIR: also encrypt new parts there)")
+    backup.add_argument("action", nargs="?", choices=["check-lock", "delete", "list"],
+                        help="check-lock: is the bucket's sessions/ lock on (needs --remote); "
+                             "delete: one session or everything before a date, everywhere; list: what is archived")
+    backup.add_argument("--session", default="", help="delete: the session id")
+    backup.add_argument("--before", default="", help="delete: sessions last written before YYYY-MM-DD (UTC)")
+    backup.add_argument("--yes", action="store_true", help="delete: do it (without, only list)")
+    backup.add_argument("--sent", default="", help="sessions: DIR was uploaded; do not write its parts out again")
+    backup.add_argument("--remote", default="", help="check-lock: <rclone remote>:<bucket>/lodges/<lodge>")
     backup.set_defaults(func=_backup)
+
+    restore_sessions = sub.add_parser(
+        "restore-sessions", help="rebuild session files from a session archive into a new directory")
+    restore_sessions.add_argument("archive", help="the session archive (<data root>/.space/session-archive)")
+    restore_sessions.add_argument("--to", required=True, help="target directory (must be new or empty)")
+    restore_sessions.set_defaults(func=_restore_sessions)
 
     restore = sub.add_parser("restore", help="extract a backup archive into a new directory")
     restore.add_argument("archive")
