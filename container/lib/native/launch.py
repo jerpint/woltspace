@@ -24,9 +24,26 @@ import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from native_adapters import ASSETS, KINDS, RETIRED, announce_ready, clear_state, retire, write_ready, write_state  # noqa: E402
+from harnesses import POLICY_FLAGS
+from native_adapters import (
+    ASSETS,
+    KINDS,
+    RETIRED,
+    announce_ready,
+    clear_state,
+    retire,
+    write_ready,
+    write_state,
+)
 
 CODEX_BYPASS = "--dangerously-bypass-approvals-and-sandbox"
+CODEX_CONFIG = {  # each level of POLICY_FLAGS["codex"] as app-server config; a level missing here is refused
+    "prompt": ['approval_policy="on-request"', 'sandbox_mode="workspace-write"'],
+    # --approve-for-me, from its help: "automatic review using the workspace-write sandbox".
+    "auto": ['approval_policy="on-request"', 'approvals_reviewer="auto_review"', 'sandbox_mode="workspace-write"',
+             "sandbox_workspace_write.network_access=true"],
+    "bypass": ['approval_policy="never"', 'sandbox_mode="danger-full-access"'],
+}
 DISCOVERY = FIRST_STATE = 10.0  # seconds: one thread discovery pass; a connection's first usable status
 BACKOFF, BACKOFF_CAP = 0.5, 10.0  # the codex observer's pause after each try, doubling to the cap
 log = logging.getLogger("native.launch")
@@ -37,6 +54,19 @@ def _value(argv: list[str], *flags: str) -> str | None:
         if word in flags:
             return argv[i + 1]
     return None
+
+
+def _codex_level(argv: list[str], start: int) -> tuple[int, list[str]]:
+    """The lodge's policy block at argv[start]: its length and app-server config, or ValueError.
+    The errors name no argv word: the prompt and paths stay out of the pane."""
+    blocks = [(flags, mode) for mode, table in POLICY_FLAGS["codex"].items()
+              for flags in (table.values() if isinstance(table, dict) else [table]) if flags]
+    for flags, mode in sorted(blocks, key=lambda block: -len(block[0])):  # longest first: no prefix wins
+        if argv[start:start + len(flags)] == flags:
+            if mode not in CODEX_CONFIG:
+                raise ValueError(f"codex: no backend config for the {mode} permission level")
+            return len(flags), CODEX_CONFIG[mode]
+    raise ValueError("codex: the launch has none of the permission flags woltspace sets")
 
 
 def free_port() -> int:
@@ -51,12 +81,15 @@ def plan_codex(argv: list[str], directory: Path) -> dict:
     config = []
     if model := _value(argv, "-m", "--model"):
         config += ["-c", f"model={json.dumps(model)}"]
-    if CODEX_BYPASS in argv:
-        config += ["-c", 'approval_policy="never"', "-c", 'sandbox_mode="danger-full-access"']
-    tui = [word for word in argv if word != "--no-daemon"]
-    at = 2 if tui[:1] == ["resume"] else 0
-    if at:  # a remote resume refuses permission flags; the server's config above carries the policy
-        tui = [word for word in tui if word != CODEX_BYPASS]
+    # The lodge's order: [resume <id>] [--no-daemon] <policy block> [-m <model>] [prompt]. Only the
+    # block in its place is policy: a prompt that looks like a flag (or --no-daemon) stays the prompt.
+    at = 2 if argv[:1] == ["resume"] else 0
+    start = at + (argv[at:at + 1] == ["--no-daemon"])
+    length, policy = _codex_level(argv, start)  # never a backend without the launch's policy
+    config += [part for item in policy for part in ("-c", item)]
+    # A remote resume refuses permission flags; the server's config above carries the policy.
+    drop = range(at, start + length if at else start)
+    tui = [word for i, word in enumerate(argv) if i not in drop]
     tui[at:at] = ["--remote", f"unix://{sock}"]
     return {"backend": ["codex", "app-server", *config, "--listen", f"unix://{sock}"], "backend_env": {},
             "tui": ["codex", *tui], "tui_env": {}, "sock": str(sock),
@@ -272,7 +305,12 @@ def main(argv: list[str]) -> int:
     directory, attempt = Path(os.environ["WOLTSPACE_NATIVE_DIR"]), os.environ["WOLTSPACE_NATIVE_ATTEMPT"]
     native, cwd = {"kind": KINDS[harness], "addr": str(directory), "attempt": attempt}, os.getcwd()
     if harness == "codex":
-        plan = plan_codex(engine_argv, directory)
+        try:
+            plan = plan_codex(engine_argv, directory)
+        except ValueError as refused:
+            retire(native)
+            print(f"woltspace: {refused}; not starting", file=sys.stderr)
+            return 1
     elif harness == "opencode":
         plan = plan_opencode(engine_argv, directory, cwd)
     else:
