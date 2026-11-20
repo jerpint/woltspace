@@ -217,9 +217,10 @@ def test_list_shows_one_row_per_archived_session(tmp_path, monkeypatch, capsys):
     before = sorted(p.relative_to(root).as_posix() for p in root.rglob("*"))
     assert cli_main(["backup", "sessions", "list", "--json"]) == 0
     rows = json.loads(capsys.readouterr().out)
-    assert [(r["session"], r["path"], r["files"], r["bytes"]) for r in rows] == [
-        (sid, f"root:wolt-a/.claude/projects/-w/{sid}.jsonl", 2, 9 + 11),  # the session file and its tool result
-        (None, "root:wolt-a/.claude/projects/-w/notes.jsonl", 1, 9),
+    assert [(r["session"], r["path"], r["source"], r["files"], r["bytes"]) for r in rows] == [
+        (sid, str(root / f"wolt-a/.claude/projects/-w/{sid}.jsonl"),  # the real path; the stored label beside it
+         f"root:wolt-a/.claude/projects/-w/{sid}.jsonl", 2, 9 + 11),  # the session file and its tool result
+        (None, str(root / "wolt-a/.claude/projects/-w/notes.jsonl"), "root:wolt-a/.claude/projects/-w/notes.jsonl", 1, 9),
     ]
     assert all(r["last_copied"] for r in rows)
     assert sorted(p.relative_to(root).as_posix() for p in root.rglob("*")) == before  # read only
@@ -284,3 +285,12 @@ def test_nothing_writes_any_claude_settings_file(tmp_path, monkeypatch, isolatio
     run_doctor(layout, check_port=False)
     assert {p: p.read_bytes() for p in watched} == watched
     assert not (root / "wolt-b" / ".claude" / "settings.json").exists()
+
+
+def test_list_shows_the_owners_files_under_the_owners_home(tmp_path):
+    root, home = _lodge(tmp_path), tmp_path / "home"
+    sid = "bbbb1111-2222-3333-4444-555566667777"
+    _session(home, f".claude/projects/-a/{sid}.jsonl", json.dumps({"cwd": str(root / "wolt-a")}) + "\n")
+    sa.refresh(root, HARNESSES, home=home)
+    row, = sa.listing(root, home=home)
+    assert row["path"] == str(home / f".claude/projects/-a/{sid}.jsonl") and row["source"].startswith("home:")

@@ -493,10 +493,11 @@ def delete(wolts_dir: Path, plan: DeletePlan) -> Path:
     return listing
 
 
-def listing(wolts_dir: Path) -> list[dict]:
+def listing(wolts_dir: Path, home: Path | None = None) -> list[dict]:
     """One row per archived session, its files grouped by session id (a file with
-    no id is a row of its own): the session file's path, how many files, their
-    bytes, and when a refresh last stored new data. Reads metadata only."""
+    no id is a row of its own): the session file's real path (the lodge's own,
+    or under home for the owner's), its stored label (source), how many files,
+    their bytes, and when a refresh last stored new data. Reads metadata only."""
     rows: dict = {}
     archive = Path(wolts_dir) / ARCHIVE / FORMAT
     for folder in sorted(p for p in archive.iterdir() if p.is_dir()) if archive.is_dir() else []:
@@ -507,10 +508,14 @@ def listing(wolts_dir: Path) -> list[dict]:
         sid = session_id(last["path"])
         path = f"{last['origin']}:{last['path']}"
         row = rows.setdefault((last["origin"], sid or path), {
-            "session": sid, "path": path, "files": 0, "bytes": 0, "last_copied": ""})
+            "session": sid, "source": path, "files": 0, "bytes": 0, "last_copied": ""})
         row["files"] += 1
         row["bytes"] += last["total_length"]
         row["last_copied"] = max(row["last_copied"], last["captured_at"])
-        if len(path) < len(row["path"]):  # the session file itself, not one of its tool results
-            row["path"] = path
+        if len(path) < len(row["source"]):  # the session file itself, not one of its tool results
+            row["source"] = path
+    for row in rows.values():
+        origin, rel = row["source"].split(":", 1)
+        base = Path(wolts_dir) if origin == "root" else (home or Path.home())
+        row["path"] = str(base / rel)
     return sorted(rows.values(), key=lambda row: row["path"])

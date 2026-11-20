@@ -551,7 +551,7 @@ def _sessions_command(args, layout: RuntimeLayout, wolts_dir) -> int:
     if args.action == "delete":
         return _delete_sessions(args, layout, wolts_dir)
     if args.action == "list":
-        rows = session_archive.listing(Path(wolts_dir))
+        rows = session_archive.listing(Path(wolts_dir), home=layout.home)
         if args.json:
             print(json.dumps(rows, indent=2))
             return 0
