@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 import signal
-import sys
 import uuid
 
 from dotenv import dotenv_values
@@ -99,15 +98,8 @@ class Supervisor:
         from .hooks import normalize_platform_hooks
         from .skills import sync_platform_skills
 
-        def keep_sessions(layout):  # woltspace.json sessions.keep_days into every wolt
-            if str(layout.runtime_lib) not in sys.path:
-                sys.path.insert(0, str(layout.runtime_lib))
-            from session_keep import apply_to_wolts
-            apply_to_wolts(layout.wolts_dir)
-
         for label, run in (("skills", sync_platform_skills),
-                           ("hooks", normalize_platform_hooks),
-                           ("session-keep", keep_sessions)):
+                           ("hooks", normalize_platform_hooks)):
             try:
                 run(self.layout)
             except Exception as error:  # noqa: BLE001 — never block a boot

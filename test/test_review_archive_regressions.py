@@ -12,7 +12,7 @@ REL = 'wolt-a/.claude/projects/-w/session.jsonl'
 def lodge(tmp_path):
     root = tmp_path / 'wolts'
     (root / 'wolt-a').mkdir(parents=True)
-    (root / 'woltspace.json').write_text(json.dumps({'sessions': {'keep_days': None}}))
+    (root / 'woltspace.json').write_text(json.dumps({'sessions': {'archive': True}}))
     return root
 
 

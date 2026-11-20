@@ -550,6 +550,16 @@ def _sessions_command(args, layout: RuntimeLayout, wolts_dir) -> int:
 
     if args.action == "delete":
         return _delete_sessions(args, layout, wolts_dir)
+    if args.action == "list":
+        rows = session_archive.listing(Path(wolts_dir))
+        if args.json:
+            print(json.dumps(rows, indent=2))
+            return 0
+        lore.plain(f"{'session':36}  {'files':>5}  {'size':>10}  {'last copied (UTC)':19}  path")
+        for row in rows:
+            lore.plain(f"{row['session'] or '-':36}  {row['files']:>5}  {row['bytes']:>10}  "
+                       f"{row['last_copied'][:19]:19}  {row['path']}")
+        return 0
     if args.action == "check-lock":
         if not args.remote:
             lore.failure("check-lock needs --remote <rclone remote>:<bucket>/lodges/<lodge>")
@@ -582,7 +592,7 @@ def _backup(args) -> int:
     layout = RuntimeLayout.from_env()
     wolts_dir = args.wolts_dir or layout.wolts_dir
     if args.what == "sessions" and not session_archive.enabled(Path(wolts_dir)):
-        lore.failure('the session archive is off: set "sessions": {"keep_days": null} in woltspace.json')
+        lore.failure('the session archive is off: set "sessions": {"archive": true} in woltspace.json')
         return 2
     if args.what == "sessions":
         return _sessions_command(args, layout, wolts_dir)
@@ -1576,9 +1586,9 @@ def build_parser() -> argparse.ArgumentParser:
     backup.add_argument("--json", action="store_true")
     backup.add_argument("what", nargs="?", choices=["sessions"],
                         help="sessions: refresh the session archive only (--out DIR: also encrypt new parts there)")
-    backup.add_argument("action", nargs="?", choices=["check-lock", "delete"],
+    backup.add_argument("action", nargs="?", choices=["check-lock", "delete", "list"],
                         help="check-lock: is the bucket's sessions/ lock on (needs --remote); "
-                             "delete: one session or everything before a date, everywhere")
+                             "delete: one session or everything before a date, everywhere; list: what is archived")
     backup.add_argument("--session", default="", help="delete: the session id")
     backup.add_argument("--before", default="", help="delete: sessions last written before YYYY-MM-DD (UTC)")
     backup.add_argument("--yes", action="store_true", help="delete: do it (without, only list)")

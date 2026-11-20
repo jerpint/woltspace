@@ -38,7 +38,7 @@ def _lodge(tmp_path):
     root = tmp_path / "wolts"
     (root / "wolt-a" / "wolt").mkdir(parents=True)
     (root / "wolt-a" / "wolt" / "wolt.json").write_text("{}")
-    (root / "woltspace.json").write_text(json.dumps({"sessions": {"keep_days": None}}))
+    (root / "woltspace.json").write_text(json.dumps({"sessions": {"archive": True}}))
     return root
 
 

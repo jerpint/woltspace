@@ -1,7 +1,7 @@
 """The session archive: every engine session file, kept for good, under
 <data root>/.space/session-archive/ (format v1).
 
-Opt-in: only a lodge whose woltspace.json sets "sessions": {"keep_days": ...}
+Opt-in: only a lodge whose woltspace.json sets "sessions": {"archive": true}
 archives. Each harness entry's "session_files" names where its sessions live,
 under every wolt and, natively, under the owner's home; an engine whose store
 is a database ("session_store") is reported, not archived. Natively a file is
@@ -48,7 +48,7 @@ def enabled(wolts_dir: Path) -> bool:
         sessions = json.loads((Path(wolts_dir) / "woltspace.json").read_text()).get("sessions")
     except (OSError, ValueError, AttributeError):
         return False
-    return isinstance(sessions, dict) and "keep_days" in sessions
+    return isinstance(sessions, dict) and sessions.get("archive") is True
 
 
 @dataclass
@@ -479,3 +479,26 @@ def delete(wolts_dir: Path, plan: DeletePlan) -> Path:
     listing.parent.mkdir(mode=0o700, exist_ok=True)
     _write(listing, "".join(f"{key}\n" for key in plan.keys).encode())
     return listing
+
+
+def listing(wolts_dir: Path) -> list[dict]:
+    """One row per archived session, its files grouped by session id (a file with
+    no id is a row of its own): the session file's path, how many files, their
+    bytes, and when a refresh last stored new data. Reads metadata only."""
+    rows: dict = {}
+    archive = Path(wolts_dir) / ARCHIVE / FORMAT
+    for folder in sorted(p for p in archive.iterdir() if p.is_dir()) if archive.is_dir() else []:
+        parts = _parts(folder)
+        if not parts:
+            continue
+        last = parts[-1]
+        sid = session_id(last["path"])
+        path = f"{last['origin']}:{last['path']}"
+        row = rows.setdefault((last["origin"], sid or path), {
+            "session": sid, "path": path, "files": 0, "bytes": 0, "last_copied": ""})
+        row["files"] += 1
+        row["bytes"] += last["total_length"]
+        row["last_copied"] = max(row["last_copied"], last["captured_at"])
+        if len(path) < len(row["path"]):  # the session file itself, not one of its tool results
+            row["path"] = path
+    return sorted(rows.values(), key=lambda row: row["path"])

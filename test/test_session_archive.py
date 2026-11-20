@@ -24,7 +24,7 @@ def _lodge(tmp_path, keep=True):
     root = tmp_path / "wolts"
     (root / "wolt-a" / "wolt").mkdir(parents=True)
     (root / "wolt-a" / "wolt" / "wolt.json").write_text("{}")
-    (root / "woltspace.json").write_text(json.dumps({"sessions": {"keep_days": None}} if keep else {}))
+    (root / "woltspace.json").write_text(json.dumps({"sessions": {"archive": True}} if keep else {}))
     return root
 
 
@@ -188,6 +188,52 @@ def test_restore_refuses_a_part_that_names_a_path_outside(tmp_path):
     assert restored == [] and "outside" in refused[0] and not (tmp_path / "escape").exists()
 
 
-def test_off_unless_the_lodge_sets_sessions_keep_days(tmp_path):
+def test_off_unless_the_lodge_sets_sessions_archive(tmp_path):
     assert not sa.enabled(_lodge(tmp_path, keep=False))
     assert sa.enabled(_lodge(tmp_path / "on", keep=True))
+
+
+@pytest.mark.parametrize("sessions, on", [({"archive": True}, True), ({"archive": False}, False), ({}, False),
+                                          ({"keep_days": None}, False), ({"archive": "yes"}, False)])
+def test_the_archive_switch_is_sessions_archive_true(tmp_path, sessions, on):  # review (c)
+    root = tmp_path / "wolts"
+    root.mkdir()
+    (root / "woltspace.json").write_text(json.dumps({"sessions": sessions}))
+    assert sa.enabled(root) is on
+
+
+def test_list_shows_one_row_per_archived_session(tmp_path, monkeypatch, capsys):  # review (b)
+    from woltspace.cli import main as cli_main
+    root = tmp_path / "wolts"
+    (root / "wolt-a").mkdir(parents=True)
+    (root / "woltspace.json").write_text(json.dumps({"sessions": {"archive": True}}))
+    sid = "aaaa1111-2222-3333-4444-555566667777"
+    _session(root, f"wolt-a/.claude/projects/-w/{sid}.jsonl", '{"a": 1}\n')
+    _session(root, f"wolt-a/.claude/projects/-w/{sid}/tool-results/r.txt", "tool output")
+    _session(root, "wolt-a/.claude/projects/-w/notes.jsonl", '{"b": 2}\n')  # no session id
+    sa.refresh(root, HARNESSES)
+    monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(root))
+    before = sorted(p.relative_to(root).as_posix() for p in root.rglob("*"))
+    assert cli_main(["backup", "sessions", "list", "--json"]) == 0
+    rows = json.loads(capsys.readouterr().out)
+    assert [(r["session"], r["path"], r["files"], r["bytes"]) for r in rows] == [
+        (sid, f"root:wolt-a/.claude/projects/-w/{sid}.jsonl", 2, 9 + 11),  # the session file and its tool result
+        (None, "root:wolt-a/.claude/projects/-w/notes.jsonl", 1, 9),
+    ]
+    assert all(r["last_copied"] for r in rows)
+    assert sorted(p.relative_to(root).as_posix() for p in root.rglob("*")) == before  # read only
+    assert cli_main(["backup", "sessions", "list"]) == 0 and sid in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("isolation", ["host", "external"])
+@pytest.mark.parametrize("on", [True, False])
+def test_doctor_advises_on_claude_retention_only_when_the_archive_is_on(tmp_path, isolation, on):  # review (a)
+    from woltspace.doctor import run_doctor
+    from woltspace.layout import RuntimeLayout, installation_root
+    root = _lodge(tmp_path, keep=on)
+    before = (root / "woltspace.json").read_text()
+    checks = {c.name: c for c in run_doctor(RuntimeLayout(wolts_dir=root, install_root=installation_root(),
+                                                          host="127.0.0.1", port=18777, isolation=isolation),
+                                            check_port=False)}
+    assert ("cleanupPeriodDays" in checks["session-archive"].remedy) if on else "session-archive" not in checks
+    assert (root / "woltspace.json").read_text() == before and not (root / "wolt-a" / ".claude").exists()

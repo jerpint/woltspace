@@ -22,7 +22,6 @@ from env_compat import get_env
 from skills_sync import seed_wolt_skills
 from creature_types import base_type, creature_emoji, get_custom
 from settings_files import settings_lock, write_json_atomic
-import session_keep
 
 WOLTS_DIR = Path(get_env("WOLTSPACE_WOLTS_DIR", "/workspace/wolts"))
 WOLTSPACE_DIR = Path(os.environ.get("WOLTSPACE_DIR", "/workspace/woltspace"))
@@ -298,8 +297,6 @@ def setup_wolt_claude_config(wolt_dir: Path, name: str) -> None:
         "skipDangerousModePermissionPrompt": True,
     }
     (claude_dir / "settings.json").write_text(json.dumps(settings, indent=2) + "\n")
-    if (days := session_keep.keep_days(WOLTS_DIR)) is not None:  # kept from birth
-        session_keep.merge_claude_settings(claude_dir, days)
 
     # Credentials — copy from shared (not symlink: Claude Code replaces files
     # atomically on re-auth, which would break a symlink and leave shared stale)

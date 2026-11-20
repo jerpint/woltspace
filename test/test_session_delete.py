@@ -23,7 +23,7 @@ def lodge(tmp_path, monkeypatch):
     root = tmp_path / "wolts"
     (root / "wolt-a" / "wolt").mkdir(parents=True)
     (root / "wolt-a" / "wolt" / "wolt.json").write_text("{}")
-    (root / "woltspace.json").write_text(json.dumps({"sessions": {"keep_days": None}}))
+    (root / "woltspace.json").write_text(json.dumps({"sessions": {"archive": True}}))
     for sid, when in ((GONE, 1_600_000_000), (KEPT, 1_800_000_000)):
         for rel in (f"{sid}.jsonl", f"{sid}/tool-results/r.txt"):
             path = root / "wolt-a" / ".claude" / "projects" / "-w" / rel
@@ -128,7 +128,7 @@ def test_a_subagent_folder_goes_with_its_session_and_a_sibling_stays(lodge):
 def test_owner_name_is_not_a_session_id(tmp_path):  # the reviewer's round-3 regression
     root = tmp_path / "wolts"
     (root / "wolt-a").mkdir(parents=True)
-    (root / "woltspace.json").write_text(json.dumps({"sessions": {"keep_days": None}}))
+    (root / "woltspace.json").write_text(json.dumps({"sessions": {"archive": True}}))
     for sid in [GONE, KEPT]:
         path = root / CL / (sid + ".jsonl")
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -141,7 +141,7 @@ def test_owner_name_is_not_a_session_id(tmp_path):  # the reviewer's round-3 reg
 def test_whole_uuid_selects_a_flat_codex_archived_rollout(tmp_path):  # the reviewer's round-4 regression
     root = tmp_path / "wolts"
     root.mkdir()
-    (root / "woltspace.json").write_text(json.dumps({"sessions": {"keep_days": None}}))
+    (root / "woltspace.json").write_text(json.dumps({"sessions": {"archive": True}}))
     rel = f"wolt-a/.codex/archived_sessions/rollout-2026-01-01T00-00-00-{GONE}.jsonl"
     path = root / rel
     path.parent.mkdir(parents=True)
@@ -183,7 +183,7 @@ def test_delete_never_reaches_outside_the_lodge(lodge, tmp_path, crafted):  # re
 def test_delete_never_unlinks_through_a_linked_folder(tmp_path):  # reviewer's S2
     root = tmp_path / "wolts"
     (root / "wolt-a").mkdir(parents=True)
-    (root / "woltspace.json").write_text(json.dumps({"sessions": {"keep_days": None}}))
+    (root / "woltspace.json").write_text(json.dumps({"sessions": {"archive": True}}))
     project = root / "wolt-a" / ".claude" / "projects" / "-w"
     project.mkdir(parents=True)
     (project / f"{GONE}.jsonl").write_bytes(b'{"turn":1}\n')

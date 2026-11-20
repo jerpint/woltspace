@@ -480,23 +480,15 @@ for an encrypted one the container needs `-e WOLTSPACE_BACKUP_AGE_RECIPIENT`.
 ## How long engines keep their sessions
 
 A backup holds whatever session files exist when it runs. Claude Code deletes
-its own transcripts after 30 days unless told otherwise, so a lodge that wants
-them longer says so once, in `woltspace.json`:
+its own transcripts after 30 days unless told otherwise, so if you want them
+longer, set Claude Code's `cleanupPeriodDays` high in your own Claude settings
+(never 0, which turns transcripts off). Woltspace never writes it; with the
+session archive on, `woltspace doctor` reminds you. Codex keeps its sessions;
+opencode, Pi and Hermes are not measured.
 
-```json
-{"sessions": {"keep_days": null}}
-```
-
-`null` means forever (written as 3650 days for Claude), a whole number means that
-many days. Unset, nothing changes. In the container, every wolt's
-`.claude/settings.json` gets `cleanupPeriodDays` at boot and at birth, merged:
-a value someone already set is kept, an unreadable file is left alone, and 0
-(which turns transcripts off) is never written. Natively the engines run on your
-own `~/.claude`, which woltspace never edits: `woltspace doctor` prints the line
-to add there. Codex keeps its sessions; opencode, Pi and Hermes are not measured.
 ## The session archive
 
-A lodge whose `woltspace.json` sets `"sessions": {"keep_days": ...}` also keeps
+A lodge whose `woltspace.json` sets `"sessions": {"archive": true}` also keeps
 every engine session file for good, gzipped, in `.space/session-archive/`
 (owner-only: folders 0700, files 0600). Each `woltspace backup` refreshes it
 first; `woltspace backup sessions` refreshes it on its own. Snapshots leave the
@@ -505,6 +497,7 @@ folder out, so they do not grow with it. Unset, nothing changes, and
 
 ```bash
 woltspace backup sessions                     # store what is new
+woltspace backup sessions list [--json]       # one row per archived session, read only
 woltspace restore-sessions <data root>/.space/session-archive --to ~/sessions-back
 ```
 

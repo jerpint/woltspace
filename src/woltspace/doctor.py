@@ -506,19 +506,12 @@ def run_doctor(
     if sharing is not None:
         checks.append(sharing)
 
-    try:
-        import session_keep
-    except ImportError:
-        session_keep = None
-    if session_keep is not None:
-        days = session_keep.keep_days(layout.wolts_dir)
-        native = layout.isolation == "host" and days is not None
+    from .session_archive import enabled as archive_on
+    if archive_on(layout.wolts_dir):  # advice only: woltspace never writes an engine's settings
         checks.append(DoctorCheck(
-            "session-keep",
-            "warn" if session_keep.setting(layout.wolts_dir).startswith("invalid") else "pass",
-            f"sessions.keep_days: {session_keep.setting(layout.wolts_dir)}",
-            f'Add "cleanupPeriodDays": {days} to ~/.claude/settings.json (woltspace never edits it).'
-            if native else "",
+            "session-archive", "pass", "sessions.archive is on",
+            "Claude Code deletes its transcripts after 30 days unless told: set cleanupPeriodDays "
+            "high in your own Claude settings so the archive sees them first.",
         ))
 
     if check_port:
