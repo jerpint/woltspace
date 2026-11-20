@@ -143,6 +143,8 @@ SLIM_TRANSCRIPT_PREFIXES = (
 #: included (it is the lodge, not an app's database). Logs are not context.
 SLIM_ROOT_CONTEXT = (".space/", ".state/", "woltspace.json")
 SLIM_ROOT_SKIPPED = (".space/logs/",)
+#: The session archive is kept on its own (woltspace backup sessions), never in a snapshot.
+SESSION_ARCHIVE = ".space/session-archive"
 
 #: Slim: anything else is kept only when it is text or code of at most
 #: SLIM_TEXT_MAX bytes. A file with no suffix (Dockerfile, LICENSE, a git ref)
@@ -515,6 +517,10 @@ def scan_tree(wolts_dir: Path, *, full: bool = True) -> Scan:
         for name in sorted(dirnames):
             child = here / name
             rel = _rel(wolts_dir, child)
+            if rel == SESSION_ARCHIVE:
+                dirnames.remove(name)
+                drop_dir(rel, child)
+                continue
             if child.is_symlink():
                 # A symlinked directory is a link, not a subtree: archive the
                 # link itself and never descend through it.
@@ -839,6 +845,50 @@ def keep_secrets(wolts_dir: Path, scan: Scan) -> None:
         scan.entries.append(Entry(wolts_dir / item["path"], f"{ARCHIVE_ROOT}/{item['path']}", "file"))
 
 
+@contextmanager
+def sealed_file(path: Path, encryption: tuple[str, str] | None):
+    """A new 0600 file to write into, through `age` when encrypting, so no
+    plaintext reaches the disk. It is written under a hidden temporary name and
+    renamed only once age has finished well, so a killed run never leaves a
+    torn file under the real name. On any failure the file goes, with age's own
+    error when it has one."""
+    tmp = path.with_name(f".{path.name}.part")
+    fd = _owner_only(tmp)
+    age = None
+    try:
+        if encryption:
+            try:
+                age = subprocess.Popen(
+                    [encryption[0], "-r", encryption[1]],
+                    stdin=subprocess.PIPE, stdout=fd, stderr=subprocess.PIPE,
+                )
+            finally:
+                os.close(fd)
+            assert age.stdin is not None and age.stderr is not None  # both piped above
+            sink = age.stdin
+        else:
+            sink = os.fdopen(fd, "wb")
+        with sink:
+            yield sink
+        if age:
+            error = (age.stderr.read() if age.stderr else b"").decode(errors="replace").strip()
+            if age.wait() != 0:
+                raise OSError(f"age could not encrypt the archive: {error}")
+        os.replace(tmp, path)
+    except BaseException as exc:
+        tmp.unlink(missing_ok=True)
+        if age is None:
+            raise
+        if age.poll() is None:
+            age.kill()
+        error = (age.stderr.read() if age.stderr else b"").decode(errors="replace").strip()
+        age.wait()
+        if isinstance(exc, OSError) and error:
+            # A broken pipe means age gave up first; its stderr says why.
+            raise OSError(f"age could not encrypt the archive: {error}") from exc
+        raise
+
+
 def create_backup(
     wolts_dir: Path | str, *, out_dir: Path | str | None = None, tag: str | None = None,
     full: bool = False,
@@ -870,38 +920,8 @@ def create_backup(
     manifest = build_manifest(wolts_dir, tag, scan)
     manifest["secrets"] = secrets
 
-    fd = _owner_only(archive)
-    age = None
-    try:
-        if encryption:
-            try:
-                age = subprocess.Popen(
-                    [encryption[0], "-r", encryption[1]],
-                    stdin=subprocess.PIPE, stdout=fd, stderr=subprocess.PIPE,
-                )
-            finally:
-                os.close(fd)
-            sink = age.stdin
-        else:
-            sink = os.fdopen(fd, "wb")
-        with sink, tarfile.open(fileobj=sink, mode="w|gz") as tar:
-            _write_members(tar, scan, manifest)
-        if age:
-            error = age.stderr.read().decode(errors="replace").strip()
-            if age.wait() != 0:
-                raise OSError(f"age could not encrypt the archive: {error}")
-    except BaseException as exc:
-        archive.unlink(missing_ok=True)
-        if age is None:
-            raise
-        if age.poll() is None:
-            age.kill()
-        error = age.stderr.read().decode(errors="replace").strip()
-        age.wait()
-        if isinstance(exc, OSError) and error:
-            # A broken pipe means age gave up first; its stderr says why.
-            raise OSError(f"age could not encrypt the archive: {error}") from exc
-        raise
+    with sealed_file(archive, encryption) as sink, tarfile.open(fileobj=sink, mode="w|gz") as tar:
+        _write_members(tar, scan, manifest)
 
     if encryption:
         with archive.open("rb") as sealed:

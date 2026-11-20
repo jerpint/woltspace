@@ -506,6 +506,19 @@ def run_doctor(
     if sharing is not None:
         checks.append(sharing)
 
+    from .session_archive import enabled as archive_on
+    from .session_archive import keep_days_notice
+    if notice := keep_days_notice(layout.wolts_dir):
+        checks.append(DoctorCheck("session-archive-setting", "warn", notice))
+    if archive_on(layout.wolts_dir):  # advice only: woltspace never writes an engine's settings
+        checks.append(DoctorCheck(
+            "session-archive", "pass", "sessions.archive is on",
+            "Claude Code deletes its transcripts after 30 days unless told: set cleanupPeriodDays high in "
+            + ("your own ~/.claude/settings.json" if layout.isolation == "host" else
+               "each wolt's own Claude settings (<wolt>/.claude/settings.json)")
+            + " so the archive sees them first.",
+        ))
+
     if check_port:
         available = _port_available(layout.host, layout.port)
         checks.append(DoctorCheck(

@@ -1,0 +1,241 @@
+"""Deleting a session on purpose: it lists first, needs --yes, refuses a running
+session, removes the engine file and the archive parts, leaves every other
+session whole, and writes the bucket keys for the owner's own delete."""
+
+import json
+import os
+import sys
+from pathlib import Path
+
+import pytest
+from harnesses import HARNESSES
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+
+from woltspace import session_archive as sa
+from woltspace.cli import main as cli_main
+
+GONE, KEPT = "aaaa1111-2222-3333-4444-555566667777", "bbbb1111-2222-3333-4444-555566667777"
+
+
+@pytest.fixture
+def lodge(tmp_path, monkeypatch):
+    root = tmp_path / "wolts"
+    (root / "wolt-a" / "wolt").mkdir(parents=True)
+    (root / "wolt-a" / "wolt" / "wolt.json").write_text("{}")
+    (root / "woltspace.json").write_text(json.dumps({"sessions": {"archive": True}}))
+    for sid, when in ((GONE, 1_600_000_000), (KEPT, 1_800_000_000)):
+        for rel in (f"{sid}.jsonl", f"{sid}/tool-results/r.txt"):
+            path = root / "wolt-a" / ".claude" / "projects" / "-w" / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text('{"turn": 0}\n')
+            os.utime(path, (when, when))
+    sa.refresh(root, HARNESSES)
+    monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(root))
+    return root
+
+
+def _engine(root):
+    return sorted(p.relative_to(root).as_posix() for p in (root / "wolt-a" / ".claude").rglob("*") if p.is_file())
+
+
+@pytest.mark.parametrize("how", [["--session", GONE], ["--before", "2025-01-01"]])
+def test_it_lists_first_and_only_yes_deletes_and_only_that_session(lodge, tmp_path, capsys, how):
+    before = _engine(lodge)
+    assert cli_main(["backup", "sessions", "delete", *how]) == 0
+    assert _engine(lodge) == before and "nothing deleted" in capsys.readouterr().out
+    names = [p for p in (lodge / sa.ARCHIVE / sa.FORMAT).rglob("*") if p.is_file()]
+    assert cli_main(["backup", "sessions", "delete", *how, "--yes"]) == 0
+    assert _engine(lodge) == sorted(p for p in before if GONE not in p)
+    restored, refused = sa.restore(lodge / sa.ARCHIVE, tmp_path / "back")
+    assert refused == [] and sorted(restored) == [f"root:wolt-a/.claude/projects/-w/{KEPT}.jsonl",
+                                                  f"root:wolt-a/.claude/projects/-w/{KEPT}/tool-results/r.txt"]
+    listing, = (lodge / sa.ARCHIVE / "deletes").iterdir()
+    removed = [p for p in names if not p.exists()]  # 2 sources, one part each: data + metadata
+    assert len(removed) == 4 and sorted(listing.read_text().split()) == sorted(  # the names write_out gave them
+        f"{sa.FORMAT}/{p.parent.name}/{p.name}.age" for p in removed)
+
+
+def test_a_running_session_is_refused(lodge):
+    from sessions import SessionRegistry
+    registry = SessionRegistry(lodge)
+    registry.create("wolt-a-live", wolt="wolt-a")
+    registry.update("wolt-a-live", wolt="wolt-a", status="running", harness_session_id=GONE)
+    before = _engine(lodge)
+    assert cli_main(["backup", "sessions", "delete", "--session", GONE, "--yes"]) == 1
+    assert _engine(lodge) == before and not (lodge / sa.ARCHIVE / "deletes").exists()
+
+
+def test_exactly_one_selector_and_a_real_date(lodge):
+    assert cli_main(["backup", "sessions", "delete"]) == 2
+    assert cli_main(["backup", "sessions", "delete", "--session", GONE, "--before", "2025-01-01"]) == 2
+    assert cli_main(["backup", "sessions", "delete", "--before", "last week"]) == 2
+
+
+CL, CX, PI = "wolt-a/.claude/projects/-w", "wolt-a/.codex/sessions/2026/01/01", "wolt-a/.pi/agent/sessions/--w--"
+
+
+@pytest.mark.parametrize("path, sid", [
+    (f"{CL}/{GONE}.jsonl", GONE),
+    (f"{CL}/{GONE}/subagents/agent-1.jsonl", GONE),  # the folder right below <proj>
+    (f"{CL}/{GONE}/tool-results/r.txt", GONE),
+    (f"{CX}/rollout-2026-01-01T00-00-00-{GONE}.jsonl", GONE),
+    (f"{PI}/1700000000_{GONE}.jsonl", GONE),
+    (f"wolt-a/.claude/projects/{GONE}/notes.jsonl", None),  # a UUID one level too high is not the id
+    (f"{GONE}/.claude/projects/-w/notes.jsonl", None),  # nor an owner folder
+    (f"{CL}/x{GONE}.jsonl", None),
+    (f"{CX}/{GONE}.jsonl", None),  # codex names only rollout-<time>-<id>
+    (f"{CL}/WOLT-A.jsonl", None),
+    (f"wolt-a/.codex/archived_sessions/rollout-2026-01-01T00-00-00-{GONE}.jsonl", GONE),  # flat
+    (f"wolt-a/.codex/sessions/rollout-2026-01-01T00-00-00-{GONE}.jsonl", GONE),
+    (f".codex/sessions/rollout-2026-01-01T00-00-00-{GONE}.jsonl", GONE),  # native, from home
+    (f".claude/projects/-w/{GONE}.jsonl", GONE),
+    (f".claude/projects/{GONE}.jsonl", None),  # no <proj>: not a claude session file
+    (f".pi/agent/sessions/--w--/1700000000_{GONE}.jsonl", GONE),
+    (f".pi/agent/sessions/1700000000_{GONE}.jsonl", GONE),
+])
+def test_a_session_id_comes_from_one_fixed_place_per_engine(path, sid):
+    assert sa.session_id(path) == sid
+
+
+@pytest.mark.parametrize("given", ["wolt-a", GONE[:8], GONE.split("-")[-1], GONE + "0", "WOLT-A"])
+def test_only_a_whole_uuid_is_accepted(lodge, capsys, given):
+    before = _engine(lodge)
+    assert cli_main(["backup", "sessions", "delete", "--session", given, "--yes"]) == 2
+    assert _engine(lodge) == before and "sessions:" not in capsys.readouterr().out  # nothing listed
+    assert sa.plan_delete(lodge, session=given).sources == []
+
+
+def test_an_upper_case_id_is_the_same_id(lodge):
+    assert cli_main(["backup", "sessions", "delete", "--session", GONE.upper(), "--yes"]) == 0
+    assert not any(GONE in p for p in _engine(lodge)) and any(KEPT in p for p in _engine(lodge))
+
+
+def test_a_subagent_folder_goes_with_its_session_and_a_sibling_stays(lodge):
+    for sid in (GONE, KEPT):
+        path = lodge / CL / sid / "subagents" / "agent-1.jsonl"
+        path.parent.mkdir(parents=True)
+        path.write_text('{"turn": 0}\n')
+    sa.refresh(lodge, HARNESSES)
+    plan = sa.plan_delete(lodge, session=GONE)
+    assert sorted(plan.sources) == sorted(f"root:{CL}/{rel}" for rel in (
+        f"{GONE}.jsonl", f"{GONE}/subagents/agent-1.jsonl", f"{GONE}/tool-results/r.txt"))
+    assert cli_main(["backup", "sessions", "delete", "--session", GONE, "--yes"]) == 0
+    assert _engine(lodge) == sorted(f"{CL}/{KEPT}{rest}" for rest in (
+        ".jsonl", "/subagents/agent-1.jsonl", "/tool-results/r.txt"))
+
+
+def test_owner_name_is_not_a_session_id(tmp_path):  # the reviewer's round-3 regression
+    root = tmp_path / "wolts"
+    (root / "wolt-a").mkdir(parents=True)
+    (root / "woltspace.json").write_text(json.dumps({"sessions": {"archive": True}}))
+    for sid in [GONE, KEPT]:
+        path = root / CL / (sid + ".jsonl")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b'{"turn":1}\n')
+    sa.refresh(root, HARNESSES)
+    plan = sa.plan_delete(root, session="wolt-a")
+    assert plan.sources == [] and plan.engine_files == []
+
+
+def test_whole_uuid_selects_a_flat_codex_archived_rollout(tmp_path):  # the reviewer's round-4 regression
+    root = tmp_path / "wolts"
+    root.mkdir()
+    (root / "woltspace.json").write_text(json.dumps({"sessions": {"archive": True}}))
+    rel = f"wolt-a/.codex/archived_sessions/rollout-2026-01-01T00-00-00-{GONE}.jsonl"
+    path = root / rel
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b'{"turn":1}\n')
+    sa.refresh(root, HARNESSES)
+    plan = sa.plan_delete(root, session=GONE)
+    assert sa.session_id(rel) == GONE
+    assert plan.sources == [f"root:{rel}"] and plan.engine_files == [path]
+
+
+def test_delete_waits_for_a_running_refresh(lodge):  # Gate B N2: the archive's one lock
+    import fcntl
+    import threading
+    plan, done = sa.plan_delete(lodge, session=GONE), threading.Event()
+    with open(lodge / sa.ARCHIVE / ".lock", "a") as held:
+        fcntl.flock(held.fileno(), fcntl.LOCK_EX)  # what a refresh holds while it runs
+        worker = threading.Thread(target=lambda: (sa.delete(lodge, plan), done.set()))
+        worker.start()
+        assert not done.wait(0.5) and any(GONE in p for p in _engine(lodge))
+    worker.join(10)
+    assert done.is_set() and not any(GONE in p for p in _engine(lodge))
+
+
+@pytest.mark.parametrize("crafted", ["../outside/.claude/projects/-w/{sid}.jsonl", "{abs}/.claude/projects/-w/{sid}.jsonl"])
+def test_delete_never_reaches_outside_the_lodge(lodge, tmp_path, crafted):  # review 3
+    outside = tmp_path / "outside" / ".claude" / "projects" / "-w" / f"{GONE}.jsonl"
+    outside.parent.mkdir(parents=True)
+    outside.write_text("not the lodge's")
+    meta, = [m for m in (lodge / sa.ARCHIVE / sa.FORMAT).rglob("*.json")
+             if json.loads(m.read_text())["path"].endswith(f"{GONE}.jsonl")]
+    path = crafted.format(sid=GONE, abs=tmp_path / "outside")
+    meta.write_text(json.dumps({**json.loads(meta.read_text()), "path": path}))
+    plan = sa.plan_delete(lodge, session=GONE)
+    assert outside not in plan.engine_files
+    sa.delete(lodge, plan)
+    assert outside.read_text() == "not the lodge's"
+
+
+def test_delete_never_unlinks_through_a_linked_folder(tmp_path):  # reviewer's S2
+    root = tmp_path / "wolts"
+    (root / "wolt-a").mkdir(parents=True)
+    (root / "woltspace.json").write_text(json.dumps({"sessions": {"archive": True}}))
+    project = root / "wolt-a" / ".claude" / "projects" / "-w"
+    project.mkdir(parents=True)
+    (project / f"{GONE}.jsonl").write_bytes(b'{"turn":1}\n')
+    sa.refresh(root, HARNESSES)
+    (project / f"{GONE}.jsonl").unlink()
+    project.rmdir()
+    outside = tmp_path / "external-project" / f"{GONE}.jsonl"
+    outside.parent.mkdir()
+    outside.write_bytes(b"outside data root, keep me")
+    project.symlink_to(outside.parent, target_is_directory=True)
+    plan = sa.plan_delete(root, session=GONE)
+    assert plan.engine_files == []
+    sa.delete(root, plan)
+    assert outside.read_bytes() == b"outside data root, keep me"
+
+
+def test_a_session_file_that_is_a_link_is_removed_as_the_link(lodge, tmp_path):
+    target = tmp_path / "elsewhere.jsonl"
+    target.write_text("keep me")
+    engine = lodge / CL / f"{GONE}.jsonl"
+    engine.unlink()
+    engine.symlink_to(target)
+    plan = sa.plan_delete(lodge, session=GONE)
+    assert engine in plan.engine_files
+    sa.delete(lodge, plan)
+    assert not engine.is_symlink() and target.read_text() == "keep me"
+
+
+def test_a_switched_off_lodge_can_still_list_delete_and_check_its_archive(lodge, capsys, tmp_path, monkeypatch):
+    (lodge / "woltspace.json").write_text(json.dumps({"sessions": {"archive": False}}))  # switched off afterwards
+    (lodge / CL / "late.jsonl").write_text('{"x": 1}\n')  # new since: never stored by a switched-off lodge
+    before = sorted(p.relative_to(lodge).as_posix() for p in (lodge / sa.ARCHIVE).rglob("*"))
+    assert cli_main(["backup", "sessions", "list", "--json"]) == 0
+    assert GONE in capsys.readouterr().out
+    assert sorted(p.relative_to(lodge).as_posix() for p in (lodge / sa.ARCHIVE).rglob("*")) == before  # list wrote nothing
+    assert cli_main(["backup", "sessions"]) == 2  # no refresh when off
+    assert cli_main(["backup", "sessions", "--out", str(tmp_path / "out")]) == 2
+    assert cli_main(["backup", "sessions", "--sent", str(tmp_path / "out")]) == 2
+    monkeypatch.setenv("PATH", str(tmp_path / "no-tools"))  # no rclone: it runs and says unknown (1), not refused (2)
+    assert cli_main(["backup", "sessions", "check-lock", "--remote", "r2:b/lodges/pal"]) == 1
+    monkeypatch.undo()
+    monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(lodge))
+    assert cli_main(["backup", "sessions", "delete", "--session", GONE, "--yes"]) == 0
+    assert not any(GONE in p for p in _engine(lodge))
+    assert not any(json.loads(m.read_text())["path"].endswith("late.jsonl")
+                   for m in (lodge / sa.ARCHIVE / sa.FORMAT).rglob("*.json"))  # delete did not refresh
+
+
+def test_off_and_no_archive_folder_is_still_refused(tmp_path, monkeypatch):
+    root = tmp_path / "wolts"
+    root.mkdir()
+    (root / "woltspace.json").write_text("{}")
+    monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(root))
+    for action in (["list"], ["check-lock", "--remote", "r2:b/l/p"], ["delete", "--session", GONE]):
+        assert cli_main(["backup", "sessions", *action]) == 2
