@@ -492,8 +492,11 @@ A lodge whose `woltspace.json` sets `"sessions": {"archive": true}` also keeps
 every engine session file for good, gzipped, in `.space/session-archive/`
 (owner-only: folders 0700, files 0600). Each `woltspace backup` refreshes it
 first; `woltspace backup sessions` refreshes it on its own. Snapshots leave the
-folder out, so they do not grow with it. Unset, nothing changes, and
-`woltspace backup sessions` refuses.
+folder out, so they do not grow with it. Unset (or false), nothing changes, and
+`woltspace backup sessions` refuses. An older `"keep_days"` there, with no
+`"archive"`, still counts as on; `woltspace backup` and `woltspace doctor` say
+once that it is no longer used. When `"archive"` is set, it alone decides.
+Nothing here writes any engine's settings.
 
 ```bash
 woltspace backup sessions                     # store what is new

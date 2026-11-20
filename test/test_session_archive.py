@@ -194,7 +194,8 @@ def test_off_unless_the_lodge_sets_sessions_archive(tmp_path):
 
 
 @pytest.mark.parametrize("sessions, on", [({"archive": True}, True), ({"archive": False}, False), ({}, False),
-                                          ({"keep_days": None}, False), ({"archive": "yes"}, False)])
+                                          ({"archive": "yes"}, False), ({"keep_days": None}, True),  # older key
+                                          ({"keep_days": 30, "archive": False}, False)])  # archive wins
 def test_the_archive_switch_is_sessions_archive_true(tmp_path, sessions, on):  # review (c)
     root = tmp_path / "wolts"
     root.mkdir()
@@ -237,3 +238,49 @@ def test_doctor_advises_on_claude_retention_only_when_the_archive_is_on(tmp_path
                                             check_port=False)}
     assert ("cleanupPeriodDays" in checks["session-archive"].remedy) if on else "session-archive" not in checks
     assert (root / "woltspace.json").read_text() == before and not (root / "wolt-a" / ".claude").exists()
+
+
+@pytest.mark.parametrize("sessions, notice", [({"keep_days": None}, True), ({"keep_days": 5, "archive": True}, True),
+                                              ({"archive": True}, False)])
+def test_an_old_keep_days_gets_a_one_line_notice(tmp_path, monkeypatch, capsys, sessions, notice):
+    from woltspace.cli import main as cli_main
+    from woltspace.doctor import run_doctor
+    from woltspace.layout import RuntimeLayout, installation_root
+    root = tmp_path / "wolts"
+    (root / "wolt-a").mkdir(parents=True)
+    (root / "woltspace.json").write_text(json.dumps({"sessions": sessions}))
+    monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(root))
+    assert cli_main(["backup", "--tag", "n", "--out", str(tmp_path / "out")]) == 0
+    err = capsys.readouterr().err
+    assert ("keep_days is no longer used" in err) is notice and err.count("keep_days is no longer used") <= 1
+    checks = {c.name: c for c in run_doctor(RuntimeLayout(wolts_dir=root, install_root=installation_root(),
+                                                          host="127.0.0.1", port=18777), check_port=False)}
+    assert ("session-archive-setting" in checks) is notice
+
+
+@pytest.mark.parametrize("isolation", ["external", "host"])
+def test_nothing_writes_any_claude_settings_file(tmp_path, monkeypatch, isolation):  # addendum (1)
+    from woltspace.cli import main as cli_main
+    from woltspace.doctor import run_doctor
+    from woltspace.layout import RuntimeLayout, installation_root
+    from woltspace.supervisor import Supervisor
+    root, home = _lodge(tmp_path), tmp_path / "home"
+    (root / "wolt-b" / "wolt").mkdir(parents=True)
+    (root / "wolt-b" / "wolt" / "wolt.json").write_text("{}")
+    _session(root, "wolt-a/.claude/settings.json", '{"model": "x"}\n')  # a wolt's own settings
+    _session(home, ".claude/settings.json", '{"theme": "dark"}\n')  # the owner's own settings
+    _session(home, ".claude/projects/-w/s.jsonl", json.dumps({"cwd": str(root / "wolt-a")}) + "\n")
+    _session(root, CLAUDE, '{"a": 1}\n')
+    watched = {p: p.read_bytes() for p in (root / "wolt-a/.claude/settings.json", home / ".claude/settings.json")}
+    layout = RuntimeLayout(wolts_dir=root, install_root=installation_root(), host="127.0.0.1", port=18777,
+                           isolation=isolation)
+    monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(root))
+    monkeypatch.setenv("WOLTSPACE_ISOLATION", isolation)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    Supervisor(layout)._platform_preflight()  # the container's boot sweep; natively it returns at once
+    sa.refresh(root, HARNESSES, home=home if isolation == "host" else None)
+    assert cli_main(["backup", "sessions"]) in (0, 10)
+    assert cli_main(["backup", "--tag", "b", "--out", str(tmp_path / "out")]) == 0
+    run_doctor(layout, check_port=False)
+    assert {p: p.read_bytes() for p in watched} == watched
+    assert not (root / "wolt-b" / ".claude" / "settings.json").exists()

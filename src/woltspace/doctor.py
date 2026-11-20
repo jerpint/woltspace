@@ -507,6 +507,9 @@ def run_doctor(
         checks.append(sharing)
 
     from .session_archive import enabled as archive_on
+    from .session_archive import keep_days_notice
+    if notice := keep_days_notice(layout.wolts_dir):
+        checks.append(DoctorCheck("session-archive-setting", "warn", notice))
     if archive_on(layout.wolts_dir):  # advice only: woltspace never writes an engine's settings
         checks.append(DoctorCheck(
             "session-archive", "pass", "sessions.archive is on",

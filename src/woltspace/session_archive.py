@@ -43,12 +43,24 @@ from .backup import SESSION_ARCHIVE as ARCHIVE
 FORMAT = "v1"
 
 
-def enabled(wolts_dir: Path) -> bool:
+def _sessions(wolts_dir: Path) -> dict:
     try:
         sessions = json.loads((Path(wolts_dir) / "woltspace.json").read_text()).get("sessions")
     except (OSError, ValueError, AttributeError):
-        return False
-    return isinstance(sessions, dict) and sessions.get("archive") is True
+        return {}
+    return sessions if isinstance(sessions, dict) else {}
+
+
+def enabled(wolts_dir: Path) -> bool:
+    """"sessions": {"archive": true}; an older "keep_days" without "archive" still counts."""
+    sessions = _sessions(wolts_dir)
+    return sessions.get("archive") is True if "archive" in sessions else "keep_days" in sessions
+
+
+def keep_days_notice(wolts_dir: Path) -> str | None:
+    if "keep_days" in _sessions(wolts_dir):
+        return 'sessions.keep_days is no longer used; set "sessions": {"archive": true} in woltspace.json'
+    return None
 
 
 @dataclass

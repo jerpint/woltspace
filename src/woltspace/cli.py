@@ -591,6 +591,8 @@ def _backup(args) -> int:
 
     layout = RuntimeLayout.from_env()
     wolts_dir = args.wolts_dir or layout.wolts_dir
+    if notice := session_archive.keep_days_notice(Path(wolts_dir)):
+        print(f"notice: {notice}", file=sys.stderr)
     if args.what == "sessions" and not session_archive.enabled(Path(wolts_dir)):
         lore.failure('the session archive is off: set "sessions": {"archive": true} in woltspace.json')
         return 2
