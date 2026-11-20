@@ -481,8 +481,9 @@ for an encrypted one the container needs `-e WOLTSPACE_BACKUP_AGE_RECIPIENT`.
 
 A backup holds whatever session files exist when it runs. Claude Code deletes
 its own transcripts after 30 days unless told otherwise, so if you want them
-longer, set Claude Code's `cleanupPeriodDays` high in your own Claude settings
-(never 0, which turns transcripts off). Woltspace never writes it; with the
+longer, set Claude Code's `cleanupPeriodDays` high in its settings (never 0,
+which turns transcripts off): natively your own `~/.claude/settings.json`, in a
+container each wolt's own `<wolt>/.claude/settings.json`. Woltspace never writes it; with the
 session archive on, `woltspace doctor` reminds you. Codex keeps its sessions;
 opencode, Pi and Hermes are not measured.
 
@@ -493,7 +494,9 @@ every engine session file for good, gzipped, in `.space/session-archive/`
 (owner-only: folders 0700, files 0600). Each `woltspace backup` refreshes it
 first; `woltspace backup sessions` refreshes it on its own. Snapshots leave the
 folder out, so they do not grow with it. Unset (or false), nothing changes, and
-`woltspace backup sessions` refuses. An older `"keep_days"` there, with no
+`woltspace backup sessions` (with `--out` or `--sent` too) refuses: nothing new is
+stored or sent. An archive kept from before can still be listed, deleted from and
+lock-checked. An older `"keep_days"` there, with no
 `"archive"`, still counts as on; `woltspace backup` and `woltspace doctor` say
 once that it is no longer used. When `"archive"` is set, it alone decides.
 Nothing here writes any engine's settings.

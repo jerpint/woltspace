@@ -508,10 +508,11 @@ def listing(wolts_dir: Path, home: Path | None = None) -> list[dict]:
         sid = session_id(last["path"])
         path = f"{last['origin']}:{last['path']}"
         row = rows.setdefault((last["origin"], sid or path), {
-            "session": sid, "source": path, "files": 0, "bytes": 0, "last_copied": ""})
+            "session": sid, "source": path, "files": 0, "bytes": 0, "last_copied": None})
         row["files"] += 1
         row["bytes"] += last["total_length"]
-        row["last_copied"] = max(row["last_copied"], last["captured_at"])
+        if isinstance(copied := last.get("captured_at"), str):  # optional: an odd or older part shows none
+            row["last_copied"] = max(row["last_copied"] or "", copied)
         if len(path) < len(row["source"]):  # the session file itself, not one of its tool results
             row["source"] = path
     for row in rows.values():

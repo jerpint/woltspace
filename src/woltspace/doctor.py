@@ -513,8 +513,10 @@ def run_doctor(
     if archive_on(layout.wolts_dir):  # advice only: woltspace never writes an engine's settings
         checks.append(DoctorCheck(
             "session-archive", "pass", "sessions.archive is on",
-            "Claude Code deletes its transcripts after 30 days unless told: set cleanupPeriodDays "
-            "high in your own Claude settings so the archive sees them first.",
+            "Claude Code deletes its transcripts after 30 days unless told: set cleanupPeriodDays high in "
+            + ("your own ~/.claude/settings.json" if layout.isolation == "host" else
+               "each wolt's own Claude settings (<wolt>/.claude/settings.json)")
+            + " so the archive sees them first.",
         ))
 
     if check_port:

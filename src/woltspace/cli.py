@@ -515,7 +515,8 @@ def _delete_sessions(args, layout: RuntimeLayout, wolts_dir) -> int:
     from harnesses import HARNESSES
     from sessions import SessionRegistry, stored_resume_id
 
-    session_archive.refresh(Path(wolts_dir), HARNESSES, home=home)  # so the engine files are known
+    if session_archive.enabled(Path(wolts_dir)):  # so the engine files are known; never when switched off
+        session_archive.refresh(Path(wolts_dir), HARNESSES, home=home)
     plan = session_archive.plan_delete(Path(wolts_dir), session=args.session, before=before, home=home)
     running = {stored_resume_id(r) for r in SessionRegistry(wolts_dir).records()
                if r.get("status") in ("running", "stopping") or r.get("launching")} - {""}
@@ -558,7 +559,7 @@ def _sessions_command(args, layout: RuntimeLayout, wolts_dir) -> int:
         lore.plain(f"{'session':36}  {'files':>5}  {'size':>10}  {'last copied (UTC)':19}  path")
         for row in rows:
             lore.plain(f"{row['session'] or '-':36}  {row['files']:>5}  {row['bytes']:>10}  "
-                       f"{row['last_copied'][:19]:19}  {row['path']}")
+                       f"{(row['last_copied'] or '-')[:19]:19}  {row['path']}")
         return 0
     if args.action == "check-lock":
         if not args.remote:
@@ -593,9 +594,11 @@ def _backup(args) -> int:
     wolts_dir = args.wolts_dir or layout.wolts_dir
     if notice := session_archive.keep_days_notice(Path(wolts_dir)):
         print(f"notice: {notice}", file=sys.stderr)
-    if args.what == "sessions" and not session_archive.enabled(Path(wolts_dir)):
+    archive_on = session_archive.enabled(Path(wolts_dir))
+    kept = (Path(wolts_dir) / session_archive.ARCHIVE).is_dir()
+    if args.what == "sessions" and not archive_on and not (kept and args.action in ("list", "delete", "check-lock")):
         lore.failure('the session archive is off: set "sessions": {"archive": true} in woltspace.json')
-        return 2
+        return 2  # switched off: nothing new is stored or sent; what is kept can still be seen and removed
     if args.what == "sessions":
         return _sessions_command(args, layout, wolts_dir)
     if session_archive.enabled(Path(wolts_dir)):

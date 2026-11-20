@@ -210,3 +210,32 @@ def test_a_session_file_that_is_a_link_is_removed_as_the_link(lodge, tmp_path):
     assert engine in plan.engine_files
     sa.delete(lodge, plan)
     assert not engine.is_symlink() and target.read_text() == "keep me"
+
+
+def test_a_switched_off_lodge_can_still_list_delete_and_check_its_archive(lodge, capsys, tmp_path, monkeypatch):
+    (lodge / "woltspace.json").write_text(json.dumps({"sessions": {"archive": False}}))  # switched off afterwards
+    (lodge / CL / "late.jsonl").write_text('{"x": 1}\n')  # new since: never stored by a switched-off lodge
+    before = sorted(p.relative_to(lodge).as_posix() for p in (lodge / sa.ARCHIVE).rglob("*"))
+    assert cli_main(["backup", "sessions", "list", "--json"]) == 0
+    assert GONE in capsys.readouterr().out
+    assert sorted(p.relative_to(lodge).as_posix() for p in (lodge / sa.ARCHIVE).rglob("*")) == before  # list wrote nothing
+    assert cli_main(["backup", "sessions"]) == 2  # no refresh when off
+    assert cli_main(["backup", "sessions", "--out", str(tmp_path / "out")]) == 2
+    assert cli_main(["backup", "sessions", "--sent", str(tmp_path / "out")]) == 2
+    monkeypatch.setenv("PATH", str(tmp_path / "no-tools"))  # no rclone: it runs and says unknown (1), not refused (2)
+    assert cli_main(["backup", "sessions", "check-lock", "--remote", "r2:b/lodges/pal"]) == 1
+    monkeypatch.undo()
+    monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(lodge))
+    assert cli_main(["backup", "sessions", "delete", "--session", GONE, "--yes"]) == 0
+    assert not any(GONE in p for p in _engine(lodge))
+    assert not any(json.loads(m.read_text())["path"].endswith("late.jsonl")
+                   for m in (lodge / sa.ARCHIVE / sa.FORMAT).rglob("*.json"))  # delete did not refresh
+
+
+def test_off_and_no_archive_folder_is_still_refused(tmp_path, monkeypatch):
+    root = tmp_path / "wolts"
+    root.mkdir()
+    (root / "woltspace.json").write_text("{}")
+    monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(root))
+    for action in (["list"], ["check-lock", "--remote", "r2:b/l/p"], ["delete", "--session", GONE]):
+        assert cli_main(["backup", "sessions", *action]) == 2

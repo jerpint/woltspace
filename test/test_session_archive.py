@@ -238,6 +238,9 @@ def test_doctor_advises_on_claude_retention_only_when_the_archive_is_on(tmp_path
                                                           host="127.0.0.1", port=18777, isolation=isolation),
                                             check_port=False)}
     assert ("cleanupPeriodDays" in checks["session-archive"].remedy) if on else "session-archive" not in checks
+    if on:  # each lodge is pointed at the settings its sessions actually read
+        where = "~/.claude/settings.json" if isolation == "host" else "<wolt>/.claude/settings.json"
+        assert where in checks["session-archive"].remedy
     assert (root / "woltspace.json").read_text() == before and not (root / "wolt-a" / ".claude").exists()
 
 
@@ -294,3 +297,17 @@ def test_list_shows_the_owners_files_under_the_owners_home(tmp_path):
     sa.refresh(root, HARNESSES, home=home)
     row, = sa.listing(root, home=home)
     assert row["path"] == str(home / f".claude/projects/-a/{sid}.jsonl") and row["source"].startswith("home:")
+
+
+def test_list_shows_a_dash_for_metadata_without_its_capture_time(tmp_path, monkeypatch, capsys):
+    from woltspace.cli import main as cli_main
+    root = _lodge(tmp_path)
+    _session(root, CLAUDE, '{"a": 1}\n')
+    sa.refresh(root, HARNESSES)
+    meta, = (root / sa.ARCHIVE / sa.FORMAT).rglob("*.json")
+    meta.write_text(json.dumps({k: v for k, v in json.loads(meta.read_text()).items() if k != "captured_at"}))
+    monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(root))
+    assert cli_main(["backup", "sessions", "list"]) == 0
+    line = next(l for l in capsys.readouterr().out.splitlines() if "s1.jsonl" in l)
+    assert " - " in line
+    assert sa.listing(root)[0]["last_copied"] is None
