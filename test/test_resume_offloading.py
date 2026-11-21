@@ -68,6 +68,33 @@ def test_a_slow_resume_leaves_the_control_plane_answering(monkeypatch):
     assert resumed.json()["status"] == "respawned"
 
 
+@pytest.mark.parametrize("body, prompt", [
+    ({"json": {"prompt": "x"}}, "x"),
+    ({"json": []}, ""),
+    ({"content": b""}, ""),
+    ({"content": b"{not json"}, ""),
+])
+def test_resume_reads_only_an_object_body(monkeypatch, body, prompt):
+    """A non-object or unreadable body is "no prompt", never a 500."""
+    seen = []
+
+    def fake_resume(name, prompt=""):
+        seen.append(prompt)
+        return {"name": name, "status": "respawned"}
+
+    monkeypatch.setattr(app_module, "resume_session", fake_resume)
+
+    async def scenario():
+        transport = httpx.ASGITransport(app=app_module.app)
+        async with httpx.AsyncClient(transport=transport,
+                                     base_url="http://localhost:7777") as client:
+            return await client.post("/sessions/somewolt-abc123/resume", **body)
+
+    response = asyncio.run(scenario())
+    assert response.status_code == 200, response.text
+    assert seen == [prompt]
+
+
 ADAPTERS = [
     "container/connectors/telegram/telegram_connector.py",
     "container/lib/chat_lodge.py",
