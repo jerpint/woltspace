@@ -2589,8 +2589,13 @@ async def app_unshare_all():
 async def session_resume(name: str, request: Request):
     """Resume a stopped/orphaned session by name."""
     safe = "".join(c for c in name if c.isalnum() or c in "-_")
-    body = await request.json()
-    prompt = body.get("prompt", "")
+    # A missing, invalid or non-object body (an editor plugin's `[]`) means
+    # no prompt; it must not 500 before the resume is even tried.
+    try:
+        body = await request.json()
+    except ValueError:
+        body = None
+    prompt = body.get("prompt", "") if isinstance(body, dict) else ""
     try:
         # resume_session polls the process table for up to 12s waiting for the
         # relaunched agent — a synchronous wait. Called inline it would freeze
