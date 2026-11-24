@@ -1091,6 +1091,15 @@ def _agent_age(handle: RuntimeHandle, harness: str | None) -> int | None:
     return probe(handle, get_harness(harness)["process_names"])
 
 
+def _has_input_marker(handle: RuntimeHandle, marker: str) -> bool:
+    if not marker:
+        return True
+    try:
+        return marker in _tmux_capture(handle, start=None)
+    except (subprocess.SubprocessError, OSError, RuntimeError):
+        return False
+
+
 def _await_input_ready(target: str | dict | RuntimeHandle, harness: str | None,
                        timeout: float | None = None) -> RuntimeHandle | None:
     """Wait until the agent in this session takes input: the pane to paste into, or None.
@@ -1122,8 +1131,12 @@ def _await_input_ready(target: str | dict | RuntimeHandle, harness: str | None,
     Never call this inside registry.edit(). It can run for the whole timeout,
     and every lodge writer queues on that transaction.
 
+    A harness can also require a marker from its visible composer, so the
+    paste's Enter cannot submit a first-run setup screen while it is open.
+
     Read from the module globals at call time so a test can shorten them.
     """
+    marker = get_harness(harness).get("input_ready_marker", "")
     limit = INPUT_READY_TIMEOUT if timeout is None else timeout
     name = _runtime_handle(target).woltspace_session_id
     started = time.monotonic()
@@ -1131,7 +1144,7 @@ def _await_input_ready(target: str | dict | RuntimeHandle, harness: str | None,
     while True:
         pause = _INPUT_READY_POLL
         found = resolve_agent_handle(target, harness, include_launching=False)
-        if found is not None:
+        if found is not None and _has_input_marker(found, marker):
             age = _agent_age(found, harness)
             if age is None:
                 print(f"[sessions] {name}: can't read the age of the {harness} "
@@ -1154,7 +1167,7 @@ def _await_input_ready(target: str | dict | RuntimeHandle, harness: str | None,
             # Young: inside the window where Claude drops input. Sleep out
             # the rest of the age rather than poll through it.
             pause = AGENT_INPUT_READY_AGE - age
-        elif resolve_agent_handle(target, harness, include_launching=True) is None:
+        elif found is None and resolve_agent_handle(target, harness, include_launching=True) is None:
             if waited:
                 print(f"[sessions] {name}: stopped waiting after "
                       f"{time.monotonic() - started:.2f}s; nothing is booting",
@@ -2076,7 +2089,7 @@ def deliver_boot_prompt(name: str, timeout: int = 90) -> bool:
 
     harness = resolve_harness(data.get("harness"))
     entry = get_harness(harness)
-    marker = entry.get("tui_ready_marker") or ""
+    marker = entry.get("tui_ready_marker") or entry.get("input_ready_marker") or ""
 
     deadline = time.time() + timeout
     ready = False
@@ -2120,8 +2133,8 @@ def deliver_boot_prompt(name: str, timeout: int = 90) -> bool:
     wolt = data.get("wolt", "")
     registry.update(name, wolt=wolt, pending_boot_prompt="")
     try:
-        # Flatten newlines (a bare \n would submit early) then guard the slash.
-        _tmux_paste(name, _guard_paste_text(harness, prompt.replace("\n", " ")),
+        text = prompt if entry.get("preserve_boot_prompt_newlines") else prompt.replace("\n", " ")
+        _tmux_paste(name, _guard_paste_text(harness, text),
                     settle=entry.get("paste_settle", 0.0))
     except Exception:
         registry.update(name, wolt=wolt, pending_boot_prompt=prompt)

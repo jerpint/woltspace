@@ -450,7 +450,7 @@ def run_doctor(
 
     table = _harness_table()
     names = tuple(table) or _FALLBACK_HARNESSES
-    harnesses = {name: shutil.which(name) for name in names}
+    harnesses = {name: shutil.which(table.get(name, {}).get("binary", name)) for name in names}
     installed = {name: path for name, path in harnesses.items() if path}
     checks.append(DoctorCheck(
         "harness",

@@ -693,3 +693,22 @@ class TestMessageRouteOnABootingAgent:
         assert response.json()["status"] == "agent-booting"
         resumed.assert_not_called()
         assert runtime.pastes == []
+
+
+def test_antigravity_paste_waits_for_composer_after_setup(
+    tmp_path, monkeypatch, fake_runtime,
+):
+    import sessions
+
+    monkeypatch.setattr(sessions, "WOLTS_DIR", tmp_path)
+    monkeypatch.setattr(sessions, "INPUT_READY_TIMEOUT", 0)
+    registry = sessions.SessionRegistry(tmp_path)
+    name = "maple-antigravity"
+    registry.create(name, wolt="maple", dir=str(tmp_path), harness="antigravity")
+    fake_runtime.feed_capture("Welcome to Antigravity CLI!\nChoose your color scheme")
+    assert sessions.deliver_message(name, "First line\nSecond line", registry=registry)["status"] == "agent-booting"
+    assert fake_runtime.pastes == []
+
+    fake_runtime.feed_capture(">\n? for shortcuts")
+    assert sessions.deliver_message(name, "First line\nSecond line", registry=registry)["status"] == "delivered"
+    assert fake_runtime.last_paste == ("%1", "First line\nSecond line", 0.5)

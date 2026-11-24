@@ -646,7 +646,7 @@ class TestHarnessMetadata:
         ids = {m["id"] for m in meta}
         assert {"claude", "codex", "opencode", "pi", "hermes"} <= ids
         experimental = {m["id"] for m in meta if m["experimental"]}
-        assert experimental == {"opencode", "pi", "hermes"}
+        assert experimental == {"opencode", "pi", "hermes", "antigravity"}
         for m in meta:
             assert m["label"] and m["emoji"]
             assert set(m["models"]) == {"raccoon", "beaver", "otter"}
@@ -1596,8 +1596,8 @@ def test_a_missing_engine_is_named_on_a_native_lodge(monkeypatch):
     # A container carries its engines in the image; this PATH says nothing.
     assert harness_install_problem("hermes", isolation="external") == ""
     assert seen == ["hermes"]
-    for name, entry in HARNESSES.items():
-        assert entry["binary"] == name
+    assert all(entry["binary"] for entry in HARNESSES.values())
+    assert HARNESSES["antigravity"]["binary"] == "agy"
     monkeypatch.setattr(harnesses, "_engine_on_path", lambda binary: True)
     assert harness_install_problem("pi", isolation="host") == ""
 
