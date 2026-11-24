@@ -1,0 +1,13 @@
+{
+  "name": "whatsapp",
+  "title": "WhatsApp Agent Platform",
+  "protocol": 1,
+  "command": ["{python}", "whatsapp_connector.py"],
+  "capabilities": ["text"],
+  "command_input": ["text"],
+  "events": ["message", "command", "selection"],
+  "route": [["chat_id", "[a-f0-9]{20}\\.[A-Za-z0-9_-]{8,171}"]],
+  "secrets": [["WHATSAPP_AGENT_TOKEN", "agent_token"]],
+  "enable_env": "ENABLE_WHATSAPP_AGENT",
+  "help": ["• Text only; official creator-only Agent Platform, not end-to-end encrypted", "• Reply with a choice number while a picker is open", "• @dog asks the lodge dog"]
+}

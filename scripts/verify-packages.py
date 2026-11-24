@@ -21,6 +21,8 @@ with zipfile.ZipFile(DIST / f'woltspace-{python_version}-py3-none-any.whl') as w
     metadata = next(name for name in wheel.namelist() if name.endswith('.dist-info/METADATA'))
     assert Parser().parsestr(wheel.read(metadata).decode())['Version'] == python_version
     required = [*ROOT.glob('container/lib/**/*.py'),
+                *ROOT.glob('container/connectors/*/connector.json'),
+                *ROOT.glob('container/connectors/*/*.py'),
                 *(path for path in (ROOT / 'container/skills').rglob('*')
                   if path.is_file() and '__pycache__' not in path.parts
                   and path.suffix != '.pyc'),

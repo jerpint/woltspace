@@ -144,6 +144,7 @@ jobs:
           test/test_telegram_idle.py
           test/test_telegram_holds.py
           test/test_channel_connectors.py
+          test/test_whatsapp_connector.py
           test/test_transcription_settings.py
           test/test_speech_settings.py
           test/test_boot_context_cap.py
