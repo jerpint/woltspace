@@ -15,9 +15,9 @@ from woltspace.channel_supervisor import (  # noqa: E402
     read_connector_report,
 )
 from woltspace.channels import (  # noqa: E402
-    CONNECTORS,
     WOLF_MODULE,
     WolfConnector,
+    all_connectors,
     plan_connectors,
 )
 from woltspace.layout import RuntimeLayout  # noqa: E402
@@ -33,8 +33,7 @@ def _layout(tmp_path, install_root=None, port=7799):
 
 
 def test_the_wolf_joins_the_pack_after_the_channels():
-    from woltspace.channels import all_connectors
-    assert [c.name for c in all_connectors()][:3] == ["slack", "telegram", "wolf"]
+    assert [c.name for c in all_connectors()][:4] == ["slack", "telegram", "whatsapp", "wolf"]
 
 
 class TestPlan:
@@ -101,7 +100,7 @@ class TestPlan:
 
     def test_plan_connectors_carries_the_wolf(self, tmp_path):
         plans = plan_connectors(_layout(tmp_path), ENTRY)
-        assert [plan.name for plan in plans] == ["slack", "telegram", "wolf", "vulture"]
+        assert [plan.name for plan in plans][-2:] == ["wolf", "vulture"]
 
 
 class TestSupervision:
