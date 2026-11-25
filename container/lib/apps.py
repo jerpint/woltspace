@@ -278,8 +278,8 @@ def _is_own_app(name: str, state: dict) -> bool | None:
     record from before start times were saved that the working folder can't confirm): it is
     never signalled and nothing is started over it.
     Every app starts as its own process group leader. A record with `started` must match
-    the process start time. An older record is confirmed by its working folder (procfs) or by
-    a command line exactly equal to its start command; it then gets `started`, once.
+    the process start time. An older record is confirmed only by its working folder (procfs);
+    it then gets `started`, once. Its command line proves nothing: another app may run the same.
     """
     pid = state.get("pid") or 0
     _reap_own(pid, state.get("started"))
@@ -297,9 +297,6 @@ def _is_own_app(name: str, state: dict) -> bool | None:
         confirmed = _PROCFS and Path(os.readlink(f"/proc/{pid}/cwd")).is_relative_to(app_dir(name).resolve())
     except OSError:
         pass
-    command = state.get("start_command")
-    if not confirmed and command:
-        confirmed = _ps(pid, "command=") in (command, f"/bin/sh -c {command}", f"sh -c {command}")
     if not confirmed:
         return None
     state["started"] = identity[1]

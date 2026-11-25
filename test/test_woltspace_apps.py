@@ -413,6 +413,29 @@ class TestAppsRestore:
 needs_procfs = pytest.mark.skipif(not Path("/proc/self/stat").exists(), reason="needs procfs (Linux)")
 
 
+@pytest.mark.parametrize("procfs", [True, False])
+def test_an_old_record_never_adopts_a_stranger_running_the_same_command(wolts_dir, tmp_path, monkeypatch, procfs):
+    import subprocess
+    if procfs and not Path("/proc/self/stat").exists():
+        pytest.skip("needs procfs (Linux)")
+    monkeypatch.setattr(apps, "_PROCFS", procfs)
+    _make_app(wolts_dir, "alpha", start="sleep 30", port=4216)
+    elsewhere = tmp_path / "other"
+    elsewhere.mkdir()
+    stranger = subprocess.Popen(["sleep", "30"], cwd=elsewhere, start_new_session=True)  # same command, a group leader
+    try:
+        old = {"name": "alpha", "pid": stranger.pid, "start_command": "sleep 30", "port": 4216}
+        apps._write_state("alpha", old)
+        assert apps._is_own_app("alpha", old) is None  # unverified: never signalled, never adopted
+        assert "started" not in (apps._read_state("alpha") or {})
+        with pytest.raises(RuntimeError, match="Can't confirm"):
+            apps.stop_app("alpha")  # refused, as for any unverified record
+        assert apps._read_state("alpha") == old and stranger.poll() is None
+    finally:
+        stranger.terminate()
+        stranger.wait(timeout=5)
+
+
 def _spawn(cwd, command="exec sleep 30"):
     import subprocess
     return subprocess.Popen(command, shell=True, cwd=str(cwd), start_new_session=True,
@@ -563,26 +586,12 @@ class TestProcessIdentityWithoutProcfs:
         monkeypatch.setenv("TZ", "Asia/Tokyo")
         state = apps.start_app("notes")
         try:
-            monkeypatch.setenv("TZ", "America/Toronto")
+            monkeypatch.setenv("TZ", "Europe/Berlin")
             assert apps._is_own_app("notes", state) is True
         finally:
             os.killpg(state["pid"], signal.SIGTERM)
-            assert _gone_within(state["pid"], started=state.get("started") or started)
+            assert _gone_within(state["pid"], started=state["started"])
 
-    def test_an_old_record_is_confirmed_by_its_exact_start_command(self, wolts_dir, monkeypatch):
-        import signal
-        monkeypatch.setattr(apps, "_PROCFS", False)
-        _make_app(wolts_dir, "notes", start="sleep 30", port=4215)
-        state = apps.start_app("notes")
-        started = state.pop("started")
-        try:
-            assert apps._is_own_app("notes", dict(state, start_command="sleep 31")) is None
-            apps._write_state("notes", state)  # a record from before start times were saved
-            assert apps._is_own_app("notes", apps._read_state("notes")) is True
-            assert apps._read_state("notes")["started"] == started  # backfilled once
-        finally:
-            os.killpg(state["pid"], signal.SIGTERM)
-            assert _gone_within(state["pid"], started=state.get("started") or started)
 
     def test_ps_start_time_tells_the_app_from_a_stranger(self, wolts_dir, monkeypatch):
         monkeypatch.setattr(apps, "_PROCFS", False)
@@ -629,7 +638,6 @@ class TestProcessIdentityWithoutProcfs:
         state = apps.start_app("notes")
         try:
             started = state.pop("started")
-            state["start_command"] = "sleep 31"  # its command line can't confirm it either
             apps._write_state("notes", state)
             assert apps.apps_restore() == [{"name": "notes", "action": "unverified", "pid": state["pid"]}]
             assert apps.start_app("notes") == state  # no second copy
