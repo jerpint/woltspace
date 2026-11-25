@@ -920,11 +920,11 @@ HARNESSES: dict[str, dict] = {
         "native_only": True,
         # Model ids from agy models on 1.5.15.
         "models": {
-            "raccoon": "gemini-4-neon-high",
-            "beaver": "gemini-4-carbon-high",
+            "raccoon": "gemini-4-carbon-high",
+            "beaver": "gemini-4-neon-high",
             "otter": "gemini-4-hydrogen-high",
-            "rodent": "gemini-4-neon-high",
-            "wolf": "gemini-4-carbon-high",
+            "rodent": "gemini-4-carbon-high",
+            "wolf": "gemini-4-neon-high",
         },
         "model_catalog": [
             {"id": "gemini-4-neon-high", "label": "Gemini 4 Neon (High)"},

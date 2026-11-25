@@ -412,8 +412,8 @@ def test_antigravity_picker_and_spawn_defaults_use_high_effort_tiers(tmp_path, m
         {"id": "gemini-4-hydrogen-high", "label": "Gemini 4 Hydrogen (High)"},
     ]
     tiers = {
-        "raccoon": "gemini-4-neon-high",
-        "beaver": "gemini-4-carbon-high",
+        "raccoon": "gemini-4-carbon-high",
+        "beaver": "gemini-4-neon-high",
         "otter": "gemini-4-hydrogen-high",
     }
     assert picker["models"] == picker["automatic_models"] == tiers
