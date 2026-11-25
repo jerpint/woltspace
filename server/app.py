@@ -2458,7 +2458,10 @@ async def app_stop(name: str):
     """Stop a running app."""
     if invalid := _invalid_app_name(name):
         return invalid
-    was_running = await asyncio.to_thread(stop_app, name)
+    try:
+        was_running = await asyncio.to_thread(stop_app, name)
+    except RuntimeError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=409)
     if was_running:
         print(f"[apps] stopped {name}")
         return {"ok": True, "name": name}

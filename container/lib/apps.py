@@ -243,29 +243,38 @@ def _identity(pid: int) -> tuple[int, str] | None:
         return (int(stat[2]), stat[19]) if stat else None
     try:  # macOS: no procfs, but ps reports both
         out = subprocess.run([os.environ.get("WOLTSPACE_PS_BIN", "ps"), "-o", "pgid=,lstart=", "-p", str(pid)],
-                             capture_output=True, text=True, timeout=5, check=False).stdout.split()
+                             capture_output=True, text=True, timeout=5, check=False,
+                             env={**os.environ, "LC_ALL": "C"}).stdout.split()
         return (int(out[0]), " ".join(out[1:])) if len(out) > 1 else None
     except (OSError, subprocess.SubprocessError, ValueError):
         return None
 
 
-def _is_own_app(name: str, state: dict) -> bool:
+def _is_own_app(name: str, state: dict) -> bool | None:
     """Whether the recorded pid is still the app we started: pids are reused after a restart.
 
+    True: ours. False: gone, or provably another process. None: alive, but its identity
+    can't be checked (an older record without procfs, or an unreadable identity): it is
+    never signalled and nothing is started over it.
     Every app starts as its own process group leader. A record with `started` must match
-    the process start time. An older record falls back to its working folder (procfs only).
-    Anything that can't be checked is not ours, so it is never signalled.
+    the process start time; an older record falls back to its working folder (procfs only).
     """
     pid = state.get("pid") or 0
-    identity = _is_pid_alive(pid) and _identity(pid)
-    if not identity or identity[0] != pid:
+    if not _is_pid_alive(pid):
+        return False
+    identity = _identity(pid)
+    if not identity:
+        return None
+    if identity[0] != pid:
         return False
     if state.get("started") is not None:
         return identity[1] == str(state["started"])
+    if not _PROCFS:
+        return None
     try:
         return Path(os.readlink(f"/proc/{pid}/cwd")).is_relative_to(app_dir(name).resolve())
     except OSError:
-        return False
+        return None
 
 
 def running_apps() -> list[dict]:
@@ -281,7 +290,7 @@ def running_apps() -> list[dict]:
     """
     running = []
     for state in _all_states():
-        if _is_own_app(state["name"], state):
+        if _is_own_app(state["name"], state) is not False:
             state["alive"] = True
             running.append(state)
     return running
@@ -295,7 +304,7 @@ def intended_apps() -> list[dict]:
     """
     intended = []
     for state in _all_states():
-        state["alive"] = _is_own_app(state["name"], state)
+        state["alive"] = _is_own_app(state["name"], state) is not False
         intended.append(state)
     return intended
 
@@ -313,7 +322,7 @@ def start_app(name: str) -> dict:
 
     # Check if already running
     existing = _read_state(name)
-    if existing and _is_own_app(name, existing):
+    if existing and _is_own_app(name, existing) is not False:
         return existing
 
     # Use port from manifest — check for conflicts with running apps
@@ -397,9 +406,14 @@ def apps_restore() -> list[dict]:
             continue
 
         pid = state.get("pid")
-        if _is_own_app(name, state):
+        own = _is_own_app(name, state)
+        if own:
             actions.append({"name": name, "action": "survived", "pid": pid})
             print(f"[apps] {name} survived (pid {pid})")
+            continue
+        if own is None:
+            actions.append({"name": name, "action": "unverified", "pid": pid})
+            print(f"[apps] {name}: pid {pid} is alive but can't be shown to be this app; left as is")
             continue
 
         # Dead PID — respawn
@@ -418,13 +432,17 @@ def stop_app(name: str) -> bool:
     state = _read_state(name)
     if not state:
         return False
+    pid = state.get("pid")
+    own = _is_own_app(name, state)
+    if own is None:  # alive, unverifiable: touch nothing, keep the record
+        raise RuntimeError(f"Can't confirm that pid {pid} is still {name}, so it was not stopped."
+                           f" Stop that process yourself if it is {name}, then stop {name} again.")
     # Kill tunnel first if running
     tunnel_pid = state.get("tunnel_pid")
     if tunnel_pid:
         stop_cloudflared(tunnel_pid)
     # Kill the app process
-    pid = state.get("pid")
-    if pid and _is_own_app(name, state):
+    if own:
         try:
             os.killpg(os.getpgid(pid), signal.SIGTERM)
         except OSError:
@@ -433,7 +451,7 @@ def stop_app(name: str) -> bool:
             except OSError:
                 pass
     elif _is_pid_alive(pid):
-        print(f"[apps] {name}: pid {pid} can't be shown to be this app; not signalled, state cleared."
+        print(f"[apps] {name}: pid {pid} is another process now; not signalled, state cleared."
               f" If the app is still running, port {state.get('port')} may still be in use.")
     _clear_state(name)
     return True

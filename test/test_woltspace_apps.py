@@ -518,9 +518,32 @@ class TestProcessIdentityWithoutProcfs:
         monkeypatch.setenv("WOLTSPACE_PS_BIN", str(silent_ps))
         stranger = _spawn(tmp_path)
         try:
-            apps._write_state("notes", {"name": "notes", "port": 4212, "pid": stranger.pid})
-            assert apps.stop_app("notes") is True
+            state = {"name": "notes", "port": 4212, "pid": stranger.pid}
+            apps._write_state("notes", state)
+            with pytest.raises(RuntimeError, match="Can't confirm"):
+                apps.stop_app("notes")
             assert stranger.poll() is None
+            assert apps._read_state("notes") == state  # kept: nothing shows it is gone
         finally:
             stranger.kill()
             stranger.wait()
+
+    def test_a_live_legacy_record_is_neither_signalled_nor_started_over(self, wolts_dir, monkeypatch):
+        """A record from before `started`, on a system without procfs: the app can't be verified."""
+        import signal
+        monkeypatch.setattr(apps, "_PROCFS", False)
+        _make_app(wolts_dir, "notes", start="sleep 30", port=4213)
+        state = apps.start_app("notes")
+        try:
+            state.pop("started")
+            apps._write_state("notes", state)
+            assert apps.apps_restore() == [{"name": "notes", "action": "unverified", "pid": state["pid"]}]
+            assert apps.start_app("notes") == state  # no second copy
+            assert [r["pid"] for r in apps.running_apps()] == [state["pid"]]
+            with pytest.raises(RuntimeError, match="Can't confirm"):
+                apps.stop_app("notes")
+            assert apps._is_pid_alive(state["pid"])
+            assert apps._read_state("notes") == state
+        finally:
+            os.killpg(state["pid"], signal.SIGTERM)
+            assert _gone_within(state["pid"])
