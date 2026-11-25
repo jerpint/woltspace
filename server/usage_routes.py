@@ -1,5 +1,6 @@
 """Lodge usage over HTTP: token counts per wolt, counted fresh and read-only.
 
+  GET /usage            the usage page (it shows only what it counts on request)
   GET /api/usage/data   the dashboard JSON the usage page draws
   GET /api/usage        a query (summary, table or limits) as JSON, CSV or text;
                         `woltspace usage` is a thin client of this route
@@ -15,13 +16,13 @@ fixed codes that never echo the request or the reason a count failed.
 import asyncio
 
 from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from starlette.concurrency import run_in_threadpool
 
 import usage_collector
 import usage_query
 
-from .config import WOLTS_DIR
+from .config import PUBLIC_DIR, WOLTS_DIR
 
 router = APIRouter()
 NO_STORE = {"Cache-Control": "no-store"}
@@ -62,6 +63,11 @@ async def _counted():
     except Exception as error:
         print(f"[usage] count failed: {type(error).__name__}")
         return None, _error("count_failed", 503)
+
+
+@router.get("/usage")
+async def usage_page():
+    return HTMLResponse((PUBLIC_DIR / "usage.html").read_text(), headers=NO_STORE)
 
 
 @router.get("/api/usage/data")
