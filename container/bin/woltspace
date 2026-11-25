@@ -15,6 +15,7 @@ Phase 1 nouns:
   session hold [<duration> <reason> | off]  # keep up for a background task
   inbox send <wolt> --key K | fetch | ack|release <seq> <claim> | status [--key K]
                                      # ack = received into your context, not task done
+  usage summary|table|limits [--by day,wolt,...] [--since 7d] [--format csv]  # token usage
 
 A wolt self-identifies as the sender via $WOLTSPACE_WOLT_NAME /
 $WOLTSPACE_WOLT_SESSION (exported
@@ -30,7 +31,7 @@ import sys
 import urllib.request
 import urllib.error
 import uuid
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 from pathlib import Path
 
 # The env namespace helper, resolved beside this script so the dev clone drives
@@ -220,6 +221,32 @@ def cmd_wolt_delete(args):
     status, result = _req("DELETE", f"/wolts/archived/{quote(args.name, safe='')}", hint=WOLT_HINT)
     _refused(status, result)
     print(f"{args.name}: deleted; Auto grants revoked: {result['grants_revoked']}")
+
+
+USAGE_OPTIONS = ("by", "since", "until", "wolt", "provider", "model", "metric", "top")
+
+
+def cmd_usage(args):
+    """Fresh lodge token usage from GET /api/usage, printed as the lodge formats it.
+    The lodge validates every option; a count takes a few seconds."""
+    query = {"command": args.verb, "format": args.format}
+    query.update({key: getattr(args, key) for key in USAGE_OPTIONS if getattr(args, key) is not None})
+    try:
+        with urllib.request.urlopen(f"{API}/api/usage?{urlencode(query)}", timeout=120) as response:
+            sys.stdout.write(response.read().decode())
+    except urllib.error.HTTPError as e:
+        try:
+            error = json.loads(e.read().decode()).get("error")
+        except (ValueError, AttributeError):
+            error = None
+        print(f"woltspace usage: {error or e.code}", file=sys.stderr)
+        sys.exit(2 if e.code == 400 else 1)
+    except urllib.error.URLError as e:
+        print(f"cannot reach woltspace API at {API}: {e.reason}", file=sys.stderr)
+        sys.exit(2)
+    except TimeoutError:
+        print("no answer from the lodge in 120 s; the count may still be running", file=sys.stderr)
+        sys.exit(1)
 
 
 def cmd_inbox(args):
@@ -569,7 +596,7 @@ LIFECYCLE = {"start", "stop", "rebuild", "backup", "shell", "chat", "logs", "ini
 # the real CLI — `doctor`, `paths`, `serve`, `restore`, and the whole lifecycle
 # set. In the container "elsewhere" means the host; natively it means the python
 # CLI sitting a few directories up from this script.
-LOCAL_NOUNS = {"session", "status", "auto", "app", "wolt", "tui", "inbox"}
+LOCAL_NOUNS = {"session", "status", "auto", "app", "wolt", "tui", "inbox", "usage"}
 
 # Nouns the python CLI serves that only talk to this lodge's API, so they
 # belong to it in the container too — there is no host to send them to.
@@ -832,6 +859,25 @@ def main():
     rearm = bsub.add_parser("rearm", help="(operator) let the lodge wake an agent for its mail again")
     rearm.add_argument("wolt")
     rearm.set_defaults(func=cmd_inbox_rearm)
+
+    usage = sub.add_parser("usage", help="lodge token usage per wolt, day, session, provider or model "
+                           "(fresh, read-only)")
+    usub = usage.add_subparsers(dest="verb", required=True)
+    for verb, what in (("summary", "totals and plan limits"), ("table", "one row per group"),
+                       ("limits", "latest plan-limit readings")):
+        up = usub.add_parser(verb, help=what)
+        if verb == "table":
+            up.add_argument("--by", help="comma-separated: day,wolt,session,provider,model (default wolt)")
+            up.add_argument("--top", help="at most this many rows")
+        if verb != "limits":
+            up.add_argument("--metric", help="input_fresh, cache_read, cache_write, output or sessions")
+            up.add_argument("--model", help="exact model name")
+        up.add_argument("--since", help="Nd (N days including today) or YYYY-MM-DD")
+        up.add_argument("--until", help="YYYY-MM-DD, inclusive")
+        up.add_argument("--wolt", help="a wolt's name or the first part of it (e.g. alpha)")
+        up.add_argument("--provider", help="claude or codex")
+        up.add_argument("--format", choices=("table", "json", "csv"), default="table")
+        up.set_defaults(func=cmd_usage, by=None, top=None, metric=None, model=None)
 
     argv = sys.argv[1:]
     # tui: exec the terminal cockpit (same app the host launcher runs; it

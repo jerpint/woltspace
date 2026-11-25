@@ -18,6 +18,11 @@ Usage:
 
 Managing crons is `woltspace wolf ...` (list/add/set/rm/run/runs), a client of
 the lodge's /wolf/crons API.
+
+One job is built in rather than read from a wolf.json: the lodge's usage history
+is saved at 23:55 local (`usage-save`, journaled under the owner `_lodge`), and
+once at start-up when the wolf was down at 23:55. It runs the collector directly:
+no session, no model.
 """
 
 import asyncio
@@ -296,6 +301,35 @@ def check_and_fire(crons: list[dict], now: datetime, *, catching_up: bool = Fals
             remove_cron(owner, name, entry["at"])
 
 
+# ── Built-in: the nightly usage save ───────────────────────────────
+
+USAGE_SAVE = {"name": "usage-save", "schedule": "55 23 * * *", "_owner": "_lodge"}
+
+
+def save_usage(now: datetime, *, catching_up: bool = False) -> bool:
+    """Save the lodge's usage history if the 23:55 slot is due (or was missed, when
+    catching up). The slot is stamped first, so a failing save is not retried every
+    30 s; the next night tries again. True when a save ran and succeeded."""
+    owner, name = USAGE_SAVE["_owner"], USAGE_SAVE["name"]
+    lookback = CATCH_UP_WINDOW if catching_up else timedelta(0)
+    slot = wolfcore.due_slot(USAGE_SAVE, now, get_last_run(owner, name), lookback)
+    if slot is None:
+        return False
+    set_last_run(owner, name, slot)
+    try:
+        import usage_collector
+        usage_collector.save(WOLTS_DIR)
+    except Exception as e:
+        # The type only: a history or transcript path is lodge-private.
+        print(f"[wolf] usage save failed: {type(e).__name__}", file=sys.stderr)
+        _log_job(name, "failed", owner=owner, error=type(e).__name__)
+        return False
+    print(f"[wolf] usage history saved ({'catch-up' if catching_up else 'nightly'})")
+    _log_job(name, "catch-up" if catching_up else "saved", owner=owner,
+             slot=slot.strftime(STAMP_FORMAT))
+    return True
+
+
 def catch_up(crons: list[dict], now: datetime):
     """Fire any crons that were missed while the wolf was down (most recent
     match within CATCH_UP_WINDOW, once), and any one-off whose time passed.
@@ -318,6 +352,11 @@ async def run_loop():
     print("[wolf] 🐺 wolf scheduler starting (distributed mode)")
     print(f"[wolf] scanning {WOLTS_DIR}/*/wolt/wolf.json")
 
+    try:
+        await asyncio.to_thread(save_usage, wolfcore.now_local(), catching_up=True)
+    except Exception as e:
+        print(f"[wolf] usage catch-up error: {type(e).__name__}", file=sys.stderr)
+
     # Catch up on anything missed while the wolf was down
     try:
         crons = load_schedule()
@@ -337,6 +376,10 @@ async def run_loop():
                 check_and_fire(crons, wolfcore.now_local())
         except Exception as e:
             print(f"[wolf] error in run loop: {e}", file=sys.stderr)
+        try:
+            await asyncio.to_thread(save_usage, wolfcore.now_local())
+        except Exception as e:
+            print(f"[wolf] usage save error: {type(e).__name__}", file=sys.stderr)
 
         await asyncio.sleep(30)
 

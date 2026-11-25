@@ -123,6 +123,7 @@ import wolt_archive
 from site_shell import inject_shell, load_site_config, memory_payload, shell_manifest, shell_tags, shell_wanted
 from . import inbox_routes
 from .inbox_routes import router as inbox_router
+from .usage_routes import router as usage_router
 from notify_prompt import session_send_reply_instruction
 from starlette.concurrency import run_in_threadpool
 from .state import (
@@ -285,6 +286,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None)
 app.include_router(inbox_router)  # off unless woltspace.json enables the inbox
+app.include_router(usage_router)  # lodge token usage, read-only
 
 
 @app.get("/health")

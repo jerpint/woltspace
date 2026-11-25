@@ -96,6 +96,10 @@ jobs:
           test/test_dig_cli.py
           test/test_lodge_grants.py
           test/test_wolf_runs.py
+          test/test_usage_collector.py
+          test/test_usage_query.py
+          test/test_usage_routes.py
+          test/test_usage_wolf.py
           test/test_backup.py
           test/test_session_archive.py
           test/test_session_upload.py

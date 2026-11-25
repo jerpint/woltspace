@@ -1511,7 +1511,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     sub = parser.add_subparsers(dest="command")
     for noun, what in (("session", "sessions"), ("wolt", "configure, archive or delete a wolt"),
-                       ("inbox", "a session's lodge inbox: fetch, ack, send")):
+                       ("inbox", "a session's lodge inbox: fetch, ack, send"),
+                       ("usage", "lodge token usage: summary, table, limits")):
         delegated = sub.add_parser(noun, help=f"{what} (delegated to the bundled control client)",
                                    add_help=False)
         delegated.add_argument("noun_args", nargs=argparse.REMAINDER)
