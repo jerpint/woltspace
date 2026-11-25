@@ -207,19 +207,25 @@ def _clear_state(name: str) -> None:
 
 
 def _proc_stat(pid: int) -> list[str] | None:
-    """/proc/<pid>/stat fields from the state letter on, or None (no such process, or no procfs)."""
+    """/proc/<pid>/stat fields from the state letter on, or None when they can't be read."""
     try:
         text = Path(f"/proc/{int(pid)}/stat").read_text()
-    except (OSError, ValueError):
+        fields = text[text.rindex(")") + 2:].split()  # [0] state, [2] pgrp, [19] start time
+        int(fields[2])
+        fields[19]
+    except (OSError, ValueError, IndexError):
         return None
-    return text[text.rindex(")") + 2:].split()  # [0] state, [2] pgrp, [19] start time
+    return fields
 
 
 _PROCFS = Path("/proc/self/stat").exists()
 
 
 def _is_pid_alive(pid: int) -> bool:
-    """Alive and not a zombie. Reap it if it is our own exited child; otherwise read its state."""
+    """False only when the process is shown to be gone: no such pid, or a zombie.
+
+    Reap it first if it is our own exited child. Anything we can't read counts as alive.
+    """
     if not pid or pid <= 0:
         return False
     try:
@@ -228,12 +234,12 @@ def _is_pid_alive(pid: int) -> bool:
         pass  # not our child: only its parent can reap it
     try:
         os.kill(pid, 0)
-    except OSError:
+    except ProcessLookupError:
         return False
-    if not _PROCFS:
-        return True  # macOS: kill() succeeded
-    stat = _proc_stat(pid)
-    return stat is not None and stat[0] != "Z"
+    except OSError:
+        pass  # e.g. another user's process: it exists
+    stat = _proc_stat(pid) if _PROCFS else None
+    return stat is None or stat[0] != "Z"
 
 
 def _identity(pid: int) -> tuple[int, str] | None:
@@ -253,8 +259,9 @@ def _identity(pid: int) -> tuple[int, str] | None:
 def _is_own_app(name: str, state: dict) -> bool | None:
     """Whether the recorded pid is still the app we started: pids are reused after a restart.
 
-    True: ours. False: gone, or provably another process. None: alive, but its identity
-    can't be checked (an older record without procfs, or an unreadable identity): it is
+    True: ours. False: gone, or provably another process (another process group, or another
+    recorded start time). None: alive, but not provable either way (unreadable identity, or a
+    record from before start times were saved that the working folder can't confirm): it is
     never signalled and nothing is started over it.
     Every app starts as its own process group leader. A record with `started` must match
     the process start time; an older record falls back to its working folder (procfs only).
@@ -271,8 +278,8 @@ def _is_own_app(name: str, state: dict) -> bool | None:
         return identity[1] == str(state["started"])
     if not _PROCFS:
         return None
-    try:
-        return Path(os.readlink(f"/proc/{pid}/cwd")).is_relative_to(app_dir(name).resolve())
+    try:  # inside the app folder is ours; elsewhere proves nothing (an app may cd away)
+        return Path(os.readlink(f"/proc/{pid}/cwd")).is_relative_to(app_dir(name).resolve()) or None
     except OSError:
         return None
 

@@ -428,21 +428,33 @@ def _gone_within(pid, seconds=5):
 
 @needs_procfs
 class TestProcessIdentity:
-    @pytest.mark.parametrize("record", ["old", "wrong_start_ticks"])
-    def test_stop_does_not_signal_a_reused_pid(self, wolts_dir, record, capsys):
+    def test_stop_does_not_signal_another_process(self, wolts_dir, capsys):
         app = _make_app(wolts_dir, "notes", start="sleep 30", port=4200)
-        elsewhere = wolts_dir / "elsewhere"
-        elsewhere.mkdir()
-        stranger = _spawn(app if record == "wrong_start_ticks" else elsewhere)
+        stranger = _spawn(app)
         try:
-            state = {"name": "notes", "port": 4200, "pid": stranger.pid}
-            if record == "wrong_start_ticks":
-                state["started"] = str(int(apps._proc_stat(stranger.pid)[19]) + 1)
+            state = {"name": "notes", "port": 4200, "pid": stranger.pid,
+                     "started": str(int(apps._proc_stat(stranger.pid)[19]) + 1)}
             apps._write_state("notes", state)
             assert apps.stop_app("notes") is True
             assert stranger.poll() is None  # untouched
             assert apps._read_state("notes") is None
             assert "port 4200 may still be in use" in capsys.readouterr().out
+        finally:
+            stranger.kill()
+            stranger.wait()
+
+    def test_an_old_record_outside_its_folder_is_unverified_not_signalled(self, wolts_dir):
+        _make_app(wolts_dir, "notes", start="sleep 30", port=4203)
+        elsewhere = wolts_dir / "elsewhere"
+        elsewhere.mkdir()
+        stranger = _spawn(elsewhere)  # a reused pid, or our app after a cd: can't tell
+        try:
+            state = {"name": "notes", "port": 4203, "pid": stranger.pid}
+            apps._write_state("notes", state)
+            with pytest.raises(RuntimeError, match="Can't confirm"):
+                apps.stop_app("notes")
+            assert stranger.poll() is None
+            assert apps._read_state("notes") == state
         finally:
             stranger.kill()
             stranger.wait()
@@ -459,21 +471,56 @@ class TestProcessIdentity:
         assert _gone_within(state["pid"])
         assert not Path(f"/proc/{state['pid']}").exists()  # reaped by us, its parent: no zombie left
 
-    def test_restore_respawns_when_the_pid_was_reused(self, wolts_dir):
+    @pytest.mark.parametrize("record", ["new", "old"])
+    def test_restore_respawns_only_over_a_proven_stranger(self, wolts_dir, record):
         _make_app(wolts_dir, "notes", start="sleep 30", port=4202)
         elsewhere = wolts_dir / "elsewhere"
         elsewhere.mkdir()
         stranger = _spawn(elsewhere)
         try:
-            apps._write_state("notes", {"name": "notes", "port": 4202, "pid": stranger.pid})
+            state = {"name": "notes", "port": 4202, "pid": stranger.pid}
+            if record == "new":  # another start time: provably not ours
+                state["started"] = str(int(apps._proc_stat(stranger.pid)[19]) + 1)
+            apps._write_state("notes", state)
             with patch("apps.subprocess.Popen") as mock_popen:
                 mock_popen.return_value.pid = 22222
                 actions = apps.apps_restore()
-            assert actions == [{"name": "notes", "action": "restored", "pid": 22222}]
+            if record == "new":
+                assert actions == [{"name": "notes", "action": "restored", "pid": 22222}]
+            else:  # an old record can't prove it either way: leave it, as b7e8370f did
+                assert actions == [{"name": "notes", "action": "unverified", "pid": stranger.pid}]
+                mock_popen.assert_not_called()
             assert stranger.poll() is None
         finally:
             stranger.kill()
             stranger.wait()
+
+    def test_a_live_app_whose_state_cant_be_read_is_unverified(self, wolts_dir, monkeypatch):
+        """Fault injection: kill(0) finds the app, but its /proc stat can't be read."""
+        import signal
+        _make_app(wolts_dir, "notes", start="sleep 30", port=4204)
+        state = apps.start_app("notes")
+        pid = state["pid"]
+        real_stat = apps._proc_stat
+        try:
+            monkeypatch.setattr(apps, "_proc_stat", lambda p: None if p == pid else real_stat(p))
+            assert apps._is_pid_alive(pid)
+            assert apps.apps_restore() == [{"name": "notes", "action": "unverified", "pid": pid}]
+            with pytest.raises(RuntimeError, match="Can't confirm"):
+                apps.stop_app("notes")
+            assert apps._read_state("notes") == state
+            monkeypatch.setattr(apps, "_proc_stat", real_stat)
+            real_kill = os.kill
+            def denied(p, sig):
+                if p == pid and sig == 0:
+                    raise PermissionError(1, "Operation not permitted")
+                return real_kill(p, sig)
+            monkeypatch.setattr(apps.os, "kill", denied)
+            assert apps._is_pid_alive(pid)  # EPERM: it exists
+        finally:
+            monkeypatch.undo()
+            os.killpg(pid, signal.SIGTERM)
+            assert _gone_within(pid)
 
     def test_zombie_of_another_parent_counts_as_gone(self, tmp_path):
         # The shell backgrounds a child, prints its pid, then becomes `sleep`, which never reaps it.
