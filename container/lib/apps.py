@@ -224,14 +224,10 @@ _PROCFS = Path("/proc/self/stat").exists()
 def _is_pid_alive(pid: int) -> bool:
     """False only when the process is shown to be gone: no such pid, or a zombie.
 
-    Reap it first if it is our own exited child. Anything we can't read counts as alive.
+    Anything we can't read counts as alive.
     """
     if not pid or pid <= 0:
         return False
-    try:
-        os.waitpid(pid, os.WNOHANG)
-    except OSError:
-        pass  # not our child: only its parent can reap it
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -242,18 +238,36 @@ def _is_pid_alive(pid: int) -> bool:
     return stat is None or stat[0] != "Z"
 
 
+def _ps(pid: int, fields: str) -> str:
+    """`ps -o <fields>` for one pid, in a fixed locale and zone so its dates compare; "" on failure."""
+    try:
+        return subprocess.run([os.environ.get("WOLTSPACE_PS_BIN", "ps"), "-ww", "-o", fields, "-p", str(pid)],
+                              capture_output=True, text=True, timeout=5, check=False,
+                              env={**os.environ, "LC_ALL": "C", "TZ": "UTC"}).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
 def _identity(pid: int) -> tuple[int, str] | None:
     """(process group, start time) of `pid`, or None when it can't be read."""
     if _PROCFS:
         stat = _proc_stat(pid)
         return (int(stat[2]), stat[19]) if stat else None
-    try:  # macOS: no procfs, but ps reports both
-        out = subprocess.run([os.environ.get("WOLTSPACE_PS_BIN", "ps"), "-o", "pgid=,lstart=", "-p", str(pid)],
-                             capture_output=True, text=True, timeout=5, check=False,
-                             env={**os.environ, "LC_ALL": "C"}).stdout.split()
+    out = _ps(pid, "pgid=,lstart=").split()  # macOS: no procfs, but ps reports both
+    try:
         return (int(out[0]), " ".join(out[1:])) if len(out) > 1 else None
-    except (OSError, subprocess.SubprocessError, ValueError):
+    except ValueError:
         return None
+
+
+def _reap_own(pid: int, started) -> None:
+    """Collect our own exited app, never another child: only a pid with the recorded start time."""
+    identity = _identity(pid) if pid and pid > 0 and started is not None else None
+    if identity and identity[1] == str(started):
+        try:
+            os.waitpid(pid, os.WNOHANG)
+        except OSError:
+            pass  # not our child
 
 
 def _is_own_app(name: str, state: dict) -> bool | None:
@@ -264,9 +278,11 @@ def _is_own_app(name: str, state: dict) -> bool | None:
     record from before start times were saved that the working folder can't confirm): it is
     never signalled and nothing is started over it.
     Every app starts as its own process group leader. A record with `started` must match
-    the process start time; an older record falls back to its working folder (procfs only).
+    the process start time. An older record is confirmed by its working folder (procfs) or by
+    a command line exactly equal to its start command; it then gets `started`, once.
     """
     pid = state.get("pid") or 0
+    _reap_own(pid, state.get("started"))
     if not _is_pid_alive(pid):
         return False
     identity = _identity(pid)
@@ -276,12 +292,19 @@ def _is_own_app(name: str, state: dict) -> bool | None:
         return False
     if state.get("started") is not None:
         return identity[1] == str(state["started"])
-    if not _PROCFS:
-        return None
+    confirmed = False
     try:  # inside the app folder is ours; elsewhere proves nothing (an app may cd away)
-        return Path(os.readlink(f"/proc/{pid}/cwd")).is_relative_to(app_dir(name).resolve()) or None
+        confirmed = _PROCFS and Path(os.readlink(f"/proc/{pid}/cwd")).is_relative_to(app_dir(name).resolve())
     except OSError:
+        pass
+    command = state.get("start_command")
+    if not confirmed and command:
+        confirmed = _ps(pid, "command=") in (command, f"/bin/sh -c {command}", f"sh -c {command}")
+    if not confirmed:
         return None
+    state["started"] = identity[1]
+    _write_state(name, state)
+    return True
 
 
 def running_apps() -> list[dict]:
@@ -472,7 +495,10 @@ def restart_app(name: str) -> dict:
     previous_pid = previous.get("pid", 0) if _is_own_app(name, previous) else 0
     stop_app(name)
     deadline = time.monotonic() + 5
-    while previous_pid and _is_pid_alive(previous_pid) and time.monotonic() < deadline:
+    while previous_pid and time.monotonic() < deadline:
+        _reap_own(previous_pid, previous.get("started"))
+        if not _is_pid_alive(previous_pid):
+            break
         time.sleep(0.05)
     if previous_pid and _is_pid_alive(previous_pid):
         raise RuntimeError(f"App {name} is still stopping")
