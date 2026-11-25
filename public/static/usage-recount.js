@@ -7,12 +7,13 @@
   const STALE_MS = 150000;   // older numbers are hidden ("Counting…") until a new count arrives
   const RETRY_MS = 30000;    // wait after a failed count before the next try
 
-  function createRecounter({load, show, counting, failed, now = () => Date.now(),
+  function createRecounter({load, show, counting, failed, refreshFailed = () => {}, now = () => Date.now(),
                             setTimer = (fn, ms) => setTimeout(fn, ms), clearTimer = id => clearTimeout(id)}) {
     let countedAt = null; // client time at which the shown count was requested
     let failedAt = null;
     let pending = null;
     let revision = 0;
+    let filtering = false;
     let expiry = null;    // fires at the shown count's own deadline, whatever the tick phase
 
     const fresh = () => countedAt !== null && now() - countedAt < STALE_MS;
@@ -53,12 +54,17 @@
           show(data);
           countedAt = started;
           failedAt = null;
+          filtering = false;
           armExpiry();
         })
         .catch(error => {
           if (requested !== revision) return;
-          countedAt = null;
           failedAt = now();
+          if (filtering && fresh()) {
+            refreshFailed(error);
+            return;
+          }
+          countedAt = null;
           expire();
           failed(error);
         })
@@ -70,8 +76,8 @@
     function tick(hidden) {
       expire();
       if (hidden || pending) return null;
-      const due = countedAt !== null ? countedAt + RECOUNT_MS
-        : failedAt !== null ? failedAt + RETRY_MS : -Infinity;
+      const due = failedAt !== null ? failedAt + RETRY_MS
+        : countedAt !== null ? countedAt + RECOUNT_MS : -Infinity;
       return now() >= due ? recount() : null;
     }
 
@@ -79,9 +85,7 @@
       revision++;
       pending = null;
       failedAt = null;
-      countedAt = null;
-      expire();
-      counting();
+      filtering = true;
     }
 
     return {tick, recount, fresh, invalidate};

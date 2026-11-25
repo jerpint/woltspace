@@ -41,6 +41,9 @@ READERS = {"claude": usage_claude, "codex": usage_codex}
 DIMENSIONS = ("day", "provider", "wolt", "session_id", "model", "metric")
 METRICS = ("input_fresh", "cache_read", "cache_write", "output")
 HISTORY_SCHEMA = 1
+# Leave room for local UTC offsets at both ends of datetime's calendar.
+MIN_RESET = int(datetime(1, 1, 2, tzinfo=timezone.utc).timestamp())
+MAX_RESET = int(datetime(9999, 12, 31, tzinfo=timezone.utc).timestamp())
 
 
 class HistoryZoneMismatch(ValueError):
@@ -171,7 +174,10 @@ def limit_window(record, percent_key, minutes):
     percent, reset = record.get(percent_key), record.get("resets_at")
     if type(percent) not in (int, float) or not 0 <= percent < float("inf"):
         return None
-    if type(reset) is not int and timestamp(reset) is None:
+    if type(reset) is int:
+        if not MIN_RESET <= reset < MAX_RESET:
+            return None
+    elif timestamp(reset) is None:
         return None
     if type(minutes) is not int or minutes <= 0:
         return None

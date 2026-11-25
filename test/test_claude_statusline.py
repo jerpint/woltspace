@@ -3,7 +3,7 @@ import shlex
 import stat
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -136,3 +136,19 @@ def test_session_launch_command_delivers_overlay_to_claude(tmp_path, monkeypatch
             assert ("--resume" in argv) == (mode == "resume")
         if content is not None:
             assert settings.read_text() == content
+
+
+def test_a_far_future_snapshot_can_be_replaced_after_a_clock_step(tmp_path):
+    now = datetime.now(timezone.utc)
+
+    def publish(at, percent):
+        claude_statusline.publish(tmp_path, at, {"rate_limits": {
+            "five_hour": {"used_percentage": percent, "resets_at": 123},
+        }})
+
+    snapshot = claude_limits_path(tmp_path)
+    publish(now + timedelta(minutes=10), 12)
+    publish(now, 25)
+    assert claude_limits(snapshot)["observed_at"] == now.isoformat()
+    publish(now - timedelta(minutes=1), 40)
+    assert claude_limits(snapshot)["windows"]["five_hour"]["used_percent"] == 25

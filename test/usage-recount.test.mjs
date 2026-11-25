@@ -152,3 +152,34 @@ test('superseded filter requests cannot display results or clear the active requ
   await h.finish('current');
   assert.equal(h.shown, 'current');
 });
+
+test('a filter refresh keeps the last fresh dashboard during the request', async () => {
+  const h = harness();
+  h.r.tick(false);
+  await h.finish('previous filters');
+  h.r.invalidate();
+  h.r.recount();
+  assert.equal(h.screen, 'numbers');
+  assert.equal(h.shown, 'previous filters');
+  assert.equal(h.r.fresh(), true);
+  await h.finish('new filters');
+  assert.equal(h.shown, 'new filters');
+});
+
+test('a failed filter refresh keeps fresh data and retries without pushing out the expiry', async () => {
+  const h = harness();
+  h.r.tick(false);
+  await h.finish('previous filters');
+  h.t = STALE_MS - 1;
+  h.r.invalidate();
+  h.r.recount();
+  await h.finish(null, false);
+  assert.equal(h.shown, 'previous filters');
+  h.advance(STALE_MS);
+  assert.equal(h.screen, 'counting');
+  assert.equal(h.r.tick(false), null);
+  h.t += RETRY_MS;
+  h.r.tick(false);
+  await h.finish('new filters');
+  assert.equal(h.shown, 'new filters');
+});

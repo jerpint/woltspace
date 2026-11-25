@@ -1,6 +1,6 @@
 """Launch-scoped Claude limits status line and its silent snapshot writer."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import fcntl
 import json
 import os
@@ -14,6 +14,7 @@ from usage_collector import claude_limits_path, limit_window, timestamp, write_j
 WINDOWS = {"five_hour": 300, "seven_day": 10080}
 INPUT_LIMIT = 128 * 1024
 LOCK_SECONDS = 0.2
+MAX_CLOCK_SKEW = timedelta(minutes=5)
 MANAGED = {
     "linux": Path("/etc/claude-code"),
     "darwin": Path("/Library/Application Support/ClaudeCode"),
@@ -117,7 +118,9 @@ def publish(root, read_at, data):
         except (ValueError, RecursionError):
             current = {}
         observed = timestamp(current.get("read_at"))
-        if observed is None or read_at > observed:
+        # A delayed writer's own timestamp cannot establish clock skew.
+        too_far_ahead = datetime.now(timezone.utc) + MAX_CLOCK_SKEW
+        if observed is None or read_at > observed or observed > too_far_ahead:
             write_json(path, {"read_at": read_at.isoformat(), "rate_limits": windows}, 0o600, sync=True)
 
 

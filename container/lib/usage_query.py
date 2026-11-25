@@ -14,7 +14,7 @@ import re
 from urllib.parse import parse_qsl
 from zoneinfo import ZoneInfo
 
-from usage_collector import METRICS, READERS
+from usage_collector import MAX_RESET, METRICS, MIN_RESET, READERS
 
 DIMENSIONS = ("day", "wolt", "session", "provider", "model")
 COMMANDS = ("summary", "table", "limits")
@@ -177,7 +177,9 @@ def readable(values, zone):
     """A limit window for text and CSV: Unix-second reset times as ISO times in the lodge zone."""
     reset = values.get("resets_at")
     if type(reset) is int:
-        values = dict(values, resets_at=datetime.fromtimestamp(reset, zone).isoformat(timespec="minutes"))
+        rendered = (datetime.fromtimestamp(reset, zone).isoformat(timespec="minutes")
+                    if MIN_RESET <= reset < MAX_RESET else None)
+        values = dict(values, resets_at=rendered)
     return values
 
 

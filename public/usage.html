@@ -514,10 +514,12 @@ window.addEventListener('resize',syncPan);
 $('cal-wolt').onchange=changeFilters;
 function changeFilters(){
   recounter.invalidate();
-  tick();
+  recounter.recount();
 }
 // Numbers come only from a fresh count (GET /api/usage/data counts); old numbers are never shown.
+let calendarScroll=null;
 function screen(title,note){
+  if(!$('dashboard').hidden)calendarScroll=$('cal-scroll').scrollLeft;
   $('dashboard').hidden=true;$('loadStatus').hidden=true;$('counting').hidden=false;
   $('counting').setAttribute('aria-busy',String(title==='Counting…'));
   $('countingTitle').textContent=title;$('countingNote').textContent=note;
@@ -529,16 +531,20 @@ function showFresh(data){
   const names=data.wolts;
   woltPicker.replaceChildren(new Option('All wolts',''),...names.map(w=>new Option(w,w)));
   woltPicker.value=names.includes(prior)?prior:'';
-  const revealing=$('dashboard').hidden;
+  const scroller=$('cal-scroll');
+  if(!$('dashboard').hidden)calendarScroll=scroller.scrollLeft;
   $('counting').setAttribute('aria-busy','false');
   $('counting').hidden=true;$('loadStatus').hidden=true;$('dashboard').hidden=false;
   drawLimits();render(data);showCalendar(data.calendar);
-  if(revealing)$('cal-scroll').scrollLeft=$('cal-scroll').scrollWidth;
+  scroller.scrollLeft=calendarScroll??scroller.scrollWidth;
   syncPan();
 }
 const recounter=UsageRecount.createRecounter({
   load:()=>{
-    if(!$('dashboard').hidden)$('loadStatus').hidden=false;
+    if(!$('dashboard').hidden){
+      $('loadStatus').textContent='Recounting…';
+      $('loadStatus').hidden=false;
+    }
     const params=new URLSearchParams({view:'compact',period,provider:calProvider($('provider').value),
       calendar_wolt:$('cal-wolt').value,metric:metricKeys[$('metric').value]});
     return fetch('/api/usage/data?'+params,{cache:'no-store'}).then(response=>{
@@ -548,6 +554,7 @@ const recounter=UsageRecount.createRecounter({
   },
   show:showFresh,
   counting:()=>screen('Counting…','Collecting fresh lodge usage.'),
+  refreshFailed:()=>{$('loadStatus').textContent='Refresh failed. Retrying…';},
   failed:()=>screen('Usage unavailable','The count failed. Trying again in 30 seconds.')
 });
 const tick=()=>recounter.tick(document.hidden);

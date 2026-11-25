@@ -477,3 +477,11 @@ def test_history_retains_shrunk_and_vanished_rows_with_same_source(tmp_path):
         models = {row["model"]: row["metrics"]["input_fresh"] for row in report["activity"]}
         assert models == {"one": 8, "two": 4, "three": 9}
         assert any(gap["reason"] == "retained_partial_day" for gap in report["coverage_gaps"])
+
+
+def test_limit_windows_reject_out_of_range_unix_times():
+    from usage_collector import limit_window
+
+    for reset in (253402300800, -62135596801, 10**17):
+        assert limit_window({"used_percentage": 1, "resets_at": reset}, "used_percentage", 300) is None
+    assert limit_window({"used_percentage": 1, "resets_at": 123}, "used_percentage", 300)["resets_at"] == 123

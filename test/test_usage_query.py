@@ -124,3 +124,13 @@ def test_csv_cells_that_look_like_formulas_are_quoted(data):
     encoded, _ = query.format_result(query.execute(data, query.http_options("by=wolt&format=csv")), "csv")
     wolts = [row["wolt"] for row in csv.DictReader(io.StringIO(encoded)) if row["record"] == "usage"]
     assert "'=cmd-wolt" in wolts and "=cmd-wolt" not in wolts
+
+
+@pytest.mark.parametrize("fmt", ["table", "csv"])
+def test_limits_format_ignores_an_unrenderable_saved_reset(data, fmt):
+    window = data["limits"]["codex"]["windows"]["primary"]
+    window["resets_at"] = 253402300800
+    result = query.execute(data, query.http_options(f"command=limits&format={fmt}"))
+    body, _ = query.format_result(result, fmt)
+    assert "253402300800" not in body
+    assert "primary" in body
