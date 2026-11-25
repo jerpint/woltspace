@@ -13,6 +13,13 @@ branches to the server, launcher, notify CLI or session code.
 
 ## Configuration
 
+On the lodge website, open **Connectors** and choose **Set up with a wolt**
+on the WhatsApp card. The setup session walks you through finding the API key
+and running `woltspace whatsapp setup` privately on the lodge host. The
+command can discover the creator ID from a marker you send from your phone.
+Restart the lodge after saving its settings, then send `/help` in WhatsApp
+to verify the connection.
+
 Set the key and exactly one explicit creator participant id in the private
 lodge configuration, `<data root>/.space/platform/config.json`:
 

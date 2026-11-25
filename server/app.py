@@ -1414,6 +1414,18 @@ async def session_new_lodge(request: Request):
         from_session=body.get("from_session", "") or "",
     )
     try:
+        if body.get("setup") == "whatsapp":
+            import connector_registry
+
+            spec = connector_registry.spec("whatsapp", WOLTS_DIR)
+            if not spec or not spec.launchable:
+                return JSONResponse({"error": "WhatsApp connector is unavailable"}, status_code=404)
+            if wolt not in {item["dir"] for item in _configured_wolts()}:
+                return JSONResponse({"error": "Choose an existing wolt"}, status_code=404)
+            invoke = platform_skill_invoke(
+                wolt_harness(wolt), "setup-whatsapp",
+                delivery=wolt_skills_delivery(WOLTS_DIR / wolt))
+            prompt = f"{invoke} Help me set up WhatsApp for this lodge."
         result = start_session(
             wolt=wolt,
             prompt=prompt,
