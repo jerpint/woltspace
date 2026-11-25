@@ -214,6 +214,11 @@ def main() -> None:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             raise SystemExit("WhatsApp key already has an active local poller") from None
+        # Check under the lock that also protects first enrollment.
+        try:
+            provider._creator(expected=app.owner)
+        except provider.WhatsAppConfigurationError as exc:
+            raise SystemExit(str(exc)) from None
         try:
             asyncio.run(app.run())
         except KeyboardInterrupt:

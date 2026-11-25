@@ -4,11 +4,9 @@ No lodge commands, routing, sessions or model imports. The authenticated
 creator-only poll and explicit lodge owner list must both authorize a sender.
 """
 from __future__ import annotations
-import hashlib
 import json
 import logging
 import os
-import stat
 import tempfile
 import time
 import urllib.error
@@ -16,6 +14,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 from rate_limit import pace_request, request_slot
+from whatsapp_binding import BindingError, account_for_key, binding_path, read_creator, valid_participant
 
 log = logging.getLogger("whatsapp_provider")
 API = "https://api.whatsapp.com/agent/v1"
@@ -28,11 +27,11 @@ CURSOR = Path("cursor.json")
 
 def configure(token: str, state: Path, owner: str) -> None:
     global TOKEN, OWNER, STATE, ACCOUNT, CURSOR
-    if not token or not _participant(owner):
+    if not token or not valid_participant(owner):
         raise WhatsAppConfigurationError("Configure an Agent API key and one explicit creator owner id")
     TOKEN, OWNER, STATE = token, owner, state
     STATE.mkdir(mode=0o700, parents=True, exist_ok=True)
-    ACCOUNT = hashlib.sha256(token.encode()).hexdigest()[:20]
+    ACCOUNT = account_for_key(token)
     CURSOR = STATE / f"cursor-{ACCOUNT}.json"
 
 
@@ -151,39 +150,18 @@ def messages(body: dict):
                 yield item
 
 
-def _participant(value) -> bool:
-    return (isinstance(value, str) and value.startswith("user:") and 5 < len(value) <= 128
-            and value.isascii() and all(char.isprintable() and not char.isspace() for char in value))
-
-
 def _owner_path() -> Path:
-    return STATE / f"owner-{ACCOUNT}.json"
+    return binding_path(STATE, ACCOUNT)
 
 
-def _creator() -> str | None:
+def _creator(*, expected: str | None = None) -> str | None:
     # Key changes must never inherit another account's creator/command authority.
-    if hashlib.sha256(TOKEN.encode()).hexdigest()[:20] != ACCOUNT:
+    if account_for_key(TOKEN) != ACCOUNT:
         raise WhatsAppConfigurationError("WhatsApp account binding does not match the configured key")
-    path = _owner_path()
     try:
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-    except FileNotFoundError:
-        return None
-    except OSError:
-        raise WhatsAppConfigurationError("WhatsApp creator binding is unreadable") from None
-    try:
-        with os.fdopen(fd) as source:
-            info = os.fstat(source.fileno())
-            if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
-                    or stat.S_IMODE(info.st_mode) != 0o600 or info.st_size > 4096):
-                raise ValueError("invalid private binding")
-            data = json.load(source)
-        if (not isinstance(data, dict) or set(data) != {"account", "participant"}
-                or data["account"] != ACCOUNT or not _participant(data["participant"])):
-            raise ValueError("invalid creator binding")
-        return data["participant"]
-    except (OSError, ValueError, TypeError, RecursionError):
-        raise WhatsAppConfigurationError("WhatsApp creator binding is invalid; inspect private state") from None
+        return read_creator(STATE, ACCOUNT, expected=expected)
+    except BindingError as exc:
+        raise WhatsAppConfigurationError(str(exc)) from None
 
 
 def _provider_owner(item: dict, activation: int) -> bool:
@@ -196,7 +174,7 @@ def _provider_owner(item: dict, activation: int) -> bool:
     if sender != OWNER:
         return False
     mid = item.get("id")
-    if not isinstance(mid, str) or not mid.strip() or len(mid) > 512 or not _participant(sender):
+    if not isinstance(mid, str) or not mid.strip() or len(mid) > 512 or not valid_participant(sender):
         return False
     try:
         if int(item.get("timestamp", "0")) < activation:

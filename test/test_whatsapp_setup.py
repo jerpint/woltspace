@@ -1,4 +1,5 @@
 """The WhatsApp card launches the right skill, and setup keeps secrets local."""
+import hashlib
 import json
 import stat
 from pathlib import Path
@@ -72,6 +73,40 @@ def test_hidden_key_and_discovered_creator_are_saved_privately(setup_terminal, m
         "whatsapp": {"enabled": True, "agent_token": "synthetic-key", "owners": ["user:creator"]},
     }}
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
+@pytest.mark.parametrize(
+    "key, creator, rejected",
+    [
+        ("synthetic-key", "user:original", False),
+        ("synthetic-key", "user:different", True),
+        ("fresh-key", "user:different", False),
+    ],
+)
+def test_setup_checks_the_persisted_creator(setup_terminal, monkeypatch, key, creator, rejected):
+    layout, path = setup_terminal
+    original_config = path.read_bytes()
+    state = layout.state_root / "whatsapp"
+    state.mkdir()
+    account = hashlib.sha256(b"synthetic-key").hexdigest()[:20]
+    binding = state / f"owner-{account}.json"
+    binding.write_text(json.dumps({"account": account, "participant": "user:original"}))
+    binding.chmod(0o600)
+    original_binding = binding.read_bytes()
+    cursor = state / f"cursor-{account}.json"
+    cursor.write_text('{"offset": 7}')
+    monkeypatch.setattr(whatsapp_setup.getpass, "getpass", lambda _: key)
+    monkeypatch.setattr("builtins.input", lambda _: creator)
+
+    if rejected:
+        with pytest.raises(whatsapp_setup.SetupError, match="use the bound creator or a fresh key"):
+            whatsapp_setup.configure(layout)
+        assert path.read_bytes() == original_config
+    else:
+        whatsapp_setup.configure(layout)
+        assert json.loads(path.read_text())["channels"]["whatsapp"]["owners"] == [creator]
+    assert binding.read_bytes() == original_binding
+    assert cursor.read_text() == '{"offset": 7}'
 
 
 def test_running_connector_does_not_prompt_or_write(setup_terminal, monkeypatch):

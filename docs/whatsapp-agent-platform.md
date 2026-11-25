@@ -102,7 +102,8 @@ The authenticated creator-only poll is still the identity trust anchor;
 participant syntax alone is never authentication. Malformed, foreign or
 nonprivate creator bindings fail closed. Supported participant ids are
 printable ASCII `user:` ids of at most 128 characters, within the socket's
-sender limit.
+sender limit. Setup and startup reject a different creator for a key with a
+saved binding. Use the bound creator or a fresh key.
 
 The existing draft adapter's same-key creator binding and cursor formats are
 retained. The previous account/participant route now fits in one `chat_id`.
@@ -136,15 +137,13 @@ requires a private smoke test.
 
 ## Private smoke test
 
-Use a throwaway lodge for an unreleased 0.6 build, with its own data root and
-authentication directories. The current port targets upstream main at
-`b7e8370`. That build includes the shared held-message behavior. The package's
-displayed version is `0.6.0rc4`. Keep different release lines on separate data
+Use a throwaway lodge running Woltspace 0.6 with its own data root and
+authentication directories. Keep different release lines on separate data
 roots because 0.6 migrates the lodge database.
 
-1. Copy all four connector files into the test lodge's
-   `.space/connectors/whatsapp/` directory. If using a build that already
-   bundles WhatsApp, configure that bundled copy.
+1. Use the bundled WhatsApp connector. To test a local connector on a build
+   that lacks it, copy the entire connector folder to the test lodge's
+   `.space/connectors/whatsapp/` directory.
 2. Configure one dedicated Agent Platform key and its exact creator id using
    the configuration above. Keep the key private. Ensure one process uses it.
 3. Start the test lodge and confirm WhatsApp is connected in

@@ -89,6 +89,27 @@ def test_route_round_trips_and_account_rotation_separates_sessions(app):
     assert not provider._owner_path().exists()
 
 
+def test_startup_rejects_conflicting_creator_before_polling(app, monkeypatch):
+    bind(app)
+    binding = provider._owner_path()
+    original_binding = binding.read_bytes()
+    cursor = provider.CURSOR
+    provider.atomic_json(cursor, {"offset": 7})
+    original_cursor = cursor.read_bytes()
+    monkeypatch.setenv("WHATSAPP_AGENT_TOKEN", "synthetic-key")
+    monkeypatch.setenv("WOLTSPACE_CONNECTOR_OWNERS", "user:different")
+    monkeypatch.setenv("WOLTSPACE_CONNECTOR_DATA", str(provider.STATE))
+    run = AsyncMock()
+    monkeypatch.setattr(wa.WhatsAppConnector, "run", run)
+
+    with pytest.raises(SystemExit, match="use the bound creator or a fresh key"):
+        wa.main()
+
+    run.assert_not_called()
+    assert binding.read_bytes() == original_binding
+    assert cursor.read_bytes() == original_cursor
+
+
 def test_first_authenticated_text_pins_before_dispatch_and_checkpoint(app):
     seen = []
     def dispatch(item):

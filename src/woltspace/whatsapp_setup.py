@@ -8,6 +8,7 @@ import secrets
 import sys
 import time
 import warnings
+from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
@@ -87,6 +88,23 @@ def _read_config(path: Path) -> tuple[dict, dict, dict]:
     return data, channels, current
 
 
+def _check_creator_binding(layout: RuntimeLayout, key: str, creator: str) -> None:
+    # Load the shipped state reader from this install, never from a lodge's local connector.
+    path = layout.install_root / "container/connectors/whatsapp/whatsapp_binding.py"
+    spec = spec_from_file_location("_woltspace_whatsapp_binding", path)
+    if spec is None or spec.loader is None:
+        raise SetupError("The bundled WhatsApp binding check is unavailable. Reinstall Woltspace.")
+    binding = module_from_spec(spec)
+    try:
+        spec.loader.exec_module(binding)
+    except OSError:
+        raise SetupError("The bundled WhatsApp binding check is unavailable. Reinstall Woltspace.") from None
+    try:
+        binding.read_creator(layout.state_root / "whatsapp", binding.account_for_key(key), expected=creator)
+    except binding.BindingError as exc:
+        raise SetupError(str(exc)) from None
+
+
 def configure(layout: RuntimeLayout) -> str:
     """Collect private input and save the channel settings. Return the next step."""
     if str(layout.runtime_lib) not in sys.path:
@@ -161,6 +179,7 @@ def configure(layout: RuntimeLayout) -> str:
         data, channels, current = _read_config(path)
         if current != old:
             raise SetupError("The WhatsApp settings changed during setup. Re-run setup.")
+        _check_creator_binding(layout, key, creator)
         channels["whatsapp"] = {**current, "enabled": True, "agent_token": key, "owners": [creator]}
         data["channels"] = channels
         path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
