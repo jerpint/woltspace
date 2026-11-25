@@ -921,15 +921,15 @@ HARNESSES: dict[str, dict] = {
         # Model ids from agy models on 1.5.15.
         "models": {
             "raccoon": "gemini-4-neon-high",
-            "beaver": "gemini-4-carbon-medium",
-            "otter": "gemini-3.8-flash-medium",
+            "beaver": "gemini-4-carbon-high",
+            "otter": "gemini-4-hydrogen-high",
             "rodent": "gemini-4-neon-high",
-            "wolf": "gemini-4-carbon-medium",
+            "wolf": "gemini-4-carbon-high",
         },
         "model_catalog": [
             {"id": "gemini-4-neon-high", "label": "Gemini 4 Neon (High)"},
-            {"id": "gemini-4-carbon-medium", "label": "Gemini 4 Carbon (Medium)"},
-            {"id": "gemini-3.8-flash-medium", "label": "Gemini 3.8 Flash (Medium)"},
+            {"id": "gemini-4-carbon-high", "label": "Gemini 4 Carbon (High)"},
+            {"id": "gemini-4-hydrogen-high", "label": "Gemini 4 Hydrogen (High)"},
         ],
         "freeform_model": True,  # account-specific ids from agy models
         "skill_invoke": "/{name}",

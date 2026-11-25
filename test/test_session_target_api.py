@@ -400,6 +400,27 @@ def test_capability_default_respects_engine_and_consent(
     assert not caplog.records  # capability reads never warn
 
 
+def test_antigravity_picker_and_spawn_defaults_use_high_effort_tiers(tmp_path, monkeypatch):
+    monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
+    response = asyncio.run(_request("GET", "/harnesses"))
+    assert response.status_code == 200
+    picker = next(engine for engine in response.json()["harnesses"]
+                  if engine["id"] == "antigravity")
+    assert picker["catalog"] == [
+        {"id": "gemini-4-neon-high", "label": "Gemini 4 Neon (High)"},
+        {"id": "gemini-4-carbon-high", "label": "Gemini 4 Carbon (High)"},
+        {"id": "gemini-4-hydrogen-high", "label": "Gemini 4 Hydrogen (High)"},
+    ]
+    tiers = {
+        "raccoon": "gemini-4-neon-high",
+        "beaver": "gemini-4-carbon-high",
+        "otter": "gemini-4-hydrogen-high",
+    }
+    assert picker["models"] == picker["automatic_models"] == tiers
+    for creature, model in {**tiers, "rodent": tiers["raccoon"], "wolf": tiers["beaver"]}.items():
+        assert harnesses.resolve_model("antigravity", creature) == model
+
+
 @pytest.mark.parametrize("isolation,installed,detail", [
     ("external", True, "Antigravity requires a native Woltspace lodge."),
     ("host", False, "Antigravity is not installed (no `agy` on PATH)."),
@@ -511,7 +532,7 @@ print(json.dumps(args))
     for name, args in zip(names, launches, strict=True):
         assert args[:2] == ["--add-dir", str(home)]
         assert "--conversation" not in args
-        assert args[args.index("--model") + 1] == "gemini-3.8-flash-medium"
+        assert args[args.index("--model") + 1] == "gemini-4-hydrogen-high"
         settings = json.loads(args[args.index("--settings") + 1])
         assert (settings["agentMode"], settings["toolPermission"]) == ("", "request-review")
         assert "-i" not in args
