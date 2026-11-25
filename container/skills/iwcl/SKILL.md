@@ -86,7 +86,7 @@ The seed prompt is a briefing, not a payload (capped at 4000 chars) — put big 
 file the child can read, and pass a short pointer. Paths in the seed must be **absolute**
 (`/workspace/wolts/...`): the child boots in its own wolt directory, not yours.
 
-> **Delegate with `woltspace session spawn` on every harness, including `agy`.**
+> **Delegate with `woltspace session spawn` on every harness.**
 > Direct CLI launches, including headless or background processes, bypass Woltspace
 > session routing and can bill a different account.
 

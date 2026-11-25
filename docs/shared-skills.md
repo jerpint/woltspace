@@ -7,8 +7,7 @@ publish, upload, fetch or distribute them.
 
 Use the Woltspace-owned `lodge-skills` helper for setup and troubleshooting.
 On copy delivery it is named `woltspace-lodge-skills`. With plugin delivery,
-use your harness's platform skill invocation. Antigravity uses the linked
-`SKILL.md`.
+use your harness's platform skill invocation.
 
 ## Add a skill
 

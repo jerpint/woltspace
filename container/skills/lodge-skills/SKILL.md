@@ -68,10 +68,6 @@ this path. Codex and Antigravity read `.agents/skills`, normally bridged to it.
 Separately owned agent skill directories receive their own links. Verify
 discovery in a fresh session, especially when its workdir is outside the wolt.
 
-For platform skills, Antigravity discovers copied skills through `.agents/skills`.
-With plugin delivery, the opening prompt points to the linked `SKILL.md`. Antigravity
-can ask for file access when the link resolves outside its workspace.
-
 A real same-name skill or unrelated symlink is a preserved per-wolt override.
 For a private variant, copy the source into that wolt's own skill folder with the
 `lodge-` prefix removed from both directory and frontmatter name, and remove the

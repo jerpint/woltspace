@@ -38,10 +38,9 @@ woltspace creature rm star                   # only when no wolt is one
 - **name:** lowercase letters, digits and hyphens. Built-in names (raccoon,
   wolf, dog, ...) are taken.
 - **--size:** what it behaves like: `otter`, `beaver` or `raccoon`.
-- **--model HARNESS=MODEL** is optional and repeatable. Use the engine's model
-  ID. Check `GET /harnesses` for catalog entries and `agy models` for models
-  available to the Antigravity account. Use `antigravity` as the harness ID.
-  An engine without a pin uses the size's default.
+- **--model HARNESS=MODEL:** optional, repeatable. The id must be one the
+  engine offers (`GET /harnesses` lists them). An engine without one uses the
+  size's default.
 - **--role:** optional. The default role for a new wolt of this creature.
 - `add` never overwrites: to change a creature, `rm` it (no wolt may be one)
   and `add` it again.

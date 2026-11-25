@@ -109,8 +109,9 @@ pick the version that fits them. Never a feature list.
   wolts use. Model access and costs depend on your engine and account, which may use a plan, API credits,
   or a local model.
 - **What do I need?** A Mac or Linux machine (Windows works through WSL, still a work in progress) and a
-  supported engine. Antigravity CLI is experimental on native lodges. To use it, install `agy` and sign in
-  under the OS account that runs Woltspace, then choose Antigravity for new sessions.
+  supported engine such as Claude Code or Codex. Native lodges also offer Antigravity CLI as an
+  experimental engine. To use it, install `agy` and sign in under the OS account that runs Woltspace,
+  then choose Antigravity for new sessions.
   [Antigravity authentication](https://antigravity.google/docs/install/)
 - **Is my stuff private?** Yes. Your lodge, your wolts and their memory live on your machine. Nothing is shared
   unless you choose to share it, one thing at a time.
