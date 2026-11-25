@@ -86,10 +86,9 @@ The seed prompt is a briefing, not a payload (capped at 4000 chars) — put big 
 file the child can read, and pass a short pointer. Paths in the seed must be **absolute**
 (`/workspace/wolts/...`): the child boots in its own wolt directory, not yours.
 
-> **Never spawn headless `claude` / `codex` processes (tmux, nohup, background shells) for
-> delegated work.** Platform sessions bill the owner's subscription; a headless agent process
-> silently burns API credits instead. If you need another agent, `session spawn` is the only
-> sanctioned way.
+> **Delegate with `woltspace session spawn` on every harness, including `agy`.**
+> Direct CLI launches, including headless or background processes, bypass Woltspace
+> session routing and can bill a different account.
 
 ## See who's around
 

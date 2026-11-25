@@ -66,8 +66,9 @@ Opus, say), it arrives as a plain file. Any other name is a document.
   heredoc Woltspace generates for a reply.
 - An HTML page must be one self-contained file, with its styles, scripts and
   images inlined. Nothing it links to on disk travels with it.
-- Credential files are refused: `.env`, the Claude and Codex credential files,
-  anything in an `.ssh` folder except public keys (`*.pub`), `known_hosts`,
+- Keep credentials for every engine out of attachments, including Antigravity
+  account data. The file filter blocks `.env`, known Claude and Codex credential
+  paths, anything in an `.ssh` folder except public keys (`*.pub`), `known_hosts`,
   `authorized_keys` and `config`, SSH private keys by name (`id_rsa`,
   `id_ed25519` and the like) wherever they are, files ending in `.pem`, `.key`,
   `.p12` or `.pfx`, `.netrc`, `.git-credentials` and `.pgpass`, AWS

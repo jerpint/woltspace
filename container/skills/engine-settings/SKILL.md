@@ -5,16 +5,15 @@ description: Change your own engine settings, such as effort (low, medium, high,
 
 # Engine settings: change your own effort
 
-Your engine (Claude, Codex, ...) has settings the lodge does not manage, such
-as how much effort you put into each answer. When the user asks you to change
-one, set it yourself, in your engine's own config file **inside your wolt
-folder**.
+When the user asks to change your effort, use the settings or model pin for
+your engine below. Write only inside your wolt folder.
 
-## Never touch the shared files
+## Keep settings per wolt
 
-On a native lodge every wolt runs under the owner's home, so `~/.claude/` and
-`~/.codex/` are shared by all wolts. A change there changes every wolt.
-Only write inside your wolt folder (your current working directory).
+Native sessions share the owner's engine homes, including `~/.claude/`,
+`~/.codex/`, and Antigravity's `~/.gemini/antigravity-cli/settings.json`.
+Use your own wolt folder for changes. Find it through `$WOLTSPACE_WOLT_HOME`
+when the session runs in another directory.
 
 ## Claude
 
@@ -56,13 +55,26 @@ Codex reads a folder's config only once the folder is trusted. Wolt folders
 the lodge starts are trusted already. The status line shows the result:
 `GPT-... high`.
 
+## Antigravity
+
+1. Run `agy models` to find the ID for the requested effort variant of your
+   model. If the model has no matching variant, report the available choices
+   and keep the current pin.
+2. With Antigravity as your wolt's effective engine, run
+   `woltspace wolt set "$WOLTSPACE_WOLT_NAME" --model "<full-ID>"`.
+   Check that the result reports Antigravity and the chosen ID for the next
+   session.
+
+Interactive `/effort` saves a default in the owner's shared Antigravity
+settings. The standalone `agy --effort` flag applies to one invocation.
+Use the model pin for Woltspace sessions. [Google's effort reference](https://antigravity.google/docs/cli/commands/effort/)
+
 ## Other engines
 
-Look for the engine's own per-project config file. If it has none, say so
-and don't edit anything outside your folder.
+Look for the engine's own per-project config file. If it has none, report
+that the skill has no per-wolt setting for this engine.
 
 ## Tell the user
 
-Say what you set, in which file, and that it applies from your next session.
-To use it now, they can stop this session and start a new one (or, on Claude,
-use `/effort` and press **s**).
+Say what you changed, in which file, and that it applies to new sessions.
+For an immediate change in Claude, the user can use `/effort` and press **s**.
