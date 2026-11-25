@@ -206,10 +206,47 @@ def _clear_state(name: str) -> None:
         conn.execute("DELETE FROM apps_running WHERE name=?", (name,))
 
 
+def _proc_stat(pid: int) -> list[str] | None:
+    """/proc/<pid>/stat fields from the state letter on, or None (no such process, or no procfs)."""
+    try:
+        text = Path(f"/proc/{int(pid)}/stat").read_text()
+    except (OSError, ValueError):
+        return None
+    return text[text.rindex(")") + 2:].split()  # [0] state, [2] pgrp, [19] start time
+
+
 def _is_pid_alive(pid: int) -> bool:
+    """Alive and not a zombie. Only the parent can reap, so read the state, not kill()."""
+    if not pid or pid <= 0:
+        return False
     try:
         os.kill(pid, 0)
-        return True
+    except OSError:
+        return False
+    stat = _proc_stat(pid)
+    if stat is None:
+        return not Path("/proc/self").is_dir()  # no procfs (macOS): trust kill()
+    return stat[0] != "Z"
+
+
+def _is_own_app(name: str, state: dict) -> bool:
+    """Whether the recorded pid is still the app we started: pids are reused after a restart.
+
+    We start every app as its own process group leader. A record with `start_ticks` must
+    match the process start time; an older record falls back to its working folder.
+    """
+    pid = state.get("pid") or 0
+    if not _is_pid_alive(pid):
+        return False
+    stat = _proc_stat(pid)
+    if stat is None:
+        return True  # no procfs (macOS): no identity to check, as before
+    if int(stat[2]) != pid:
+        return False
+    if state.get("start_ticks") is not None:
+        return stat[19] == str(state["start_ticks"])
+    try:
+        return Path(os.readlink(f"/proc/{pid}/cwd")).is_relative_to(app_dir(name).resolve())
     except OSError:
         return False
 
@@ -227,8 +264,7 @@ def running_apps() -> list[dict]:
     """
     running = []
     for state in _all_states():
-        pid = state.get("pid")
-        if pid and _is_pid_alive(pid):
+        if _is_own_app(state["name"], state):
             state["alive"] = True
             running.append(state)
     return running
@@ -242,8 +278,7 @@ def intended_apps() -> list[dict]:
     """
     intended = []
     for state in _all_states():
-        pid = state.get("pid")
-        state["alive"] = bool(pid and _is_pid_alive(pid))
+        state["alive"] = _is_own_app(state["name"], state)
         intended.append(state)
     return intended
 
@@ -261,7 +296,7 @@ def start_app(name: str) -> dict:
 
     # Check if already running
     existing = _read_state(name)
-    if existing and _is_pid_alive(existing.get("pid", 0)):
+    if existing and _is_own_app(name, existing):
         return existing
 
     # Use port from manifest — check for conflicts with running apps
@@ -306,6 +341,9 @@ def start_app(name: str) -> dict:
         "pid": proc.pid,
         "start_command": app.start,
     }
+    stat = _proc_stat(proc.pid)
+    if stat:
+        state["start_ticks"] = int(stat[19])
     _write_state(name, state)
 
     # Auto-share if public=true and sharing is enabled
@@ -342,7 +380,7 @@ def apps_restore() -> list[dict]:
             continue
 
         pid = state.get("pid")
-        if pid and _is_pid_alive(pid):
+        if _is_own_app(name, state):
             actions.append({"name": name, "action": "survived", "pid": pid})
             print(f"[apps] {name} survived (pid {pid})")
             continue
@@ -369,7 +407,7 @@ def stop_app(name: str) -> bool:
         stop_cloudflared(tunnel_pid)
     # Kill the app process
     pid = state.get("pid")
-    if pid and _is_pid_alive(pid):
+    if pid and _is_own_app(name, state):
         try:
             os.killpg(os.getpgid(pid), signal.SIGTERM)
         except OSError:
@@ -377,6 +415,8 @@ def stop_app(name: str) -> bool:
                 os.kill(pid, signal.SIGTERM)
             except OSError:
                 pass
+    elif _is_pid_alive(pid):
+        print(f"[apps] {name}: pid {pid} is no longer this app; not signalled, state cleared")
     _clear_state(name)
     return True
 
@@ -386,7 +426,7 @@ def restart_app(name: str) -> dict:
     if not get_app(name):
         raise ValueError(f"App {name} not found")
     previous = _read_state(name) or {}
-    previous_pid = previous.get("pid", 0)
+    previous_pid = previous.get("pid", 0) if _is_own_app(name, previous) else 0
     stop_app(name)
     deadline = time.monotonic() + 5
     while previous_pid and _is_pid_alive(previous_pid) and time.monotonic() < deadline:

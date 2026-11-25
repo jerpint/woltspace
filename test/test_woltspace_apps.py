@@ -191,8 +191,9 @@ class TestRunningState:
         assert apps.running_apps() == []
         assert apps._read_state("dead") is not None
 
-    def test_intended_apps_includes_stale(self, wolts_dir):
+    def test_intended_apps_includes_stale(self, wolts_dir, monkeypatch):
         """intended_apps() returns both running and stale-intent apps with alive flag."""
+        monkeypatch.setattr(apps, "_is_own_app", lambda name, state: apps._is_pid_alive(state["pid"]))
         apps._write_state("dead", {
             "name": "dead", "port": 4001, "pid": 999999,
         })
@@ -310,8 +311,9 @@ class TestStartStop:
         assert state["port"] == 4321
 
     @patch("apps.subprocess.Popen")
-    def test_start_rejects_port_conflict_with_running(self, mock_popen, wolts_dir):
+    def test_start_rejects_port_conflict_with_running(self, mock_popen, wolts_dir, monkeypatch):
         """Can't start if another running app holds the same port."""
+        monkeypatch.setattr(apps, "_is_own_app", lambda name, state: apps._is_pid_alive(state["pid"]))
         apps._write_state("occupant", {
             "name": "occupant", "port": 4300, "pid": os.getpid(),
         })
@@ -319,8 +321,9 @@ class TestStartStop:
         with pytest.raises(RuntimeError, match="already in use"):
             apps.start_app("conflict")
 
+    @patch("apps._is_own_app", return_value=True)
     @patch("apps.subprocess.Popen")
-    def test_start_returns_existing_if_alive(self, mock_popen, wolts_dir):
+    def test_start_returns_existing_if_alive(self, mock_popen, _own, wolts_dir):
         """Starting an already-running app returns its existing state."""
         _make_app(wolts_dir, "already", start="echo hi", port=4005)
         apps._write_state("already", {
@@ -333,9 +336,10 @@ class TestStartStop:
     def test_stop_not_running(self, wolts_dir):
         assert apps.stop_app("nothing") is False
 
+    @patch("apps._is_own_app", return_value=True)
     @patch("apps.os.killpg")
     @patch("apps.os.getpgid", return_value=999)
-    def test_stop_running_app(self, mock_getpgid, mock_killpg, wolts_dir):
+    def test_stop_running_app(self, mock_getpgid, mock_killpg, _own, wolts_dir):
         apps._write_state("app", {
             "name": "app", "port": 4001, "pid": os.getpid(),
         })
@@ -354,7 +358,8 @@ class TestAppsRestore:
         """No state files — nothing to restore."""
         assert apps.apps_restore() == []
 
-    def test_restore_survived_app(self, wolts_dir):
+    @patch("apps._is_own_app", return_value=True)
+    def test_restore_survived_app(self, _own, wolts_dir):
         """App whose PID is still alive is left alone (no respawn)."""
         _make_app(wolts_dir, "surviving", start="echo hi", port=4100)
         apps._write_state("surviving", {
@@ -398,3 +403,84 @@ class TestAppsRestore:
         actions = apps.apps_restore()
         assert actions[0]["action"] == "restore-failed"
         assert "boom" in actions[0]["error"]
+
+
+# ---------------------------------------------------------------------------
+# Process identity: a saved pid may now belong to someone else
+# ---------------------------------------------------------------------------
+
+needs_procfs = pytest.mark.skipif(not Path("/proc/self/stat").exists(), reason="needs procfs (Linux)")
+
+
+def _spawn(cwd, command="exec sleep 30"):
+    import subprocess
+    return subprocess.Popen(command, shell=True, cwd=str(cwd), start_new_session=True,
+                            stdout=subprocess.PIPE, text=True)
+
+
+def _gone_within(pid, seconds=5):
+    import time
+    deadline = time.monotonic() + seconds
+    while apps._is_pid_alive(pid) and time.monotonic() < deadline:
+        time.sleep(0.02)
+    return not apps._is_pid_alive(pid)
+
+
+@needs_procfs
+class TestProcessIdentity:
+    @pytest.mark.parametrize("record", ["old", "wrong_start_ticks"])
+    def test_stop_does_not_signal_a_reused_pid(self, wolts_dir, record):
+        app = _make_app(wolts_dir, "notes", start="sleep 30", port=4200)
+        elsewhere = wolts_dir / "elsewhere"
+        elsewhere.mkdir()
+        stranger = _spawn(app if record == "wrong_start_ticks" else elsewhere)
+        try:
+            state = {"name": "notes", "port": 4200, "pid": stranger.pid}
+            if record == "wrong_start_ticks":
+                state["start_ticks"] = int(apps._proc_stat(stranger.pid)[19]) + 1
+            apps._write_state("notes", state)
+            assert apps.stop_app("notes") is True
+            assert stranger.poll() is None  # untouched
+            assert apps._read_state("notes") is None
+        finally:
+            stranger.kill()
+            stranger.wait()
+
+    @pytest.mark.parametrize("record", ["new", "old"])
+    def test_stop_signals_the_real_app(self, wolts_dir, record):
+        _make_app(wolts_dir, "notes", start="sleep 30", port=4201)
+        state = apps.start_app("notes")
+        assert isinstance(state["start_ticks"], int)
+        if record == "old":  # written by a release without start_ticks
+            state.pop("start_ticks")
+            apps._write_state("notes", state)
+        assert apps.stop_app("notes") is True
+        assert _gone_within(state["pid"])
+
+    def test_restore_respawns_when_the_pid_was_reused(self, wolts_dir):
+        _make_app(wolts_dir, "notes", start="sleep 30", port=4202)
+        elsewhere = wolts_dir / "elsewhere"
+        elsewhere.mkdir()
+        stranger = _spawn(elsewhere)
+        try:
+            apps._write_state("notes", {"name": "notes", "port": 4202, "pid": stranger.pid})
+            with patch("apps.subprocess.Popen") as mock_popen:
+                mock_popen.return_value.pid = 22222
+                actions = apps.apps_restore()
+            assert actions == [{"name": "notes", "action": "restored", "pid": 22222}]
+            assert stranger.poll() is None
+        finally:
+            stranger.kill()
+            stranger.wait()
+
+    def test_zombie_of_another_parent_counts_as_gone(self, tmp_path):
+        # The shell backgrounds a child, prints its pid, then becomes `sleep`, which never reaps it.
+        parent = _spawn(tmp_path, "sleep 0 & echo $!; exec sleep 30")
+        try:
+            zombie = int(parent.stdout.readline())
+            assert _gone_within(zombie)
+            os.kill(zombie, 0)  # still in the process table: kill() alone would call it alive
+            assert apps._proc_stat(zombie)[0] == "Z"
+        finally:
+            parent.kill()
+            parent.wait()

@@ -95,6 +95,7 @@ def test_keeper_update_failure_paths_are_400(monkeypatch):
 
 
 def test_restart_waits_for_old_pid_and_verifies_new_one(monkeypatch):
+    monkeypatch.setattr(apps, "_is_own_app", lambda name, state: True)
     monkeypatch.setattr(apps, "get_app", lambda name: object())
     monkeypatch.setattr(apps, "_read_state", lambda name: {"pid": 7})
     stop = Mock(return_value=True)
@@ -109,6 +110,7 @@ def test_restart_waits_for_old_pid_and_verifies_new_one(monkeypatch):
 
 
 def test_restart_refuses_to_spawn_while_old_pid_lives(monkeypatch):
+    monkeypatch.setattr(apps, "_is_own_app", lambda name, state: True)
     monkeypatch.setattr(apps, "get_app", lambda name: object())
     monkeypatch.setattr(apps, "_read_state", lambda name: {"pid": 7})
     monkeypatch.setattr(apps, "stop_app", Mock(return_value=True))
