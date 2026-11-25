@@ -5,8 +5,9 @@ model, with the providers' plan limits. Lodge-private, read-only for everyone bu
 the wolf.
 
 - **Page:** `/usage` in the lodge (charts, tables, an activity calendar). It counts
-  fresh when opened and every 2 minutes while visible, and never shows numbers
-  older than 150 s.
+  fresh when opened, when filters change, and every 2 minutes while visible.
+  Each count scans the transcripts. The page requests compact chart and table
+  totals with at most five session details and hides numbers older than 150 s.
 - **CLI:** `woltspace usage summary|table|limits` with `--by`, `--since`,
   `--until`, `--wolt`, `--provider`, `--model`, `--metric`, `--top`, `--format
   table|json|csv`. A thin client of the API; the `usage` platform skill teaches
@@ -28,8 +29,10 @@ A shared transcript belongs to a wolt only when the working folder it recorded
 at its start lies inside that wolt's folder (real paths, compared by whole
 components), or, failing that, when the lodge's own session records name its
 engine session. Everything else there, malformed records included, is the
-operator's own use: it is not counted and not listed. A transcript visible in
-several places counts once: Claude by its message ids, Codex by its engine
+operator's own use: it is not counted and not listed. Operator activity started
+in a wolt's folder counts for that wolt on a native lodge. A transcript visible in
+several places counts once: Claude keeps the maximum observed value of each usage counter per wolt and
+message ID. Codex deduplicates by its engine
 session (the longest copy wins).
 
 One count runs at a time; concurrent requests share it. A count reads the
@@ -42,8 +45,10 @@ lock) keeps per-day rows after the engines delete old transcripts. Only the
 wolf writes it: the built-in `usage-save` job at 23:55 local time, and once at
 start-up when the wolf was down at 23:55 (journaled under the owner `_lodge`;
 see `woltspace wolf runs`). The save merges under an exclusive lock and replaces
-the file atomically. A day whose transcripts shrank or broke since the last save
-keeps, row by row, the larger of the saved and the fresh amount. History is part
+the file atomically. Live counts and saves retain the larger of the saved and fresh
+amount for each row. If a row shrinks or disappears, even with the same
+transcript sources, the day is flagged as incomplete and the result is a
+high-water estimate. History is part
 of every backup; a restore may drop the lock, which the next save recreates.
 
 Days are calendar days in the zone history was started in: the lodge's local
@@ -56,9 +61,15 @@ guessed; add its zone by hand.
 
 ## Plan limits
 
-Codex limits come from its transcripts. Claude limits are optional: the lodge
-reads `<wolts_dir>/.space/usage/claude-limits.json` when something provides it
-(`{"read_at": ISO time, "rate_limits": {"five_hour": {"used_percentage": n,
-"resets_at": unix seconds}, "seven_day": {...}}}`, the shape Claude Code hands a
-status line). Woltspace never writes Claude settings to set that up; without the
-file, Claude limits show as unavailable.
+Codex limits come from its transcripts. Claude plan limits are on by default
+for lodge Claude sessions without a custom status line. Set
+`usage.claude_limits.enabled` to `false` in the lodge's `woltspace.json` to
+disable the built-in feed. Existing wolts pick it up at next start or resume.
+An existing status-line setting, including a disabled one, takes precedence.
+
+The dashboard shows the latest observed account reading, with its timestamp,
+when Claude supplies a supported window. The status-line helper stores only
+the observation time and supported rate-limit windows in
+`<wolts_dir>/.space/usage/claude-limits.json`. An independent custom feed can
+still supply this reading with the built-in feed off. Producers sharing the
+snapshot need to coordinate through the same writer for newest-wins behavior.

@@ -32,6 +32,11 @@ More on [woltspace.com](https://woltspace.com)
 
 Happy wolting!
 
+Claude plan limits are on by default for lodge Claude sessions without a custom
+status line. Existing wolts pick up the default on their next start or resume.
+Set `usage.claude_limits.enabled` to `false` in the lodge's `woltspace.json`
+to turn off the built-in feed. See [Lodge usage](docs/usage.md).
+
 ## For agents
 
 A human asked you to help install Woltspace. Explain it in two sentences, then

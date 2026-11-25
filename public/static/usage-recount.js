@@ -12,6 +12,7 @@
     let countedAt = null; // client time at which the shown count was requested
     let failedAt = null;
     let pending = null;
+    let revision = 0;
     let expiry = null;    // fires at the shown count's own deadline, whatever the tick phase
 
     const fresh = () => countedAt !== null && now() - countedAt < STALE_MS;
@@ -39,9 +40,11 @@
     function recount() {
       if (pending) return pending;
       const started = now();
+      const requested = revision;
       if (countedAt === null) counting();
       pending = new Promise(resolve => resolve(load())) // load starts now; a throw becomes a failure
         .then(data => {
+          if (requested !== revision) return;
           if (now() - started >= STALE_MS) { // already old when it arrived
             countedAt = null;
             counting();
@@ -53,12 +56,13 @@
           armExpiry();
         })
         .catch(error => {
+          if (requested !== revision) return;
           countedAt = null;
           failedAt = now();
           expire();
           failed(error);
         })
-        .finally(() => { pending = null; });
+        .finally(() => { if (requested === revision) pending = null; });
       return pending;
     }
 
@@ -71,7 +75,16 @@
       return now() >= due ? recount() : null;
     }
 
-    return {tick, recount, fresh};
+    function invalidate() {
+      revision++;
+      pending = null;
+      failedAt = null;
+      countedAt = null;
+      expire();
+      counting();
+    }
+
+    return {tick, recount, fresh, invalidate};
   }
 
   const api = {createRecounter, RECOUNT_MS, STALE_MS, RETRY_MS};

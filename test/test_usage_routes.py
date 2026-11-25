@@ -7,6 +7,7 @@ import subprocess
 import sys
 import threading
 import time
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -180,3 +181,21 @@ def test_operator_sessions_never_reach_the_api(tmp_path, monkeypatch, client):
     monkeypatch.setattr(usage_routes, "count_usage", lambda: count(tmp_path, bases=bases))
     for path in ("/api/usage/data", "/api/usage?by=session,model&format=csv", "/api/usage?command=limits"):
         assert "op-model" not in client.get(path).text and "-home-op" not in client.get(path).text
+
+
+def test_compact_scopes_and_totals(lodge, client, monkeypatch):
+    tmp_path, _ = lodge
+    emit(claude(tmp_path, name="beta"), request("two", fresh=9))
+    now = datetime.fromisoformat("2026-11-24T12:00:00+00:00")
+    monkeypatch.setattr(usage_routes, "count_usage", lambda: count(tmp_path, now=now, bases=host(tmp_path)))
+    data = client.get("/api/usage/data").json()
+    response = client.get("/api/usage/data?view=compact&period=0&calendar_wolt=beta&metric=input_fresh")
+    assert response.status_code == 200 and response.headers["cache-control"] == "no-store"
+    compact = response.json()
+    assert "activity" not in compact and len(compact["top"]) == 2
+    assert compact["calendar"]["days"][0]["sessions"] == 1
+    assert compact["sessions"] == 2 and compact["top"][0]["wolt"] == "beta"
+    assert compact["totals"] == data["periods"]["all_time"]["totals"]
+    monkeypatch.setattr(usage_routes, "count_usage", lambda: pytest.fail("invalid filters counted"))
+    for query in ("period=-1", "metric=nope", "provider=other", "calendar_wolt=../bad", "period=7&period=90"):
+        assert client.get(f"/api/usage/data?view=compact&{query}").status_code == 400

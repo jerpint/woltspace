@@ -30,13 +30,22 @@ def read(relative_path, events, seen, usage, limits, gap):
             gap("missing_message_id", day)
             continue
         usage.cover(day)
-        if message_id in seen:
-            continue
         metrics = {
             "input_fresh": counts.get("input_tokens", 0),
             "cache_read": counts.get("cache_read_input_tokens", 0),
             "cache_write": counts.get("cache_creation_input_tokens", 0),
             "output": counts.get("output_tokens", 0),
         }
-        if usage.add(day, session, message.get("model"), metrics):
-            seen.add(message_id)
+        if not usage.valid(metrics, day):
+            continue
+        if message_id not in seen:
+            seen[message_id] = (usage, day, session, message.get("model"), metrics)
+            continue
+        retained = seen[message_id][-1]
+        for metric, value in metrics.items():
+            retained[metric] = max(retained[metric], value)
+
+
+def finish(seen):
+    for usage, day, session, model, metrics in seen.values():
+        usage.add(day, session, model, metrics)

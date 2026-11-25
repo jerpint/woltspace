@@ -456,3 +456,24 @@ def test_history_survives_backup_and_restore_and_saving_resumes(tmp_path):
     report = usage_collector.save(restored, zone=ZONE, bases={})
     assert copy.with_name("history.json.lock").exists()
     assert report["periods"]["all_time"]["totals"]["input_fresh"] == 5
+
+
+def test_claude_dedup_uses_per_counter_max_in_both_orders(tmp_path):
+    first = request("same", fresh=8)
+    first["message"]["usage"]["output_tokens"] = 1
+    full = request("same", fresh=2)
+    for events in ((first, full), (full, first)):
+        emit(claude(tmp_path), *events)
+        totals = count(tmp_path)["periods"]["all_time"]["totals"]
+        assert totals == {"input_fresh": 8, "cache_read": 3, "cache_write": 2, "output": 7}
+
+
+def test_history_retains_shrunk_and_vanished_rows_with_same_source(tmp_path):
+    path = emit(claude(tmp_path), request("a", fresh=8, model="one"),
+                request("b", fresh=4, model="two"), request("c", fresh=1, model="three"))
+    save(tmp_path)
+    emit(path, request("a", fresh=2, model="one"), request("c", fresh=9, model="three"))
+    for report in (count(tmp_path), save(tmp_path), count(tmp_path)):
+        models = {row["model"]: row["metrics"]["input_fresh"] for row in report["activity"]}
+        assert models == {"one": 8, "two": 4, "three": 9}
+        assert any(gap["reason"] == "retained_partial_day" for gap in report["coverage_gaps"])

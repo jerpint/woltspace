@@ -56,7 +56,7 @@ def history_path(wolts_dir):
 
 
 def claude_limits_path(wolts_dir):
-    """Optional normalized Claude status-line reading. Nothing in the lodge writes it."""
+    """Normalized Claude status-line reading, separate from token history."""
     return usage_dir(wolts_dir) / "claude-limits.json"
 
 
@@ -146,10 +146,15 @@ class Usage:
         provider, wolt, file_id = self.source
         self.coverage[day, provider, wolt].update((file_id, *self.also))
 
-    def add(self, day, session, model, metrics):
-        self.cover(day)
+    def valid(self, metrics, day):
         if not all(type(value) is int and value >= 0 for value in metrics.values()):
             self.gap("invalid_token_counts", day)
+            return False
+        return True
+
+    def add(self, day, session, model, metrics):
+        self.cover(day)
+        if not self.valid(metrics, day):
             return False
         if not isinstance(model, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,100}", model):
             self.gap("unknown_model", day)
@@ -286,8 +291,8 @@ def sources(root, bases):
 def distinct(provider, entries):
     """One copy of each transcript seen in several places, with the ids of all its copies.
 
-    Claude: by relative path (its message ids dedupe the rest). Codex: by engine
-    session id, keeping the longest copy. Coverage records every copy's path id, so
+    Claude: visit the longest relative-path copy first, then scan the remaining
+    copies for counter maxima. Codex: by engine session id, keeping the longest copy. Coverage records every copy's path id, so
     switching between copies is not a lost source, while a copy that disappears
     still is (its day is retained). Path ids are what history has always recorded.
     Returns [(base, path, [chosen copy's id, other copies' ids...])].
@@ -306,8 +311,14 @@ def distinct(provider, entries):
         groups.setdefault(key, []).append((size, base, path, path_id(base, path, shared_root)))
     chosen = []
     for copies in groups.values():
-        _, base, path, first = max(copies, key=lambda copy: copy[0])  # the first of the longest on a tie
+        primary = max(copies, key=lambda copy: copy[0])  # first of the longest on a tie
+        _, base, path, first = primary
         chosen.append((base, path, [first, *sorted({copy[3] for copy in copies} - {first})]))
+        if provider == "claude":
+            for copy in copies:
+                if copy is not primary:
+                    _, other_base, other_path, source = copy
+                    chosen.append((other_base, other_path, [source]))
     return chosen
 
 
@@ -350,7 +361,7 @@ def scan(root, old_codex_limits, zone, bases=None):
                 engines = True
                 if not entries:
                     gaps[("no_transcripts", provider, wolt, None)] += 1
-            seen = set()
+            seen = {} if provider == "claude" else set()
             for base, path, ids in entries:
                 relative = path.relative_to(base)
                 source = (provider, wolt, ids[0])
@@ -365,13 +376,15 @@ def scan(root, old_codex_limits, zone, bases=None):
                     reader.read(relative, jsonl(path, gap), seen, usage, codex_limits, gap)
                 except (AttributeError, TypeError, ValueError):
                     gap("invalid_event_shape", None)
+            if provider == "claude":
+                usage_claude.finish(seen)
         if not engines:
             gaps[("no_supported_transcripts", None, wolt, None)] += 1
     return counts, coverage, gaps, incomplete, latest
 
 
 def merge(old, counts, coverage, gaps, incomplete):
-    """Fresh rows replace history, except on a day/provider/wolt whose sources shrank or broke.
+    """Keep a high-water amount for each saved row and flag affected days.
 
     On such a retained day every row keeps the larger of its saved and fresh amount,
     so a mid-day save followed by a transcript expiry loses nothing either way.
@@ -380,22 +393,22 @@ def merge(old, counts, coverage, gaps, incomplete):
         (entry["day"], entry["provider"], entry["wolt"]): set(entry["sources"])
         for entry in old.get("coverage", [])
     }
-    retained = set()
-    for bucket, sources in previous.items():
-        day, provider, wolt = bucket
-        current = coverage.get(bucket, set())
-        if sources - current or any((provider, wolt, src) in incomplete for src in current):
-            retained.add(bucket)
-            coverage[bucket] = sources | current
-            gaps[("retained_partial_day", provider, wolt, day)] += 1
-    amounts = {key: amount for key, amount in counts.items() if key[:3] not in retained}
+    retained = {
+        bucket for bucket, sources in previous.items()
+        if sources - coverage.get(bucket, set()) or any(
+            (*bucket[1:], src) in incomplete for src in coverage.get(bucket, ())
+        )
+    }
+    amounts = dict(counts)
     for row in old.get("rows", []):
         key = tuple(row[name] for name in DIMENSIONS)
-        if key[:3] in retained:
-            amounts[key] = max(row["amount"], counts.get(key, 0))
-    for key, amount in counts.items():
-        if key[:3] in retained and key not in amounts:
-            amounts[key] = amount
+        if key not in counts or counts[key] < row["amount"]:
+            retained.add(key[:3])
+            amounts[key] = row["amount"]
+    for day, provider, wolt in retained:
+        bucket = day, provider, wolt
+        coverage[bucket] = previous.get(bucket, set()) | coverage.get(bucket, set())
+        gaps["retained_partial_day", provider, wolt, day] += 1
     return [dict(zip(DIMENSIONS, key), amount=amount) for key, amount in sorted(amounts.items())]
 
 
@@ -463,12 +476,15 @@ def dashboard(rows, gaps, limits, now, zone):
     }
 
 
-def write_json(path, data, mode):
+def write_json(path, data, mode, *, sync=False):
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as stream:
         temporary = Path(stream.name)
         try:
             stream.write((json.dumps(data, allow_nan=False, separators=(",", ":")) + "\n").encode())
+            if sync:
+                stream.flush()
+                os.fsync(stream.fileno())
             stream.close()
             temporary.chmod(mode)
             temporary.replace(path)

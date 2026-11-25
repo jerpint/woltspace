@@ -218,13 +218,12 @@ const html = value=>String(value).replace(/[&<>"']/g, ch=>({
   '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
 })[ch]);
 const dayValue = day=>Date.parse(day+'T00:00:00Z');
-const sessionKey = row=>JSON.stringify([row.provider,row.wolt,row.id]);
-let days=[],records=[],limitData=[],period=30;
+let days=[],limitData=[],period=30;
 let plotDays=[],daily=new Map(),visibleProviders=[];
 const gaps = new Map();
 
 function loadData(data){
-  if(data.schema_version!==1 || !Array.isArray(data.activity))throw new Error('Unsupported usage data');
+  if(data.schema_version!==1 || data.view!=='compact')throw new Error('Unsupported usage data');
   gaps.clear();
   setZone(data.timezone);
   $('limitsZone').textContent='Latest · '+data.timezone;
@@ -234,14 +233,6 @@ function loadData(data){
   const latest=dayValue(calendarDay.format(new Date(data.last_collected)));
   const start=data.history_starts?dayValue(data.history_starts):latest;
   days=Array.from({length:1+Math.max(0,Math.round((latest-start)/dayMs))},(_,i)=>start+i*dayMs);
-  records=data.activity.flatMap(row=>{
-    const provider=providerNames[row.provider];
-    if(!provider)return [];
-    return [{
-      day:dayValue(row.day),provider,wolt:row.wolt,model:row.model,id:row.session_id,
-      ...Object.fromEntries(Object.entries(metricKeys).map(([key,metric])=>[key,row.metrics[metric]??0]))
-    }];
-  });
   for(const gap of data.coverage_gaps){
     const provider=providerNames[gap.provider];
     if(!gap.day || !provider || ![
@@ -260,7 +251,9 @@ function loadData(data){
   ].map(([provider,window,reading])=>{
     const raw=reading?.resets_at;
     const reset=typeof raw==='number'?new Date(raw*1000):new Date(raw??NaN);
-    return {provider,window,used:reading?.used_percent,
+    const observed=data.limits[provider.toLowerCase()]?.observed_at;
+    return {provider,window,used:reading?.used_percent,observed:reading&&observed?
+      timestampLabel.format(new Date(observed)):null,
       reset:Number.isNaN(reset.getTime())?null:timestampLabel.format(reset)};
   });
 }
@@ -272,20 +265,15 @@ function drawLimits(){
     const available=Number.isFinite(limit.used);
     const percent=available?limit.used+'%':'—';
     const width=available?Math.max(0,Math.min(100,limit.used)):0;
-    block.innerHTML='<div class="limit-title"><span class="provider">'+limit.provider+' · '+limit.window+'</span><strong>'+percent+'</strong></div><div class="meter" aria-label="'+(available?limit.used+' percent used':'Usage unavailable')+'"><i class="'+limit.provider.toLowerCase()+'" style="width:'+width+'%"></i></div><div class="small">'+(limit.reset?'Resets '+limit.reset:'Reset unavailable')+'</div>';
+    block.innerHTML='<div class="limit-title"><span class="provider">'+limit.provider+' · '+limit.window+'</span><strong>'+percent+'</strong></div><div class="meter" aria-label="'+(available?limit.used+' percent used':'Usage unavailable')+'"><i class="'+limit.provider.toLowerCase()+'" style="width:'+width+'%"></i></div><div class="small">'+(limit.reset?'Resets '+limit.reset:'Reset unavailable')+(limit.observed?' · Read '+limit.observed:'')+'</div>';
     $('limits').append(block);
   }
 }
 function table(id,group,rows,metric){
-  const groups=new Map();
-  for(const row of rows){
-    const key=row[group];
-    if(!groups.has(key))groups.set(key,{name:key,value:0,sessions:new Set()});
-    const item=groups.get(key); item.value+=row[metric]; item.sessions.add(sessionKey(row));
-  }
-  const items=Array.from(groups.values()).sort((a,b)=>b.value-a.value);
+  const items=rows.map(row=>({...row,value:row.metrics[metricKeys[metric]]??0}))
+    .sort((a,b)=>b.value-a.value);
   const label=group==='wolt'?'Wolt':'Model';
-  $(id).innerHTML='<thead><tr><th>'+label+'</th><th>'+metrics[metric]+'</th><th>Sessions</th></tr></thead><tbody>'+items.map(item=>'<tr><td>'+html(item.name)+'<i class="tinybar" aria-hidden="true" style="width:'+Math.round(item.value/(items[0].value||1)*72)+'%"></i></td><td>'+fmt(item.value)+'</td><td>'+item.sessions.size+'</td></tr>').join('')+'</tbody>';
+  $(id).innerHTML='<thead><tr><th>'+label+'</th><th>'+metrics[metric]+'</th><th>Sessions</th></tr></thead><tbody>'+items.map(item=>'<tr><td>'+html(item.name)+'<i class="tinybar" aria-hidden="true" style="width:'+Math.round(item.value/(items[0].value||1)*72)+'%"></i></td><td>'+fmt(item.value)+'</td><td>'+item.sessions+'</td></tr>').join('')+'</tbody>';
 }
 function inspectDay(index){
   if(!plotDays.length)return;
@@ -300,8 +288,8 @@ function inspectDay(index){
 function drawChart(rows,metric){
   daily=new Map(plotDays.map(day=>[day,{}]));
   for(const row of rows){
-    const value=daily.get(row.day);
-    value[row.provider]=(value[row.provider]??0)+row[metric];
+    const value=daily.get(dayValue(row.day));
+    if(value)value[providerNames[row.provider]]=row.metrics[metricKeys[metric]]??0;
   }
   const maximum=Math.max(1,...Array.from(daily.values(),v=>(v.Claude??0)+(v.Codex??0)));
   const base=10**Math.floor(Math.log10(maximum));
@@ -327,21 +315,17 @@ function drawChart(rows,metric){
   $('dates').innerHTML=[0,Math.floor((plotDays.length-1)/2),plotDays.length-1].map(i=>'<span>'+dayLabel.format(plotDays[i])+'</span>').join('');
   inspectDay(plotDays.length-1);
 }
-function render(){
-  if(!days.length)return;
+function render(data){
   const provider=$('provider').value,metric=$('metric').value;
   visibleProviders=provider==='all'?providers:[provider];
   plotDays=period?days.slice(-period):days;
-  const dailyRange=day=>day>=plotDays[0]&&day<=plotDays.at(-1);
-  const rows=records.filter(row=>dailyRange(row.day)&&visibleProviders.includes(row.provider));
-  const totals=Object.keys(metrics).map(key=>[metrics[key],rows.reduce((sum,row)=>sum+row[key],0)]);
-  totals.push(['Sessions',new Set(rows.map(sessionKey)).size]);
-  $('stats').innerHTML=totals.map(([label,n])=>'<div><dt>'+label+'</dt><dd title="'+(rows.length?n.toLocaleString('en-US'):'Unavailable')+'">'+(rows.length?fmt(n):'—')+'</dd></div>').join('');
-  drawChart(rows,metric);
-  table('byWolt','wolt',rows,metric);table('byModel','model',rows,metric);
-  const ranked=[...rows].sort((a,b)=>b[metric]-a[metric]).slice(0,5);
+  const totals=Object.keys(metrics).map(key=>[metrics[key],data.totals?.[metricKeys[key]]??0]);
+  totals.push(['Sessions',data.sessions]);
+  $('stats').innerHTML=totals.map(([label,n])=>'<div><dt>'+label+'</dt><dd title="'+(data.totals?n.toLocaleString('en-US'):'Unavailable')+'">'+(data.totals?fmt(n):'—')+'</dd></div>').join('');
+  drawChart(data.by_day,metric);
+  table('byWolt','wolt',data.by_wolt,metric);table('byModel','model',data.by_model,metric);
   $('rankMetric').textContent='Top 5 · '+metrics[metric];
-  $('bySession').innerHTML='<thead><tr><th>Session ID</th><th>Wolt</th><th class="model-col">Model</th><th>Day</th><th>'+metrics[metric]+'</th></tr></thead><tbody>'+ranked.map(r=>'<tr><td class="id">'+html(r.id)+'</td><td>'+html(r.wolt)+'</td><td class="model-col">'+html(r.model)+'</td><td>'+dayLabel.format(r.day)+'</td><td>'+fmt(r[metric])+'</td></tr>').join('')+'</tbody>';
+  $('bySession').innerHTML='<thead><tr><th>Session ID</th><th>Wolt</th><th class="model-col">Model</th><th>Day</th><th>'+metrics[metric]+'</th></tr></thead><tbody>'+data.top.map(r=>'<tr><td class="id">'+html(r.session_id)+'</td><td>'+html(r.wolt)+'</td><td class="model-col">'+html(r.model)+'</td><td>'+dayLabel.format(dayValue(r.day))+'</td><td>'+fmt(r.metrics[metricKeys[metric]]??0)+'</td></tr>').join('')+'</tbody>';
 }
 // An original pixel landscape in the lodge's woodland palette.
 function drawWoods(light){
@@ -397,12 +381,12 @@ function setTheme(light){
 }
 $('theme').onclick=()=>setTheme(document.documentElement.dataset.theme!=='light');
 $('metric').replaceChildren(...Object.entries(metrics).map(([key,label])=>new Option(({output:'Output tokens',input:'New input',read:'Cache reads',write:'Cache writes'})[key],key)));
-$('metric').onchange=render;$('provider').onchange=render;
+$('metric').onchange=changeFilters;$('provider').onchange=changeFilters;
 for(const button of document.querySelectorAll('[data-days]')){
   button.onclick=()=>{
     period=Number(button.dataset.days);
     for(const other of document.querySelectorAll('[data-days]'))other.setAttribute('aria-pressed',String(other===button));
-    render();
+    changeFilters();
   };
 }
 $('cursor').oninput=e=>inspectDay(Number(e.target.value));
@@ -427,14 +411,13 @@ const longDay = new Intl.DateTimeFormat('en-US',{timeZone:'UTC',month:'short',da
 const month = new Intl.DateTimeFormat('en-US',{timeZone:'UTC',month:'short'});
 const calProvider = name=>name.toLowerCase();
 let selectedDay=null;
-let calendarPayload;
 let calendarDays=[];
 
 function describeDay(d){
   if(d.beforeHistory)return 'Outside collected history';
   if(d.partial && !d.output)return 'Incomplete coverage';
-  return (d.partial?'At least ':'')+d.output.toLocaleString('en-US')+' output tokens · '+d.sessions.size+
-    (d.sessions.size===1?' session':' sessions')+(d.partial?' · incomplete':'');
+  return (d.partial?'At least ':'')+d.output.toLocaleString('en-US')+' output tokens · '+d.sessions+
+    (d.sessions===1?' session':' sessions')+(d.partial?' · incomplete':'');
 }
 function showDay(index,moveFocus=false){
   const grid=$('days-grid'), current=calendarDays[index];
@@ -457,8 +440,6 @@ function syncPan(){
   $('cal-later').disabled=scroller.scrollLeft>max-2;
 }
 function showCalendar(data){
-  const filterWolt=$('cal-wolt').value, filterProvider=calProvider($('provider').value);
-  const matchesProvider=p=>filterProvider==='all'||filterProvider===p;
   const last=Date.parse(data.through+'T00:00:00Z');
   const yearBefore=new Date(last);
   yearBefore.setUTCFullYear(yearBefore.getUTCFullYear()-1);
@@ -467,17 +448,13 @@ function showCalendar(data){
   const buckets=new Map();
   for(let stamp=first;stamp<=last;stamp+=dayMs){
     const day=isoDay(stamp);
-    buckets.set(day,{day,stamp,output:0,sessions:new Set(),beforeHistory:!data.history_starts||day<data.history_starts,partial:false});
+    buckets.set(day,{day,stamp,output:0,sessions:0,beforeHistory:!data.history_starts||day<data.history_starts,partial:false});
   }
-  for(const row of data.activity){
+  for(const row of data.days){
     const d=buckets.get(row.day);
-    if(!d||!matchesProvider(row.provider)||(filterWolt&&row.wolt!==filterWolt))continue;
-    if(!Number.isFinite(row.metrics?.output)){d.partial=true;continue}
-    d.output+=row.metrics.output;
-    d.sessions.add(JSON.stringify([row.provider,row.wolt,row.session_id]));
+    if(d){d.output=row.output;d.sessions=row.sessions;}
   }
   for(const gap of data.coverage_gaps){
-    if(!matchesProvider(gap.provider)||(filterWolt&&gap.wolt&&gap.wolt!==filterWolt))continue;
     const d=buckets.get(gap.day);if(d)d.partial=true;
   }
   calendarDays=Array.from(buckets.values());
@@ -513,8 +490,8 @@ function showCalendar(data){
   $('peak').textContent=peak?dayLabel.format(peak.stamp):'—';
   $('peak-info').textContent=peak?fmt(peak.output)+' output · complete days':'No complete active day';
   // Coverage warnings without a day can't be placed on a square; say so beside the range instead.
-  const undated=data.undated_gaps.some(gap=>(!gap.provider||matchesProvider(gap.provider))&&(!filterWolt||!gap.wolt||gap.wolt===filterWolt));
-  $('cal-range').textContent=longDay.format(first)+' – '+longDay.format(last)+' · '+(filterProvider==='all'?'All providers':$('provider').value)+
+  const undated=data.undated_gaps.length>0;
+  $('cal-range').textContent=longDay.format(first)+' – '+longDay.format(last)+' · '+($('provider').value==='all'?'All providers':$('provider').value)+
     (undated?' · Some sources have undated coverage gaps; counts may be low':'');
   const kept=calendarDays.findIndex(d=>d.day===selectedDay);
   showDay(kept<0?calendarDays.length-1:kept);
@@ -534,19 +511,10 @@ for(const [id,sign] of [['cal-earlier',-1],['cal-later',1]]){
 }
 $('cal-scroll').addEventListener('scroll',syncPan);
 window.addEventListener('resize',syncPan);
-$('cal-wolt').onchange=()=>showCalendar(calendarPayload);
-$('provider').addEventListener('change',()=>showCalendar(calendarPayload));
-// Calendar input from the fresh payload: the same lodge day and coverage reasons as the chart.
-const calendarGapReasons=['retained_partial_day','invalid_token_counts','missing_message_id'];
-// Undated reasons that don't mean missing usage (the collector doesn't mark these sources incomplete).
-const undatedNotCoverage=['plan_limits_unavailable','unknown_model','codex_total_mismatch','partial_final_line','reporting_zone_differs'];
-function calendarData(data){
-  return {
-    through:calendarDay.format(new Date(data.last_collected)),history_starts:data.history_starts,
-    activity:data.activity,
-    coverage_gaps:data.coverage_gaps.filter(gap=>gap.day&&calendarGapReasons.includes(gap.reason)),
-    undated_gaps:data.coverage_gaps.filter(gap=>!gap.day&&!undatedNotCoverage.includes(gap.reason))
-  };
+$('cal-wolt').onchange=changeFilters;
+function changeFilters(){
+  recounter.invalidate();
+  tick();
 }
 // Numbers come only from a fresh count (GET /api/usage/data counts); old numbers are never shown.
 function screen(title,note){
@@ -557,22 +525,23 @@ function screen(title,note){
 }
 function showFresh(data){
   loadData(data);
-  calendarPayload=calendarData(data);
   const woltPicker=$('cal-wolt'),prior=woltPicker.value;
-  const names=[...new Set(data.activity.map(row=>row.wolt))].sort();
+  const names=data.wolts;
   woltPicker.replaceChildren(new Option('All wolts',''),...names.map(w=>new Option(w,w)));
   woltPicker.value=names.includes(prior)?prior:'';
   const revealing=$('dashboard').hidden;
   $('counting').setAttribute('aria-busy','false');
   $('counting').hidden=true;$('loadStatus').hidden=true;$('dashboard').hidden=false;
-  drawLimits();render();showCalendar(calendarPayload);
+  drawLimits();render(data);showCalendar(data.calendar);
   if(revealing)$('cal-scroll').scrollLeft=$('cal-scroll').scrollWidth;
   syncPan();
 }
 const recounter=UsageRecount.createRecounter({
   load:()=>{
     if(!$('dashboard').hidden)$('loadStatus').hidden=false;
-    return fetch('/api/usage/data',{cache:'no-store'}).then(response=>{
+    const params=new URLSearchParams({view:'compact',period,provider:calProvider($('provider').value),
+      calendar_wolt:$('cal-wolt').value,metric:metricKeys[$('metric').value]});
+    return fetch('/api/usage/data?'+params,{cache:'no-store'}).then(response=>{
       if(!response.ok)throw new Error('Count failed');
       return response.json();
     });

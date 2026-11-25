@@ -22,6 +22,7 @@ from starlette.concurrency import run_in_threadpool
 import usage_collector
 import usage_query
 
+from . import usage_view
 from .config import PUBLIC_DIR, WOLTS_DIR
 
 router = APIRouter()
@@ -71,9 +72,15 @@ async def usage_page():
 
 
 @router.get("/api/usage/data")
-async def usage_data():
+async def usage_data(request: Request):
+    try:
+        options = usage_view.filters(request.query_params)
+    except ValueError as error:
+        return _error(str(error), 400)
     data, failed = await _counted()
-    return failed or JSONResponse(data, headers=NO_STORE)
+    if failed:
+        return failed
+    return JSONResponse(usage_view.project(data, options) if options else data, headers=NO_STORE)
 
 
 @router.get("/api/usage")

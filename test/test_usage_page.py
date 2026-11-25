@@ -18,7 +18,7 @@ PAGE = (ROOT / "public/usage.html").read_text()
 
 def test_the_page_loads_numbers_only_from_a_fresh_count():
     assert "dashboard.json" not in PAGE
-    assert re.findall(r"fetch\('([^']+)'", PAGE) == ["/api/usage/data"]
+    assert re.findall(r"fetch\('([^']+)'", PAGE) == ["/api/usage/data?"]
     assert '<main hidden id="dashboard">' in PAGE
     assert '<script src="/static/usage-recount.js"></script>' in PAGE
     assert (ROOT / "public/static/usage-recount.js").is_file()

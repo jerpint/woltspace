@@ -139,3 +139,16 @@ const cases = {
 };
 
 for (const [name, run] of Object.entries(cases)) test(name, run);
+
+test('superseded filter requests cannot display results or clear the active request', async () => {
+  const h = harness();
+  const old = h.r.tick(false);
+  h.r.invalidate();
+  const current = h.r.tick(false);
+  h.loads[0].resolve('obsolete');
+  await old;
+  assert.equal(h.shown, null);
+  assert.equal(h.r.recount(), current);
+  await h.finish('current');
+  assert.equal(h.shown, 'current');
+});

@@ -1361,7 +1361,8 @@ def set_tier_defaults(harness: str, tiers: dict) -> dict:
     return {tier: tier_default_model(harness, tier) for tier, _ in PICKER_TIERS}
 
 
-def build_command(harness: str | None, mode: str, native: dict | None = None, **kwargs) -> str:
+def build_command(harness: str | None, mode: str, native: dict | None = None,
+                  claude_settings: str | None = None, **kwargs) -> str:
     """Build the full shell command for a harness.
 
     mode: "spawn" (fresh session), "resume", or "login".
@@ -1372,12 +1373,15 @@ def build_command(harness: str | None, mode: str, native: dict | None = None, **
     """
     entry = get_harness(harness)
     command = entry["command"](entry, mode, **kwargs)
-    if not native or mode == "login":
+    if mode == "login":
         return command
-    return _with_native(resolve_harness(harness), command, native)
+    if native or claude_settings:
+        return _with_native(resolve_harness(harness), command, native, claude_settings)
+    return command
 
 
-def _with_native(harness: str, command: str, native: dict) -> str:
+def _with_native(harness: str, command: str, native: dict | None,
+                 claude_settings: str | None = None) -> str:
     """Carry the attempt to the engine: claude's listener settings, pi's extension, an env prefix for all.
 
     codex, opencode and hermes keep their argv; their wrappers see the env and
@@ -1386,11 +1390,11 @@ def _with_native(harness: str, command: str, native: dict) -> str:
     from native_adapters import ASSETS, launch_env
     parts = shlex.split(command)
     if harness == "claude":
-        parts[1:1] = ["--settings", str(Path(native["addr"]) / "settings.json")]
+        parts[1:1] = ["--settings", claude_settings or str(Path(native["addr"]) / "settings.json")]
     elif harness == "pi":
         parts[1:1] = ["-e", str(ASSETS / "pi_hint.js")]
     env = [f"{key}={value}" for key, value in launch_env(native).items()]
-    return " ".join(shlex.quote(p) for p in ["env", *env, *parts])
+    return " ".join(shlex.quote(p) for p in (["env", *env, *parts] if env else parts))
 
 
 def _as_handle(session: str | dict | RuntimeHandle) -> RuntimeHandle:

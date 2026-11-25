@@ -1926,6 +1926,13 @@ def prepare_session_command(name: str, mode: str, prompt: str = "") -> str:
         target = SessionTarget.from_record(data, wolts_dir=WOLTS_DIR, fallback_wolt=wolt)
         trust_writer(target.canonical_workdir, WOLTS_DIR)
 
+    if wolt and harness == "claude" and mode in {"spawn", "resume"}:
+        from claude_statusline import overlay
+        native_settings = Path(locator["addr"]) / "settings.json" if locator else None
+        settings = overlay(WOLTS_DIR, target.canonical_workdir, native_settings)
+        if settings:
+            native["claude_settings"] = settings
+
     if mode == "spawn":
         # Harnesses that accept a preset session id (claude --session-id) get
         # one generated and stamped now. Others (codex) assign their own —
