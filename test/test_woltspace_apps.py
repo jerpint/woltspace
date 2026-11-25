@@ -429,7 +429,7 @@ def _gone_within(pid, seconds=5):
 @needs_procfs
 class TestProcessIdentity:
     @pytest.mark.parametrize("record", ["old", "wrong_start_ticks"])
-    def test_stop_does_not_signal_a_reused_pid(self, wolts_dir, record):
+    def test_stop_does_not_signal_a_reused_pid(self, wolts_dir, record, capsys):
         app = _make_app(wolts_dir, "notes", start="sleep 30", port=4200)
         elsewhere = wolts_dir / "elsewhere"
         elsewhere.mkdir()
@@ -437,11 +437,12 @@ class TestProcessIdentity:
         try:
             state = {"name": "notes", "port": 4200, "pid": stranger.pid}
             if record == "wrong_start_ticks":
-                state["start_ticks"] = int(apps._proc_stat(stranger.pid)[19]) + 1
+                state["started"] = str(int(apps._proc_stat(stranger.pid)[19]) + 1)
             apps._write_state("notes", state)
             assert apps.stop_app("notes") is True
             assert stranger.poll() is None  # untouched
             assert apps._read_state("notes") is None
+            assert "port 4200 may still be in use" in capsys.readouterr().out
         finally:
             stranger.kill()
             stranger.wait()
@@ -450,12 +451,13 @@ class TestProcessIdentity:
     def test_stop_signals_the_real_app(self, wolts_dir, record):
         _make_app(wolts_dir, "notes", start="sleep 30", port=4201)
         state = apps.start_app("notes")
-        assert isinstance(state["start_ticks"], int)
-        if record == "old":  # written by a release without start_ticks
-            state.pop("start_ticks")
+        assert state["started"] == apps._proc_stat(state["pid"])[19]
+        if record == "old":  # written by a release without a start time
+            state.pop("started")
             apps._write_state("notes", state)
         assert apps.stop_app("notes") is True
         assert _gone_within(state["pid"])
+        assert not Path(f"/proc/{state['pid']}").exists()  # reaped by us, its parent: no zombie left
 
     def test_restore_respawns_when_the_pid_was_reused(self, wolts_dir):
         _make_app(wolts_dir, "notes", start="sleep 30", port=4202)
@@ -484,3 +486,41 @@ class TestProcessIdentity:
         finally:
             parent.kill()
             parent.wait()
+
+
+class TestProcessIdentityWithoutProcfs:
+    """The macOS path: no /proc, identity comes from `ps -o pgid=,lstart=` (real ps here)."""
+
+    def test_ps_start_time_tells_the_app_from_a_stranger(self, wolts_dir, monkeypatch):
+        monkeypatch.setattr(apps, "_PROCFS", False)
+        _make_app(wolts_dir, "notes", start="sleep 30", port=4210)
+        elsewhere = wolts_dir / "elsewhere"
+        elsewhere.mkdir()
+        stranger = _spawn(elsewhere)
+        try:
+            state = apps.start_app("notes")
+            assert state["started"] and not state["started"].isdigit()  # an lstart date from ps
+            apps._write_state("other", {"name": "other", "port": 4211, "pid": stranger.pid,
+                                        "started": "Thu Jan  1 00:00:00 1970"})
+            assert apps.stop_app("other") is True
+            assert stranger.poll() is None
+            assert apps.stop_app("notes") is True
+            assert _gone_within(state["pid"])
+        finally:
+            stranger.kill()
+            stranger.wait()
+
+    def test_no_identity_means_no_signal(self, wolts_dir, monkeypatch, tmp_path):
+        monkeypatch.setattr(apps, "_PROCFS", False)
+        silent_ps = tmp_path / "ps"
+        silent_ps.write_text("#!/bin/sh\nexit 0\n")
+        silent_ps.chmod(0o755)
+        monkeypatch.setenv("WOLTSPACE_PS_BIN", str(silent_ps))
+        stranger = _spawn(tmp_path)
+        try:
+            apps._write_state("notes", {"name": "notes", "port": 4212, "pid": stranger.pid})
+            assert apps.stop_app("notes") is True
+            assert stranger.poll() is None
+        finally:
+            stranger.kill()
+            stranger.wait()

@@ -215,36 +215,53 @@ def _proc_stat(pid: int) -> list[str] | None:
     return text[text.rindex(")") + 2:].split()  # [0] state, [2] pgrp, [19] start time
 
 
+_PROCFS = Path("/proc/self/stat").exists()
+
+
 def _is_pid_alive(pid: int) -> bool:
-    """Alive and not a zombie. Only the parent can reap, so read the state, not kill()."""
+    """Alive and not a zombie. Reap it if it is our own exited child; otherwise read its state."""
     if not pid or pid <= 0:
         return False
+    try:
+        os.waitpid(pid, os.WNOHANG)
+    except OSError:
+        pass  # not our child: only its parent can reap it
     try:
         os.kill(pid, 0)
     except OSError:
         return False
+    if not _PROCFS:
+        return True  # macOS: kill() succeeded
     stat = _proc_stat(pid)
-    if stat is None:
-        return not Path("/proc/self").is_dir()  # no procfs (macOS): trust kill()
-    return stat[0] != "Z"
+    return stat is not None and stat[0] != "Z"
+
+
+def _identity(pid: int) -> tuple[int, str] | None:
+    """(process group, start time) of `pid`, or None when it can't be read."""
+    if _PROCFS:
+        stat = _proc_stat(pid)
+        return (int(stat[2]), stat[19]) if stat else None
+    try:  # macOS: no procfs, but ps reports both
+        out = subprocess.run([os.environ.get("WOLTSPACE_PS_BIN", "ps"), "-o", "pgid=,lstart=", "-p", str(pid)],
+                             capture_output=True, text=True, timeout=5, check=False).stdout.split()
+        return (int(out[0]), " ".join(out[1:])) if len(out) > 1 else None
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
 
 
 def _is_own_app(name: str, state: dict) -> bool:
     """Whether the recorded pid is still the app we started: pids are reused after a restart.
 
-    We start every app as its own process group leader. A record with `start_ticks` must
-    match the process start time; an older record falls back to its working folder.
+    Every app starts as its own process group leader. A record with `started` must match
+    the process start time. An older record falls back to its working folder (procfs only).
+    Anything that can't be checked is not ours, so it is never signalled.
     """
     pid = state.get("pid") or 0
-    if not _is_pid_alive(pid):
+    identity = _is_pid_alive(pid) and _identity(pid)
+    if not identity or identity[0] != pid:
         return False
-    stat = _proc_stat(pid)
-    if stat is None:
-        return True  # no procfs (macOS): no identity to check, as before
-    if int(stat[2]) != pid:
-        return False
-    if state.get("start_ticks") is not None:
-        return stat[19] == str(state["start_ticks"])
+    if state.get("started") is not None:
+        return identity[1] == str(state["started"])
     try:
         return Path(os.readlink(f"/proc/{pid}/cwd")).is_relative_to(app_dir(name).resolve())
     except OSError:
@@ -341,9 +358,9 @@ def start_app(name: str) -> dict:
         "pid": proc.pid,
         "start_command": app.start,
     }
-    stat = _proc_stat(proc.pid)
-    if stat:
-        state["start_ticks"] = int(stat[19])
+    identity = _identity(proc.pid)
+    if identity:
+        state["started"] = identity[1]
     _write_state(name, state)
 
     # Auto-share if public=true and sharing is enabled
@@ -416,7 +433,8 @@ def stop_app(name: str) -> bool:
             except OSError:
                 pass
     elif _is_pid_alive(pid):
-        print(f"[apps] {name}: pid {pid} is no longer this app; not signalled, state cleared")
+        print(f"[apps] {name}: pid {pid} can't be shown to be this app; not signalled, state cleared."
+              f" If the app is still running, port {state.get('port')} may still be in use.")
     _clear_state(name)
     return True
 
