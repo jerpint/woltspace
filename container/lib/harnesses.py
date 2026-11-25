@@ -932,6 +932,7 @@ HARNESSES: dict[str, dict] = {
             {"id": "gemini-4-hydrogen-high", "label": "Gemini 4 Hydrogen (High)"},
         ],
         "freeform_model": True,  # account-specific ids from agy models
+        "tier_model_picker": True,  # use the curated catalogue in lodge Settings
         "skill_invoke": "/{name}",
         # agy scans skills one level deep. Use the file directly when Woltspace
         # delivers its whole skill tree through a single plugin symlink.
@@ -1299,6 +1300,7 @@ def harness_metadata() -> list[dict]:
             # full selectable list for the model picker (merged view)
             "catalog": model_catalog(hid),
             "freeform_model": bool(entry.get("freeform_model")),
+            "tier_model_picker": entry.get("tier_model_picker", not entry.get("freeform_model")),
             "experimental": bool(entry.get("experimental")),
         })
     return out

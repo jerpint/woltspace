@@ -46,7 +46,7 @@
 
       {% set tier_rows = [('raccoon', 'Raccoon', 'thinker'), ('beaver', 'Beaver', 'builder'), ('otter', 'Otter', 'quick')] %}
       {% call panel('Default models', 'The model a wolt gets for each working style. A wolt with its own model keeps it.', 'new sessions') %}
-        {% for harness in harnesses if not harness.freeform_model and harness.catalog %}
+        {% for harness in harnesses if harness.tier_model_picker and harness.catalog %}
           {% set labels = {} %}
           {% for model in harness.catalog %}{% set _ = labels.update({model.id: model.label}) %}{% endfor %}
           <p class="ds-label settings-tier-harness">{{ harness.label }}</p>
