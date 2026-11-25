@@ -579,24 +579,27 @@ class TestProcessIdentity:
 class TestProcessIdentityWithoutProcfs:
     """The macOS path: ps supplies identity and lsof can confirm legacy records."""
 
-    @pytest.mark.parametrize("cwd", ["app", "elsewhere", None, "missing", "timeout", "nonzero"])
+    @pytest.mark.parametrize("cwd", ["app", "app with spaces", "elsewhere", None, "missing", "timeout", "nonzero"])
     def test_legacy_record_uses_lsof_cwd(self, wolts_dir, monkeypatch, cwd):
         monkeypatch.setattr(apps, "_PROCFS", False)
         monkeypatch.setattr(apps, "_is_pid_alive", lambda pid: True)
-        _make_app(wolts_dir, "notes", start="sleep 30", port=4215)
+        app_root = wolts_dir / "with spaces" if cwd == "app with spaces" else wolts_dir
+        monkeypatch.setattr(apps, "APPS_DIR", app_root / "apps")
+        _make_app(app_root, "notes", start="sleep 30", port=4215)
         app_path = apps.app_dir("notes").resolve()
+        matches_app = cwd in ("app", "app with spaces")
 
-        def run(argv, *, capture_output, text, timeout, check, env):
+        def run(argv, *, capture_output, text, timeout, check, env, errors=None):
             assert capture_output and text and timeout == 5 and env["LC_ALL"] == "C"
             if argv[0] == "ps":
                 return apps.subprocess.CompletedProcess(argv, 0, "123 Thu Jan  1 00:00:00 1970\n")
             assert argv == ["lsof", "-a", "-p", "123", "-d", "cwd", "-Fn"]
-            assert check
+            assert check and errors == "replace"
             if cwd == "missing":
                 raise FileNotFoundError("lsof")
             if cwd == "timeout":
                 raise apps.subprocess.TimeoutExpired(argv, timeout)
-            path = app_path if cwd == "app" else wolts_dir / "elsewhere"
+            path = app_path if matches_app else wolts_dir / "elsewhere"
             output = "p123\nfcwd\n" + (f"n{path}\n" if cwd else "")
             if cwd == "nonzero":
                 raise apps.subprocess.CalledProcessError(1, argv, output=f"n{app_path}\n")
@@ -607,7 +610,7 @@ class TestProcessIdentityWithoutProcfs:
         old = {"name": "notes", "pid": 123, "port": 4215}
         apps._write_state("notes", old)
         state = apps._read_state("notes")
-        if cwd == "app":
+        if matches_app:
             assert apps._is_own_app("notes", state) is True
             saved = apps._read_state("notes")
             assert saved == {**old, "started": "Thu Jan 1 00:00:00 1970"}

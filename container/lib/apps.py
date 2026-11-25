@@ -264,7 +264,7 @@ def _lsof_cwd(pid: int) -> str:
     """Working directory of one process on systems without procfs, or "" on failure."""
     try:
         result = subprocess.run(["lsof", "-a", "-p", str(pid), "-d", "cwd", "-Fn"],
-                                capture_output=True, text=True, timeout=5, check=True,
+                                capture_output=True, text=True, errors="replace", timeout=5, check=True,
                                 env={**os.environ, "LC_ALL": "C"})
     except (OSError, subprocess.SubprocessError):
         return ""
