@@ -577,7 +577,44 @@ class TestProcessIdentity:
 
 
 class TestProcessIdentityWithoutProcfs:
-    """The macOS path: no /proc, identity comes from `ps -o pgid=,lstart=` (real ps here)."""
+    """The macOS path: ps supplies identity and lsof can confirm legacy records."""
+
+    @pytest.mark.parametrize("cwd", ["app", "elsewhere", None, "missing", "timeout", "nonzero"])
+    def test_legacy_record_uses_lsof_cwd(self, wolts_dir, monkeypatch, cwd):
+        monkeypatch.setattr(apps, "_PROCFS", False)
+        monkeypatch.setattr(apps, "_is_pid_alive", lambda pid: True)
+        _make_app(wolts_dir, "notes", start="sleep 30", port=4215)
+        app_path = apps.app_dir("notes").resolve()
+
+        def run(argv, *, capture_output, text, timeout, check, env):
+            assert capture_output and text and timeout == 5 and env["LC_ALL"] == "C"
+            if argv[0] == "ps":
+                return apps.subprocess.CompletedProcess(argv, 0, "123 Thu Jan  1 00:00:00 1970\n")
+            assert argv == ["lsof", "-a", "-p", "123", "-d", "cwd", "-Fn"]
+            assert check
+            if cwd == "missing":
+                raise FileNotFoundError("lsof")
+            if cwd == "timeout":
+                raise apps.subprocess.TimeoutExpired(argv, timeout)
+            path = app_path if cwd == "app" else wolts_dir / "elsewhere"
+            output = "p123\nfcwd\n" + (f"n{path}\n" if cwd else "")
+            if cwd == "nonzero":
+                raise apps.subprocess.CalledProcessError(1, argv, output=f"n{app_path}\n")
+            return apps.subprocess.CompletedProcess(argv, 0, output)
+
+        monkeypatch.setattr(apps.subprocess, "run", run)
+        monkeypatch.setenv("WOLTSPACE_PS_BIN", "ps")
+        old = {"name": "notes", "pid": 123, "port": 4215}
+        apps._write_state("notes", old)
+        state = apps._read_state("notes")
+        if cwd == "app":
+            assert apps._is_own_app("notes", state) is True
+            saved = apps._read_state("notes")
+            assert saved == {**old, "started": "Thu Jan 1 00:00:00 1970"}
+            assert apps._is_own_app("notes", saved) is True
+        else:
+            assert apps._is_own_app("notes", state) is None
+            assert apps._read_state("notes") == old
 
     def test_start_time_does_not_depend_on_the_servers_zone(self, wolts_dir, monkeypatch):
         import signal
@@ -631,9 +668,10 @@ class TestProcessIdentityWithoutProcfs:
             stranger.wait()
 
     def test_a_live_legacy_record_is_neither_signalled_nor_started_over(self, wolts_dir, monkeypatch):
-        """A record from before `started`, on a system without procfs: the app can't be verified."""
+        """A legacy record remains unverified when lsof cannot read the working directory."""
         import signal
         monkeypatch.setattr(apps, "_PROCFS", False)
+        monkeypatch.setattr(apps, "_lsof_cwd", lambda pid: "")
         _make_app(wolts_dir, "notes", start="sleep 30", port=4213)
         state = apps.start_app("notes")
         try:

@@ -260,6 +260,17 @@ def _identity(pid: int) -> tuple[int, str] | None:
         return None
 
 
+def _lsof_cwd(pid: int) -> str:
+    """Working directory of one process on systems without procfs, or "" on failure."""
+    try:
+        result = subprocess.run(["lsof", "-a", "-p", str(pid), "-d", "cwd", "-Fn"],
+                                capture_output=True, text=True, timeout=5, check=True,
+                                env={**os.environ, "LC_ALL": "C"})
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return next((line[1:] for line in result.stdout.splitlines() if line.startswith("n/")), "")
+
+
 def _reap_own(pid: int, started) -> None:
     """Collect our own exited app, never another child: only a pid with the recorded start time."""
     identity = _identity(pid) if pid and pid > 0 and started is not None else None
@@ -278,7 +289,7 @@ def _is_own_app(name: str, state: dict) -> bool | None:
     record from before start times were saved that the working folder can't confirm): it is
     never signalled and nothing is started over it.
     Every app starts as its own process group leader. A record with `started` must match
-    the process start time. An older record is confirmed only by its working folder (procfs);
+    the process start time. An older record is confirmed only by its working folder;
     it then gets `started`, once. Its command line proves nothing: another app may run the same.
     """
     pid = state.get("pid") or 0
@@ -294,7 +305,8 @@ def _is_own_app(name: str, state: dict) -> bool | None:
         return identity[1] == str(state["started"])
     confirmed = False
     try:  # inside the app folder is ours; elsewhere proves nothing (an app may cd away)
-        confirmed = _PROCFS and Path(os.readlink(f"/proc/{pid}/cwd")).is_relative_to(app_dir(name).resolve())
+        cwd = os.readlink(f"/proc/{pid}/cwd") if _PROCFS else _lsof_cwd(pid)
+        confirmed = bool(cwd) and Path(cwd).is_relative_to(app_dir(name).resolve())
     except OSError:
         pass
     if not confirmed:
