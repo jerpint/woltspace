@@ -206,12 +206,102 @@ def _clear_state(name: str) -> None:
         conn.execute("DELETE FROM apps_running WHERE name=?", (name,))
 
 
+def _proc_stat(pid: int) -> list[str] | None:
+    """/proc/<pid>/stat fields from the state letter on, or None when they can't be read."""
+    try:
+        text = Path(f"/proc/{int(pid)}/stat").read_text()
+        fields = text[text.rindex(")") + 2:].split()  # [0] state, [2] pgrp, [19] start time
+        int(fields[2])
+        fields[19]
+    except (OSError, ValueError, IndexError):
+        return None
+    return fields
+
+
+_PROCFS = Path("/proc/self/stat").exists()
+
+
 def _is_pid_alive(pid: int) -> bool:
+    """False only when the process is shown to be gone: no such pid, or a zombie.
+
+    Anything we can't read counts as alive.
+    """
+    if not pid or pid <= 0:
+        return False
     try:
         os.kill(pid, 0)
-        return True
-    except OSError:
+    except ProcessLookupError:
         return False
+    except OSError:
+        pass  # e.g. another user's process: it exists
+    stat = _proc_stat(pid) if _PROCFS else None
+    return stat is None or stat[0] != "Z"
+
+
+def _ps(pid: int, fields: str) -> str:
+    """`ps -o <fields>` for one pid, in a fixed locale and zone so its dates compare; "" on failure."""
+    try:
+        return subprocess.run([os.environ.get("WOLTSPACE_PS_BIN", "ps"), "-ww", "-o", fields, "-p", str(pid)],
+                              capture_output=True, text=True, timeout=5, check=False,
+                              env={**os.environ, "LC_ALL": "C", "TZ": "UTC"}).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def _identity(pid: int) -> tuple[int, str] | None:
+    """(process group, start time) of `pid`, or None when it can't be read."""
+    if _PROCFS:
+        stat = _proc_stat(pid)
+        return (int(stat[2]), stat[19]) if stat else None
+    out = _ps(pid, "pgid=,lstart=").split()  # macOS: no procfs, but ps reports both
+    try:
+        return (int(out[0]), " ".join(out[1:])) if len(out) > 1 else None
+    except ValueError:
+        return None
+
+
+def _reap_own(pid: int, started) -> None:
+    """Collect our own exited app, never another child: only a pid with the recorded start time."""
+    identity = _identity(pid) if pid and pid > 0 and started is not None else None
+    if identity and identity[1] == str(started):
+        try:
+            os.waitpid(pid, os.WNOHANG)
+        except OSError:
+            pass  # not our child
+
+
+def _is_own_app(name: str, state: dict) -> bool | None:
+    """Whether the recorded pid is still the app we started: pids are reused after a restart.
+
+    True: ours. False: gone, or provably another process (another process group, or another
+    recorded start time). None: alive, but not provable either way (unreadable identity, or a
+    record from before start times were saved that the working folder can't confirm): it is
+    never signalled and nothing is started over it.
+    Every app starts as its own process group leader. A record with `started` must match
+    the process start time. An older record is confirmed only by its working folder (procfs);
+    it then gets `started`, once. Its command line proves nothing: another app may run the same.
+    """
+    pid = state.get("pid") or 0
+    _reap_own(pid, state.get("started"))
+    if not _is_pid_alive(pid):
+        return False
+    identity = _identity(pid)
+    if not identity:
+        return None
+    if identity[0] != pid:
+        return False
+    if state.get("started") is not None:
+        return identity[1] == str(state["started"])
+    confirmed = False
+    try:  # inside the app folder is ours; elsewhere proves nothing (an app may cd away)
+        confirmed = _PROCFS and Path(os.readlink(f"/proc/{pid}/cwd")).is_relative_to(app_dir(name).resolve())
+    except OSError:
+        pass
+    if not confirmed:
+        return None
+    state["started"] = identity[1]
+    _write_state(name, state)
+    return True
 
 
 def running_apps() -> list[dict]:
@@ -227,8 +317,7 @@ def running_apps() -> list[dict]:
     """
     running = []
     for state in _all_states():
-        pid = state.get("pid")
-        if pid and _is_pid_alive(pid):
+        if _is_own_app(state["name"], state) is not False:
             state["alive"] = True
             running.append(state)
     return running
@@ -242,8 +331,7 @@ def intended_apps() -> list[dict]:
     """
     intended = []
     for state in _all_states():
-        pid = state.get("pid")
-        state["alive"] = bool(pid and _is_pid_alive(pid))
+        state["alive"] = _is_own_app(state["name"], state) is not False
         intended.append(state)
     return intended
 
@@ -261,7 +349,7 @@ def start_app(name: str) -> dict:
 
     # Check if already running
     existing = _read_state(name)
-    if existing and _is_pid_alive(existing.get("pid", 0)):
+    if existing and _is_own_app(name, existing) is not False:
         return existing
 
     # Use port from manifest — check for conflicts with running apps
@@ -306,6 +394,9 @@ def start_app(name: str) -> dict:
         "pid": proc.pid,
         "start_command": app.start,
     }
+    identity = _identity(proc.pid)
+    if identity:
+        state["started"] = identity[1]
     _write_state(name, state)
 
     # Auto-share if public=true and sharing is enabled
@@ -342,9 +433,14 @@ def apps_restore() -> list[dict]:
             continue
 
         pid = state.get("pid")
-        if pid and _is_pid_alive(pid):
+        own = _is_own_app(name, state)
+        if own:
             actions.append({"name": name, "action": "survived", "pid": pid})
             print(f"[apps] {name} survived (pid {pid})")
+            continue
+        if own is None:
+            actions.append({"name": name, "action": "unverified", "pid": pid})
+            print(f"[apps] {name}: pid {pid} is alive but can't be shown to be this app; left as is")
             continue
 
         # Dead PID — respawn
@@ -363,13 +459,17 @@ def stop_app(name: str) -> bool:
     state = _read_state(name)
     if not state:
         return False
+    pid = state.get("pid")
+    own = _is_own_app(name, state)
+    if own is None:  # alive, unverifiable: touch nothing, keep the record
+        raise RuntimeError(f"Can't confirm that pid {pid} is still {name}, so it was not stopped."
+                           f" Stop that process yourself if it is {name}, then stop {name} again.")
     # Kill tunnel first if running
     tunnel_pid = state.get("tunnel_pid")
     if tunnel_pid:
         stop_cloudflared(tunnel_pid)
     # Kill the app process
-    pid = state.get("pid")
-    if pid and _is_pid_alive(pid):
+    if own:
         try:
             os.killpg(os.getpgid(pid), signal.SIGTERM)
         except OSError:
@@ -377,6 +477,9 @@ def stop_app(name: str) -> bool:
                 os.kill(pid, signal.SIGTERM)
             except OSError:
                 pass
+    elif _is_pid_alive(pid):
+        print(f"[apps] {name}: pid {pid} is another process now; not signalled, state cleared."
+              f" If the app is still running, port {state.get('port')} may still be in use.")
     _clear_state(name)
     return True
 
@@ -386,10 +489,13 @@ def restart_app(name: str) -> dict:
     if not get_app(name):
         raise ValueError(f"App {name} not found")
     previous = _read_state(name) or {}
-    previous_pid = previous.get("pid", 0)
+    previous_pid = previous.get("pid", 0) if _is_own_app(name, previous) else 0
     stop_app(name)
     deadline = time.monotonic() + 5
-    while previous_pid and _is_pid_alive(previous_pid) and time.monotonic() < deadline:
+    while previous_pid and time.monotonic() < deadline:
+        _reap_own(previous_pid, previous.get("started"))
+        if not _is_pid_alive(previous_pid):
+            break
         time.sleep(0.05)
     if previous_pid and _is_pid_alive(previous_pid):
         raise RuntimeError(f"App {name} is still stopping")
