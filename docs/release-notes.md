@@ -1,7 +1,6 @@
 # Woltspace 0.6.0rc5
 
-Python **0.6.0rc5** is a release candidate. The TUI stays at
-**@woltspace/tui 0.5.4**.
+Python **0.6.0rc5** is a release candidate, with **@woltspace/tui 0.6.0**.
 
 A plain `woltspace update` never installs a release candidate: install this
 one by naming it with `--version 0.6.0rc5`. Try it on a lodge you can
@@ -9,6 +8,10 @@ restore.
 
 ## Since 0.6.0rc4
 
+- **The TUI moves to 0.6.0.** A 0.5 TUI on a 0.6 lodge kept warning that the
+  lodge was newer and to install `@woltspace/tui@latest`, which was that same
+  0.5 TUI. The code is unchanged; only the version moves, so the warning
+  stops. It still works with 0.5 lodges.
 - **Keep every session: an opt-in session archive.** Engines delete their own
   chats (Claude Code after 30 days by default). With
   `"sessions": {"archive": true}` in `woltspace.json`, the lodge keeps a copy

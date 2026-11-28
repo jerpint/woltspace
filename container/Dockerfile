@@ -126,7 +126,7 @@ ENV WORKTUI_DIR="/workspace/wolts/.worktui"
 ARG WOLTSPACE_PYPI_VERSION=0.6.0rc5
 # Both pins match this checkout's release (scripts/verify-packages.py). The two
 # artifacts are versioned independently. Pass a version to build another one.
-ARG WOLTSPACE_TUI_VERSION=0.5.4
+ARG WOLTSPACE_TUI_VERSION=0.6.0
 # --build-arg USE_LOCAL=true installs a wheel built from the build context
 # instead of PyPI (and the context's tui/ instead of npm). Same install shape,
 # same code path — only the source of the artifact differs.
