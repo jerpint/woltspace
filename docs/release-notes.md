@@ -168,12 +168,12 @@ are sure you are staying on 0.6:
 
 ```sh
 woltspace backup --tag pre-0.6
-woltspace update --version 0.6.0rc4
+woltspace update --version 0.6.0rc5
 ```
 
 Native upgrades stop and restart the control plane while preserving tmux
 sessions. A container lodge rebuilds from the host with
-`woltspace rebuild --version 0.6.0rc4`.
+`woltspace rebuild --version 0.6.0rc5`.
 
 To go back to 0.5.25, stop the lodge, reinstall 0.5.25 and start it from
 the backup. `woltspace restore` unpacks into a new folder and prints the exact
