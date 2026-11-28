@@ -1,11 +1,50 @@
-# Woltspace 0.6.0rc4
+# Woltspace 0.6.0rc5
 
-Python **0.6.0rc4** is a release candidate. The TUI stays at
-**@woltspace/tui 0.5.4**.
+Python **0.6.0rc5** is a release candidate, with **@woltspace/tui 0.6.0**.
 
 A plain `woltspace update` never installs a release candidate: install this
-one by naming it with `--version 0.6.0rc4`. Try it on a lodge you can
+one by naming it with `--version 0.6.0rc5`. Try it on a lodge you can
 restore.
+
+## Since 0.6.0rc4
+
+- **The TUI moves to 0.6.0.** A 0.5 TUI on a 0.6 lodge kept warning that the
+  lodge was newer and to install `@woltspace/tui@latest`, which was that same
+  0.5 TUI. The code is unchanged; only the version moves, so the warning
+  stops. It still works with 0.5 lodges.
+- **Keep every session: an opt-in session archive.** Engines delete their own
+  chats (Claude Code after 30 days by default). With
+  `"sessions": {"archive": true}` in `woltspace.json`, the lodge keeps a copy
+  of every engine session file in `.space/session-archive/`, can send it
+  encrypted to its backup bucket, list it, restore it byte for byte, and
+  delete one session on purpose. Woltspace never writes to any engine's
+  settings. Unset, nothing changes (#680).
+- **WhatsApp, opt-in.** The Connectors page can set up WhatsApp through the
+  Agent Platform: the key is entered in a private terminal, and the
+  connector serves one configured creator, with the same commands, pickers
+  and inbox as the other chat connectors (#683).
+- **Antigravity, experimental.** A new engine runs Google's Antigravity
+  (`agy`) in its own terminal, using the machine's Antigravity login. It
+  starts in Ask, resumes its exact conversation, and is off unless you pick
+  it (#682).
+- **Codex keeps its permission level.** A native Codex session now passes
+  Ask, Auto or Bypass to its app-server on start and on resume, and refuses
+  to start on a permission setting it doesn't recognise. This fixes the
+  rc2 known limitation for Codex with native inbox hints (#676).
+- **Stopping an app only stops that app.** After a restart, an app's saved
+  process number can belong to another program. The lodge now checks a
+  process really is the app (its start time, or for older records its
+  folder, on macOS too) before stopping or keeping it; if it can't tell, it
+  touches nothing and says so (#687).
+- **No Inbox tab in the lodge sidebar.** Waiting mail still shows in the
+  pill on each wolt's site, and the page still opens at `/inbox` (#688).
+- **Resume with an empty body works.** `POST /sessions/{name}/resume` with an
+  empty, invalid or list body now resumes with no prompt instead of an error
+  (#681).
+- **Turning the inbox on: restart running sessions.** A session gets the
+  inbox's hooks when it starts, so sessions already running when you turn
+  the inbox on are not woken by it. Restart them; every session started
+  after works.
 
 ## Since 0.6.0rc3
 
@@ -129,12 +168,12 @@ are sure you are staying on 0.6:
 
 ```sh
 woltspace backup --tag pre-0.6
-woltspace update --version 0.6.0rc4
+woltspace update --version 0.6.0rc5
 ```
 
 Native upgrades stop and restart the control plane while preserving tmux
 sessions. A container lodge rebuilds from the host with
-`woltspace rebuild --version 0.6.0rc4`.
+`woltspace rebuild --version 0.6.0rc5`.
 
 To go back to 0.5.25, stop the lodge, reinstall 0.5.25 and start it from
 the backup. `woltspace restore` unpacks into a new folder and prints the exact

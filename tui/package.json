@@ -1,6 +1,6 @@
 {
   "name": "@woltspace/tui",
-  "version": "0.5.4",
+  "version": "0.6.0",
   "description": "woltspace tui - terminal cockpit for the colony",
   "license": "MIT",
   "type": "module",

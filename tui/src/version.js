@@ -1,5 +1,5 @@
 export const packageName = '@woltspace/tui';
-export const packageVersion = '0.5.4';
+export const packageVersion = '0.6.0';
 
 // One package, two bins. Both answer `--version --json` with the same name and
 // version and say which bin they are, so the Python side can tell a real
