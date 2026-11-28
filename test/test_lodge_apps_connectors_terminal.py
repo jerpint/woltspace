@@ -95,6 +95,7 @@ def test_keeper_update_failure_paths_are_400(monkeypatch):
 
 
 def test_restart_waits_for_old_pid_and_verifies_new_one(monkeypatch):
+    monkeypatch.setattr(apps, "_is_own_app", lambda name, state: True)
     monkeypatch.setattr(apps, "get_app", lambda name: object())
     monkeypatch.setattr(apps, "_read_state", lambda name: {"pid": 7})
     stop = Mock(return_value=True)
@@ -109,6 +110,7 @@ def test_restart_waits_for_old_pid_and_verifies_new_one(monkeypatch):
 
 
 def test_restart_refuses_to_spawn_while_old_pid_lives(monkeypatch):
+    monkeypatch.setattr(apps, "_is_own_app", lambda name, state: True)
     monkeypatch.setattr(apps, "get_app", lambda name: object())
     monkeypatch.setattr(apps, "_read_state", lambda name: {"pid": 7})
     monkeypatch.setattr(apps, "stop_app", Mock(return_value=True))
@@ -182,3 +184,12 @@ def test_ui_keeps_sharing_read_only_and_guards_terminal_resize():
     assert "offsetWidth<50" in terminal_js
     assert "term.cols>=20&&term.rows>=5" in terminal_js
     assert (ROOT / "public" / "static" / "SymbolsNerdFontMono-Regular.woff2").stat().st_size > 1000
+
+
+def test_stop_route_reports_an_unverifiable_app_as_a_conflict(monkeypatch):
+    def refuse(name):
+        raise RuntimeError("Can't confirm that pid 7 is still notes")
+    monkeypatch.setattr(server_app, "stop_app", refuse)
+    response = TestClient(server_app.app, base_url="http://localhost:7777").post("/apps/notes/stop")
+    assert response.status_code == 409
+    assert "Can't confirm" in response.json()["error"]
