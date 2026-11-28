@@ -48,6 +48,7 @@ WCODEX = str(_BIN_DIR / "wcodex")
 WOPENCODE = str(_BIN_DIR / "wopencode")
 WPI = str(_BIN_DIR / "wpi")
 WHERMES = str(_BIN_DIR / "whermes")
+WAGY = str(_BIN_DIR / "wagy")
 
 # Each engine's flags per permission level, and per isolation where they
 # differ. A level an engine does not list is refused, never replaced by another.
@@ -68,6 +69,7 @@ POLICY_FLAGS = {
     "opencode": {"prompt": [], "bypass": ["--auto"]},
     "hermes": {"prompt": [], "bypass": ["--yolo"]},
     "pi": {"bypass": []},  # Pi has no tool approvals at all
+    "antigravity": {"prompt": {"host": []}},  # applied via --settings
 }
 LEVEL_NAMES = {"prompt": "Ask", "auto": "Auto", "bypass": "Bypass"}
 LEVEL_LABELS = {("codex", "prompt"): "Ask (sandbox escalations)"}
@@ -603,6 +605,44 @@ def _hermes_discover_session_id(
     return rows[-1][0]
 
 
+def _antigravity_command(entry: dict, mode: str, *, session_id: str = "",
+                         session_name: str = "", model: str = "", prompt: str = "",
+                         resume_id: str = "", execution_policy=None) -> str:
+    """Launch Google's interactive CLI with settings scoped to this process."""
+    parts = [entry["wrapper"]]
+    if mode == "login":
+        return shlex.join(parts)  # agy opens its interactive sign-in flow
+    policy_flags("antigravity", execution_policy)
+    # Since 1.5.7, agy defaults to Auto when available. Explicitly start in
+    # default mode and request review, including when the owner uses Auto
+    # in their standalone CLI.
+    settings = {"agentMode": "", "toolPermission": "request-review"}
+    if mode == "spawn":
+        if session_name:
+            # A process-scoped callback carries the Woltspace session name.
+            # No shared hook config or cwd-based guessing between launches.
+            settings["statusLine"] = {
+                "type": "command",
+                "enabled": True,
+                "stack_with_default": True,
+                "command": shlex.join([
+                    str(_BIN_DIR / "woltspace-python"),
+                    str(Path(__file__).with_name("antigravity_status.py")),
+                    session_name,
+                ]),
+            }
+    elif mode == "resume":
+        if not resume_id:
+            raise ValueError("Antigravity resume requires a conversation id")
+        parts += ["--conversation", resume_id]
+    else:
+        raise ValueError(f"unknown mode: {mode}")
+    parts += ["--settings", json.dumps(settings, separators=(",", ":"))]
+    if model:
+        parts += ["--model", model]
+    return shlex.join(parts)
+
+
 # Tier defaults shared by the OpenRouter-backed harnesses (Pi, Hermes).
 # Ids checked against openrouter.ai/api/v1/models on 2026-10-10.
 OPENROUTER_TIER_MODELS = {
@@ -868,6 +908,48 @@ HARNESSES: dict[str, dict] = {
         "paste_settle": 0.5,
         "session_store": "database",  # state.db: not in the session archive, snapshots only
     },
+    "antigravity": {
+        "wrapper": WAGY,
+        "command": _antigravity_command,
+        "label": "Antigravity",
+        "emoji": "🪁",
+        "icon": "/static/engines/antigravity.svg",
+        "binary": "agy",
+        "process_names": {"agy"},
+        "experimental": True,
+        "native_only": True,
+        # Model ids from agy models on 1.5.15.
+        "models": {
+            "raccoon": "gemini-4-carbon-high",
+            "beaver": "gemini-4-neon-high",
+            "otter": "gemini-4-hydrogen-high",
+            "rodent": "gemini-4-carbon-high",
+            "wolf": "gemini-4-neon-high",
+        },
+        "model_catalog": [
+            {"id": "gemini-4-neon-high", "label": "Gemini 4 Neon (High)"},
+            {"id": "gemini-4-carbon-high", "label": "Gemini 4 Carbon (High)"},
+            {"id": "gemini-4-hydrogen-high", "label": "Gemini 4 Hydrogen (High)"},
+        ],
+        "freeform_model": True,  # account-specific ids from agy models
+        "tier_model_picker": True,  # use the curated catalogue in lodge Settings
+        "skill_invoke": "/{name}",
+        # agy scans skills one level deep. Use the file directly when Woltspace
+        # delivers its whole skill tree through a single plugin symlink.
+        "platform_skill_invoke": (
+            "Read and follow $WOLTSPACE_WOLT_HOME/.claude/skills/woltspace/{name}/SKILL.md"
+        ),
+        "instructions_file": "AGENTS.md",
+        "auth_file": None,  # the native CLI manages authentication
+        "preset_session_id": False,
+        "discover_session_id": None,  # the per-process status line reports it
+        # `agy -i` can send the opening prompt while trust is still pending.
+        "prompt_via_paste": True,
+        "preserve_boot_prompt_newlines": True,
+        "input_ready_marker": "? for shortcuts",
+        "leading_slash_opens_palette": True,
+        "paste_settle": 0.5,
+    },
 }
 
 # Process names that mean "still launching" — the wrapper chain before the
@@ -895,14 +977,14 @@ def _engine_on_path(binary: str) -> bool:
 def harness_install_problem(name: str | None, *, isolation: str) -> str:
     """Why `name` cannot start here, or "" when it can.
 
-    Only native lodges are checked: there the wrapper execs the engine from the
-    owner's PATH, and a missing one used to surface only as exit 127 in the
-    boot log. In a container the program lives in the image, not on this
-    process's PATH.
+    A native lodge resolves the binary on the owner's PATH. A container
+    bundles its engines, so only engines marked native-only are refused there.
     """
-    if isolation != "host":
-        return ""
     entry = get_harness(name)
+    if isolation != "host":
+        if entry.get("native_only"):
+            return f'{entry["label"]} requires a native Woltspace lodge.'
+        return ""
     binary = entry.get("binary") or resolve_harness(name)
     if _engine_on_path(binary):
         return ""
@@ -1218,6 +1300,7 @@ def harness_metadata() -> list[dict]:
             # full selectable list for the model picker (merged view)
             "catalog": model_catalog(hid),
             "freeform_model": bool(entry.get("freeform_model")),
+            "tier_model_picker": entry.get("tier_model_picker", not entry.get("freeform_model")),
             "experimental": bool(entry.get("experimental")),
         })
     return out
@@ -1243,20 +1326,20 @@ def get_default_harness() -> str:
 def get_default_level(
     harness: str | None, isolation: str, *, warn_unsupported: bool = False
 ) -> str | None:
-    """woltspace.json "sessions.default_execution_policy" if this engine offers that
-    level here, else None (the built-in default applies)."""
+    """Use the lodge's level if offered, or Ask for an Ask-only engine."""
+    offered = levels(isolation).get(resolve_harness(harness), {})
     try:
         cfg = json.loads(_woltspace_json_path().read_text())
         level = cfg.get("sessions", {}).get("default_execution_policy")
     except (json.JSONDecodeError, OSError, AttributeError):
-        return None
-    if not isinstance(level, str):  # a malformed value must not break every spawn
-        return None
-    if level in levels(isolation).get(resolve_harness(harness), {}):
-        return level
-    if warn_unsupported and level in ("prompt", "auto", "bypass"):
-        logger.warning("Unsupported inherited execution policy: requested=%s", level)
-    return None
+        level = None
+    if isinstance(level, str):
+        if level in offered:
+            return level
+        if warn_unsupported and level in LEVEL_NAMES:
+            logger.warning("Unsupported inherited execution policy: requested=%s", level)
+    # A pre-existing grant would otherwise make the host default to Bypass.
+    return "prompt" if offered.keys() == {"prompt"} else None
 
 
 def _load_lodge_settings_for_write() -> tuple[Path, dict]:

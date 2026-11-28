@@ -63,10 +63,10 @@ the lodge just to add one. Existing sessions may retain old skill lists/content.
 Direct harness launches do not refresh links.
 
 Check `<wolt>/.claude/skills/lodge-<name>` resolves to the intended source and that
-its `SKILL.md` and supporting files are readable. Claude/OpenCode use this path;
-Codex uses `.agents/skills`, normally bridged to it. Separately owned agent skill
-directories receive their own links. Verify actual discovery in the target fresh
-session before claiming success, especially when its workdir is outside the wolt.
+its `SKILL.md` and supporting files are readable. Claude and OpenCode use
+this path. Codex and Antigravity read `.agents/skills`, normally bridged to it.
+Separately owned agent skill directories receive their own links. Verify
+discovery in a fresh session, especially when its workdir is outside the wolt.
 
 A real same-name skill or unrelated symlink is a preserved per-wolt override.
 For a private variant, copy the source into that wolt's own skill folder with the

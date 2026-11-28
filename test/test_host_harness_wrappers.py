@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parent.parent
         ("wcodex", "codex"),
         ("wopencode", "opencode"),
         ("wpi", "pi"),
+        ("wagy", "agy"),
     ],
 )
 def test_host_wrapper_preserves_home_and_writes_no_wolt_credentials(

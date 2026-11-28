@@ -6,8 +6,8 @@ Woltspace's installed package. They are local to this lodge: Woltspace does not
 publish, upload, fetch or distribute them.
 
 Use the Woltspace-owned `lodge-skills` helper for setup and troubleshooting.
-On copy delivery it is named `woltspace-lodge-skills`; on plugin delivery it
-uses the platform skill namespace for your harness.
+On copy delivery it is named `woltspace-lodge-skills`. With plugin delivery,
+use your harness's platform skill invocation.
 
 ## Add a skill
 
@@ -63,8 +63,9 @@ loaded skill lists and instructions; start a new session after changing skills.
 Directly launching a harness outside Woltspace does not run this refresh.
 
 Each skill gets a relative link in the wolt's `.claude/skills/`. Claude and
-OpenCode use that path; Codex uses the existing `.agents/skills` bridge. If the
-wolt owns a separate `.agents/skills` directory, links are added there too.
+OpenCode use that path. Codex and Antigravity use the existing `.agents/skills`
+bridge. If the wolt owns a separate `.agents/skills` directory, links are added
+there too.
 This works independently of platform copy/plugin skill delivery.
 
 A real skill directory or unrelated symlink at the same name is a per-wolt

@@ -1,6 +1,6 @@
 # Adding a Harness
 
-A **harness** is the CLI coding agent a session runs on — Claude Code and Codex, plus opencode, Pi and Hermes, which are marked `"experimental": True` until real use proves them. Pickers label experimental engines. This guide is for contributors bringing their own. If you can drive an agent from a terminal, keep per-agent state under a directory, and resume a past conversation, it can be a woltspace harness.
+A **harness** is the CLI coding agent a session runs on — Claude Code and Codex, plus opencode, Pi, Hermes and Antigravity, which are marked `"experimental": True` until real use proves them. Pickers label experimental engines. This guide is for contributors bringing their own. If you can drive an agent from a terminal, keep per-agent state under a directory, and resume a past conversation, it can be a woltspace harness.
 
 ## The mental model
 
@@ -38,6 +38,8 @@ Each `HARNESSES` entry is a dict. Fields, with what they mean and how `claude` v
 | `paste_settle` | Seconds to wait between pasting a message and sending Enter, for human-attachable TUIs. `claude`: `0.5` (it drops an Enter that lands while it attaches pasted image paths); `codex`: `0.5` (its TUI folds an immediate Enter into the paste). Tune this live — it breaks silently. |
 | `prompt_via_paste` | `True` if the CLI **can't** reliably take the opening prompt on the command line, so it must be pasted into the TUI after boot instead. Default (absent) = pass the prompt on the CLI like `claude`/`codex`. `opencode`: `True` (see the opencode gotcha below). |
 | `tui_ready_marker` | Only read when `prompt_via_paste` is `True`: a substring that appears in the pane once the TUI has painted and is accepting input (e.g. a footer hint bar). `deliver_boot_prompt` waits for this — after it's been *absent* at least once — before pasting. `opencode`: `"ctrl+p commands"`. Re-check the string when bumping the CLI version. |
+| `input_ready_marker` | Optional text in the visible composer before a session accepts pasted input. Also used for boot-paste readiness when no `tui_ready_marker` is set. Antigravity uses its shortcut footer, which is absent during workspace trust, sign-in and command confirmation. |
+| `preserve_boot_prompt_newlines` | Set when the boot-paste path should pass multiline text through unchanged. Check that the CLI accepts bracketed paste as one message. |
 | `leading_slash_opens_palette` | `True` if a pasted message starting with `/` opens the TUI's command palette instead of submitting. When set, `_guard_paste_text` prepends a space so the message sends as literal text (our skills are invoked as `/name`). `opencode`: `True`. |
 | `flatten_paste_newlines` | `True` if the TUI drops newlines from a pasted message (joining lines with no separator → run-on text). When set, `_guard_paste_text` flattens `\n` → space so a multi-line message (e.g. an attributed IWCL message) stays readable. Leave unset for paste-aware TUIs (`claude`, `codex`) that keep pasted newlines as literal line breaks. `opencode`: `True`. |
 
@@ -77,6 +79,24 @@ To implement `discover_session_id`: find where the agent writes new session/roll
 
 ## Experimental harnesses: known limits
 
+- **Antigravity** (tested with `agy` 1.5.15) is available on native lodges. Install
+  and sign in through the Google CLI using the OS account that runs Woltspace.
+  Complete first-run setup and review any workspace trust prompt in the terminal.
+  Select Antigravity in the engine picker or set `"harness": "antigravity"` in the
+  wolt's manifest. Use `agy models` to check which model IDs your account offers.
+  Woltspace starts the CLI in Ask mode and the CLI honors existing permission rules.
+  The CLI keeps conversation history in the owner's home.
+  A status-line callback scoped to each launch records its first conversation UUID
+  after initialization. Resume uses that UUID. The launch needs a captured UUID
+  before it can be resumed after exit.
+  Woltspace holds the opening prompt until the composer is visible. IWCL and
+  the default inbox delivery use the same composer check before pasting.
+  A lodge using native inbox hints can still read queued mail in Antigravity with
+  `woltspace inbox fetch`. Enable paste hints for automatic terminal delivery.
+  Copy delivery uses the wolt's `.agents/skills` bridge. Plugin delivery points
+  the boot prompt directly to the linked platform `SKILL.md`.
+  [Google CLI reference](https://antigravity.google/docs/cli/reference/) ·
+  [Status-line callback](https://antigravity.google/docs/cli/statusline/)
 - **Pi** (1.1.0): runs with `--no-approve`, so a working folder's `.pi` resources (extensions, settings, skills) never load: with `--approve`, a cloned repo's `.pi/extensions` would run as code. The wolt's own skills come in through `--skill` (wpi). Natively Pi shares the owner's `~/.pi`, sessions included. Needs Node 22.19+. Not in the container image.
 - **Hermes** (0.19.0): one Hermes home per wolt (`<wolt>/.hermes`), even natively, because Hermes keeps a persona and memory there. whermes rewrites its `config.yaml` every start (skills, memory off, queued input). Authenticates from `OPENROUTER_API_KEY` in the lodge environment. Its session id is discovered from `state.db`; two sessions of one wolt started within ~5 s in the same folder can swap ids. Native only; not in the container image.
 - Neither has been run from Telegram/Slack-started sessions or under plugin skill delivery yet.

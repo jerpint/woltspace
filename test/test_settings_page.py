@@ -50,17 +50,45 @@ def test_settings_page_keeps_only_lodge_wide_harness_controls(tmp_path, monkeypa
     assert "--engine-icon: url('/static/engines/hermes.svg')" in body
     assert "Available" not in body
     assert "Not installed" not in body
-    # Default models is a lodge-wide control: one select per working style for
-    # engines with a fixed model list. Engines that take any typed model name
-    # (opencode) are not listed there.
+    # Default models includes Antigravity's catalogue even though it accepts
+    # custom IDs for per-wolt model pins.
     assert "Default models" in body
-    assert body.count("data-tier-select") == 6
+    assert body.count("data-tier-select") == 9
     assert 'id="tier-codex-raccoon"' in body
     assert "GPT-4o" not in body
     assert 'data-wolt=' not in body
     assert 'name="default-harness"' in body
     assert 'role="dialog"' in body
     assert 'aria-labelledby="create-modal-title"' in body
+
+
+def test_antigravity_defaults_are_selectable_and_save(tmp_path, monkeypatch):
+    monkeypatch.setattr(app_module, "WOLTS_DIR", tmp_path)
+    monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
+
+    body = asyncio.run(_request("GET", "/settings")).text
+    for tier, initial in {
+        "raccoon": "gemini-4-carbon-high",
+        "beaver": "gemini-4-neon-high",
+        "otter": "gemini-4-hydrogen-high",
+    }.items():
+        field = f'id="tier-antigravity-{tier}"'
+        assert field in body
+        options = body.split(field, 1)[1].split("</select>", 1)[0]
+        assert options.count("<option ") == 3
+        for model in ("neon", "carbon", "hydrogen"):
+            assert f'value="gemini-4-{model}-high"' in options
+        assert f'value="{initial}" selected' in options
+
+    saved = asyncio.run(_request("POST", "/harness/tiers", json={
+        "harness": "antigravity", "tiers": {"raccoon": "gemini-4-neon-high"},
+    }))
+    assert saved.status_code == 200
+    assert saved.json()["models"]["raccoon"] == "gemini-4-neon-high"
+
+    updated = asyncio.run(_request("GET", "/settings")).text
+    options = updated.split('id="tier-antigravity-raccoon"', 1)[1].split("</select>", 1)[0]
+    assert 'value="gemini-4-neon-high" selected' in options
 
 
 def test_settings_assets_and_mutations_are_wired(tmp_path, monkeypatch):
