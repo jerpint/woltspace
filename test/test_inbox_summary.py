@@ -84,10 +84,11 @@ def test_viewing_changes_nothing(store):
     assert {t: rows(store.root, f"SELECT * FROM {t}") for t in tables} == before
 
 
-def test_the_page_is_in_the_lodge_nav(tmp_path, monkeypatch):
+def test_the_page_is_off_the_lodge_nav(tmp_path, monkeypatch):
+    """The lodge's sidebar has no Inbox tab; the page itself still answers at /inbox."""
     monkeypatch.setattr(server_app, "WOLTS_DIR", tmp_path)
     client = TestClient(server_app.app, base_url="http://localhost:7777")
     page = client.get("/inbox")
     assert page.status_code == 200 and "/static/inbox.js" in page.text
-    assert 'class="sidebar-nav-item active" id="nav-inbox"' in page.text
-    assert 'id="nav-inbox" href="/inbox"' in client.get("/connectors").text  # shown on every page
+    assert "nav-inbox" not in page.text
+    assert "nav-inbox" not in client.get("/connectors").text
