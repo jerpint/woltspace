@@ -149,6 +149,12 @@ def _restart(args) -> int:
     return restart(args)
 
 
+def _setup_whatsapp(_args) -> int:
+    from .whatsapp_setup import run
+
+    return run()
+
+
 def _status(args) -> int:
     from .instance import inspect_instance
     from .lifecycle import tunnel_report
@@ -1559,6 +1565,11 @@ def build_parser() -> argparse.ArgumentParser:
     restart = sub.add_parser("restart", help="stop and start the lodge on the same address, then check health")
     restart.add_argument("--json", action="store_true")
     restart.set_defaults(func=_restart)
+
+    whatsapp = sub.add_parser("whatsapp", help="configure the WhatsApp connector")
+    whatsapp_commands = whatsapp.add_subparsers(dest="whatsapp_command", required=True)
+    whatsapp_setup = whatsapp_commands.add_parser("setup", help="set up WhatsApp in a private terminal")
+    whatsapp_setup.set_defaults(func=_setup_whatsapp)
 
     update = sub.add_parser(
         "update", help="check or update a uv-managed native install within its release line (X.Y)"
